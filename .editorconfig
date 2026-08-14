@@ -1,0 +1,29 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{yaml,yml,json,toml,md}]
+indent_size = 2
+
+[*.md]
+# Markdown uses two trailing spaces for a hard line break.
+trim_trailing_whitespace = false
+
+# The example CSVs are the parser test corpus. Their UTF-8 BOM, CRLF
+# endings and trailing U+00A0 characters are load-bearing -- an editor
+# that "tidies" them silently destroys what the tests exercise.
+[data/example/*.csv]
+end_of_line = crlf
+insert_final_newline = false
+trim_trailing_whitespace = false
+
+[tests/data/**.csv]
+end_of_line = crlf
+insert_final_newline = false
+trim_trailing_whitespace = false
