@@ -1,0 +1,110 @@
+# ---------------------------------------------------------------
+# DATA — deny by default.
+#
+# Only the explicitly named synthetic files under data/example/ may
+# ever be committed. Everything else under data/ is real financial
+# data. Enforced a second time by scripts/check_no_pii.py, which runs
+# as a pre-commit hook and as a CI job.
+#
+# Note the pattern order: git cannot re-include a file whose parent
+# directory is excluded, so we exclude data/* (not data/), re-include
+# the example DIRECTORY, exclude its contents, then re-include files.
+# ---------------------------------------------------------------
+/data/*
+!/data/example/
+/data/example/*
+!/data/example/open.csv
+!/data/example/closed.csv
+!/data/example/truth.json
+!/data/example/README.md
+
+# Any tabular/statement file anywhere else is presumed to be a real
+# export. Deliberately aggressive: you will occasionally need to
+# `git add -f` something. That friction is the feature.
+*.csv
+*.xlsx
+*.xls
+*.ofx
+*.qif
+*.pdf
+!/data/example/*.csv
+!/tests/data/**/*.csv
+
+# ---------------------------------------------------------------
+# SECRETS AND USER CONFIG
+# ---------------------------------------------------------------
+.env
+.env.*
+!.env.example
+config.yaml
+config.*.yaml
+!config.example.yaml
+/seeds/*.yaml
+!/seeds/*.example.yaml
+*.pem
+*.key
+credentials*.json
+token*.json
+
+# ---------------------------------------------------------------
+# DATABASES
+# ---------------------------------------------------------------
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# ---------------------------------------------------------------
+# GENERATED REPORTS
+# Import reports quote real symbols, quantities and EUR amounts, and
+# they are exactly the kind of output you would want to paste into a
+# README. The README shows the example-data report instead.
+# ---------------------------------------------------------------
+/reports/
+/out/
+
+# ---------------------------------------------------------------
+# PYTHON
+# ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+build/
+dist/
+.eggs/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# ---------------------------------------------------------------
+# NOTEBOOKS — checkpoints AND scratch, because outputs render real
+# holdings into the committed JSON.
+# ---------------------------------------------------------------
+.ipynb_checkpoints/
+*-checkpoint.ipynb
+/notebooks/scratch/
+
+# ---------------------------------------------------------------
+# EDITOR / OS / TOOLING
+# ---------------------------------------------------------------
+# Claude Code: shared project settings are committable, per-machine
+# permission grants are not.
+.claude/settings.local.json
+
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp

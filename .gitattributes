@@ -1,0 +1,20 @@
+* text=auto eol=lf
+
+# ---------------------------------------------------------------
+# Byte-exact. These files ARE the parser test corpus: the UTF-8 BOM,
+# the CRLF line endings and the trailing U+00A0 on every Name cell
+# are load-bearing. Normalising them silently destroys the whole
+# point of the fixture, and the tests that depend on them would keep
+# passing while testing nothing.
+#
+# tests/test_example_data_bytes.py asserts this survived.
+# ---------------------------------------------------------------
+/data/example/*.csv   -text -diff
+/tests/data/**/*.csv  -text -diff
+
+*.sql   text
+*.md    text
+*.py    text
+*.yaml  text
+*.yml   text
+*.toml  text
