@@ -6,8 +6,8 @@ the whole design rests on -- a plausible number nobody checked is how a tracker
 starts lying convincingly.
 
 Different kinds of proposal book differently: an inferred contribution becomes a
-DEPOSIT, a discovered distribution becomes a DIVIDEND with ``flow_class =
-INCOME``. That routing lived only in the CLI. Two callers now need it, and two
+DEPOSIT, a discovered distribution or a modelled interest credit becomes income
+with ``flow_class = INCOME``. That routing lived only in the CLI. Two callers now need it, and two
 implementations of "what does confirming this mean" is how they drift, so it
 lives here and both call it.
 
@@ -26,7 +26,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from portfolio_tracker.core import cash
+from portfolio_tracker.core import cash, interest
 from portfolio_tracker.ingest import dividends
 from portfolio_tracker.money import ZERO, quantize_money
 
@@ -37,6 +37,7 @@ BOOKABLE = {
     "EXTERNAL_IN": cash.confirm,
     "EXTERNAL_OUT": cash.confirm,
     "DIVIDEND": dividends.confirm,
+    "INTEREST": interest.confirm,
 }
 
 

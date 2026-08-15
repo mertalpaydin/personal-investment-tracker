@@ -773,6 +773,14 @@ def deposit_accounts(
         "ORDER BY name",
         (person_id,),
     ).fetchall()
+    accrued = {
+        int(row["account_id"]): row
+        for row in conn.execute(
+            "SELECT account_id, accrued_cum_local, accrued_cum_eur, date FROM interest_accrual a "
+            "WHERE a.date = (SELECT max(b.date) FROM interest_accrual b "
+            "               WHERE b.account_id = a.account_id)"
+        )
+    }
     return {
         "accounts": [
             {
@@ -787,9 +795,23 @@ def deposit_accounts(
                 "withholding_rate": _decimal(r["withholding_rate"]),
                 "maturity_date": r["maturity_date"],
                 "rollover_policy": r["rollover_policy"],
+                # Earned since the last credit and not yet paid. A real amount
+                # the balance does not show and no statement reports between
+                # payment dates, so reporting only the balance understates it.
+                "accrued_unpaid_local": _decimal(
+                    accrued[r["id"]]["accrued_cum_local"] if r["id"] in accrued else None
+                ),
+                "accrued_unpaid_eur": _decimal(
+                    accrued[r["id"]]["accrued_cum_eur"] if r["id"] in accrued else None
+                ),
+                "accrued_asof": accrued[r["id"]]["date"] if r["id"] in accrued else None,
             }
             for r in rows
-        ]
+        ],
+        "note": (
+            "Accrued interest is not in total_value_eur. It has been earned but not "
+            "credited, so counting it would report money the account does not hold yet."
+        ),
     }
 
 

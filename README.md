@@ -190,11 +190,15 @@ Stated here rather than buried, because they bound what the numbers mean:
 
 Things a visitor will hit, listed rather than discovered:
 
-- **Deposit accounts have no CLI**. `account` rows beyond the default depot are
-  created by hand.
-- **Accrued-but-unpaid interest is computed and stored but never surfaced.**
-  `interest_accrual` has the daily figures; nothing proposes a payment to the
-  review inbox, so between payment dates the accrued amount is invisible.
+- **XIRR is approximate**, and says so. Contributions are inferred from
+  purchases, so their dates are the days money was *invested*, not the days it
+  arrived. TWR via unit accounting is unaffected and is the number to trust.
+- **Currency exposure is quote-currency**, so a EUR-quoted S&P tracker reports
+  zero FX contribution while carrying full dollar risk. Correct mechanically,
+  misleading economically; only look-through fixes it, and that is not here.
+- **Cost basis for lira lots stays estimated.** The export prints open prices to
+  three or four decimals and there is no lossless route to the true figure, so
+  `basis_quality` records the doubt rather than hiding it.
 
 ## Architecture
 
@@ -207,6 +211,8 @@ core/returns.py            unit accounting, TWR/XIRR, local-vs-FX decomposition
 core/cash.py               running bank balance; infers the contributions nobody recorded
 core/accounts.py           deposit accrual; interest reads as return, never as savings
 core/tax.py                German engine; zero FX arithmetic, zero currency tests
+core/interest.py           accrued-but-unpaid interest, proposed for review
+core/inbox.py              what confirming an inference means, for every front end
 core/goal.py               target and projection; contributions only, no assumed return
 ingest/dividends.py        distributions, proposed for review rather than booked
 api/                       read-only FastAPI JSON + a server-rendered debug page

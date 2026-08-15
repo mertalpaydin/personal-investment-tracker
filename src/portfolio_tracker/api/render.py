@@ -162,6 +162,24 @@ def render_dashboard(conn: sqlite3.Connection, *, person_id: int = 1) -> str:
             note="dividends and interest, ever",
         )
     )
+    # Earned and not yet credited. Real money the balance does not show, and
+    # nothing else in this system reports it between payment dates.
+    unpaid = conn.execute(
+        "SELECT total(a.accrued_cum_eur) AS eur FROM interest_accrual a "
+        "JOIN account c ON c.id = a.account_id "
+        "WHERE c.person_id = ? AND a.date = (SELECT max(b.date) FROM interest_accrual b "
+        "                                    WHERE b.account_id = a.account_id)",
+        (person_id,),
+    ).fetchone()["eur"]
+    if unpaid:
+        parts.append(
+            _card(
+                "Interest accrued",
+                _eur(Decimal(str(unpaid))),
+                extra="aside",
+                note="earned, not yet credited",
+            )
+        )
     parts.append("</div>")
     parts.append(
         "<p class='note'>None of these are in the total. The tracker knows what was "

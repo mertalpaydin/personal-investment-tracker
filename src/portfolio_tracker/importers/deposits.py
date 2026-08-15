@@ -22,12 +22,13 @@ from __future__ import annotations
 
 import csv
 import io
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from portfolio_tracker.core.accounts import day_count_fraction
+from portfolio_tracker.core.accounts import day_count_fraction, ensure_cash_instrument
 from portfolio_tracker.money import ZERO, quantize_money
 
 #: Tolerance when checking a statement against its own arithmetic. Wide enough
@@ -236,3 +237,153 @@ def load(path: Path) -> DepositImport:
     if "interest rate" in first and "return date" in first:
         return parse_term_deposit(text)
     return parse_interest_statement(text)
+
+
+# ---------------------------------------------------------------------------
+# Booking
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DepositBookResult:
+    deposits: int = 0
+    interest: int = 0
+    unchanged: int = 0
+    account_updated: bool = False
+    findings: list[str] = field(default_factory=list)
+
+
+def _external_id(account_id: int, kind: str, on: date, amount: Decimal) -> str:
+    """Stable across re-imports of the same statement.
+
+    Keyed on the figures the statement states rather than on a row number, so
+    re-importing a file that gained rows at the top does not duplicate history.
+    """
+    return f"deposit:v1:{account_id}:{kind}:{on.isoformat()}:{quantize_money(amount)}"
+
+
+def book(
+    conn: sqlite3.Connection,
+    parsed: DepositImport,
+    *,
+    account_id: int,
+) -> DepositBookResult:
+    """Turn a parsed statement into ledger entries. Idempotent.
+
+    Two rules do the real work here.
+
+    ``flow_class = 'INCOME'`` on interest. Interest is *return*, not money the
+    owner saved, so unit accounting must issue no units for it. Booking it as a
+    contribution would make the tool report the owner as having saved his own
+    interest -- and would cancel exactly the return the interest represents.
+
+    ``quantity`` carries the **capitalised** part only. Interest paid away
+    leaves the account and must not raise the balance; interest left in place
+    does. The statement's own columns decide which, and where they disagree
+    with their arithmetic the parser has already said so.
+    """
+    result = DepositBookResult(findings=list(parsed.findings))
+    account = conn.execute("SELECT * FROM account WHERE id = ?", (account_id,)).fetchone()
+    if account is None:
+        raise LookupError(f"no account {account_id}")
+    if account["kind"] not in ("TAGESGELD", "FESTGELD"):
+        raise ValueError(
+            f"account {account_id} is a {account['kind']}, not a deposit account; "
+            "booking interest against a depot would misstate both balances"
+        )
+    currency = account["currency"]
+    instrument_id = ensure_cash_instrument(conn, account_id)
+
+    def insert(
+        kind: str, on: date, gross: Decimal, *, quantity: Decimal, tax: Decimal, note: str
+    ) -> bool:
+        cursor = conn.execute(
+            """
+            INSERT OR IGNORE INTO transaction_
+                (account_id, instrument_id, type, trade_date, currency, quantity,
+                 gross_amount_local, tax_withheld_local, fx_rate, source, confidence,
+                 fees_known, flow_class, external_id, note)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'MANUAL', 'ACTUAL', 1, ?, ?, ?)
+            """,
+            (
+                account_id,
+                instrument_id,
+                kind,
+                on.isoformat(),
+                currency,
+                quantity,
+                quantize_money(gross),
+                quantize_money(tax),
+                "INCOME" if kind == "INTEREST" else "EXTERNAL_IN",
+                _external_id(account_id, kind, on, gross),
+                note,
+            ),
+        )
+        return bool(cursor.rowcount)
+
+    for payment in parsed.payments:
+        if payment.added_capital > ZERO:
+            added = insert(
+                "DEPOSIT",
+                payment.on,
+                payment.added_capital,
+                quantity=payment.added_capital,
+                tax=ZERO,
+                note="capital added, from the account statement",
+            )
+            result.deposits += added
+            result.unchanged += not added
+        if payment.gross_interest > ZERO:
+            # A statement that shows a net figure and no capital movement has
+            # capitalised it; one whose balance did not move paid it away. The
+            # statement cannot distinguish these, so the account's own policy
+            # does -- it is a property of the contract, not of the row.
+            capitalised = (
+                payment.net_interest if account["rollover_policy"] == "CAPITALIZE" else ZERO
+            )
+            added = insert(
+                "INTEREST",
+                payment.on,
+                payment.gross_interest,
+                quantity=capitalised,
+                tax=payment.tax_withheld,
+                note=("capitalised" if capitalised > ZERO else "paid out, not capitalised"),
+            )
+            result.interest += added
+            result.unchanged += not added
+
+    term = parsed.term
+    if term is not None:
+        added = insert(
+            "DEPOSIT",
+            term.start,
+            term.principal,
+            quantity=term.principal,
+            tax=ZERO,
+            note="term deposit principal",
+        )
+        result.deposits += added
+        result.unchanged += not added
+        # The contract's own terms, taken from the statement rather than typed
+        # twice. Interest is projected from these until the payout is imported.
+        # `annual_rate` is already a fraction -- the parser divides the
+        # statement's "41.5" by 100 on the way in. Dividing a second time here
+        # stored 0.415% and made a 41.5% term deposit accrue like a current
+        # account, which is a hundredfold error that still looks like a number.
+        conn.execute(
+            "UPDATE account SET interest_rate = ?, maturity_date = ?, "
+            "interest_first_accrual = coalesce(interest_first_accrual, ?) WHERE id = ?",
+            (
+                term.annual_rate,
+                term.maturity.isoformat(),
+                term.start.isoformat(),
+                account_id,
+            ),
+        )
+        result.account_updated = True
+        result.findings.append(
+            f"account {account_id}: rate set to {term.annual_rate:.2%} and maturity to "
+            f"{term.maturity} from the statement"
+        )
+
+    return result
