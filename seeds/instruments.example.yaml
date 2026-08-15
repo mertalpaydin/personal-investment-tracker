@@ -1,0 +1,46 @@
+# Instrument metadata the positions export does not carry.
+#
+# Copy to seeds/instruments.yaml (gitignored) and fill in for your own
+# holdings. This example describes the synthetic corpus in data/example/.
+#
+# Only keys present here are written, so a partial file never blanks a column
+# that was already correct. `currency` cannot be set from a seed: it is taken
+# from the export's own currency glyph at import time and is authoritative.
+
+version: 1
+
+instruments:
+  ZGEQ:
+    price_symbol: ZGEQ.DE
+    asset_class: ETF
+    is_fund: true
+    # Equity fund with a >=51% equity minimum in its terms.
+    teilfreistellung_pct: "0.30"
+
+  ZOVN:
+    price_symbol: ZOVN.DE
+    asset_class: ETF
+    is_fund: true
+    # Money-market: no equity, so NO partial exemption. Copying 0.30 from the
+    # other funds here would understate tax on what is often the largest
+    # position in a portfolio.
+    teilfreistellung_pct: "0.00"
+    notes: money market; Teilfreistellung 0% confirmed from fund terms
+
+  ZTFB:
+    # A foreign fund with no reachable price feed: manual is the supported
+    # path, not a contingency.
+    price_source: manual
+    trading_calendar: TEFAS
+    asset_class: FUND
+    is_fund: true
+    teilfreistellung_pct: null   # unresolved; the importer keeps warning
+    tax_regime: OUT_OF_SCOPE
+
+  ZEC/EUR:
+    price_symbol: ZEC-EUR
+    asset_class: CRYPTO
+    trading_calendar: ALL_DAYS
+    # Section 23 EStG private disposal, not section 20. Its losses may only
+    # offset other private-disposal gains.
+    tax_regime: DE_PRIVATE_SALE

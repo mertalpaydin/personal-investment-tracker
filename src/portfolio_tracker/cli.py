@@ -13,12 +13,14 @@ from typing import Annotated
 import typer
 
 from portfolio_tracker import __version__
+from portfolio_tracker import seeds as instrument_seeds
 from portfolio_tracker.core import fx
 from portfolio_tracker.db import migrate as migrations
 from portfolio_tracker.db.connection import DEFAULT_DB_PATH, connect
 from portfolio_tracker.importers import overrides
 from portfolio_tracker.importers.investing_com.importer import import_positions
 from portfolio_tracker.ingest import fx as ingest_fx
+from portfolio_tracker.ingest import prices as ingest_prices
 
 app = typer.Typer(
     add_completion=False,
@@ -197,6 +199,85 @@ def fetch_fx(
                 )
     finally:
         conn.close()
+
+
+@app.command()
+def seed(
+    db: DbPath = DEFAULT_DB_PATH,
+    path: Annotated[
+        Path, typer.Option("--file", help="Instrument metadata YAML.")
+    ] = instrument_seeds.DEFAULT_PATH,
+) -> None:
+    """Apply instrument metadata the export does not carry."""
+    conn = connect(db)
+    try:
+        try:
+            entries = instrument_seeds.load(path)
+        except instrument_seeds.SeedError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from exc
+        if not entries:
+            typer.echo(f"no seed data at {path}")
+            return
+        result = instrument_seeds.apply(conn, entries)
+        conn.commit()
+        typer.echo(f"updated {len(result.updated)} instrument(s), {result.fields_written} field(s)")
+        for missing in result.unknown_instruments:
+            typer.secho(
+                f"  {missing}: not in the database; import it first", fg=typer.colors.YELLOW
+            )
+    finally:
+        conn.close()
+
+
+@app.command("fetch-prices")
+def fetch_prices(
+    db: DbPath = DEFAULT_DB_PATH,
+    end: Annotated[str | None, typer.Option("--end", help="Last date (YYYY-MM-DD).")] = None,
+    start: Annotated[
+        str | None, typer.Option("--start", help="First date; default is each first trade.")
+    ] = None,
+    strict: Annotated[
+        bool, typer.Option("--strict", help="Exit non-zero if any instrument is under 98%.")
+    ] = False,
+) -> None:
+    """Fetch prices for every held instrument, then report coverage."""
+    conn = connect(db)
+    try:
+        results = ingest_prices.fetch_all(
+            conn,
+            end=date.fromisoformat(end) if end else date.today(),
+            start=date.fromisoformat(start) if start else None,
+        )
+    finally:
+        conn.close()
+
+    if not results:
+        typer.echo("no held instruments; import a positions export first")
+        return
+
+    typer.echo(f"{'instrument':<10} {'source':<10} {'coverage':>9}  {'window':<25} notes")
+    for r in sorted(results, key=lambda x: (x.ok, x.import_key)):
+        colour = None if r.ok else typer.colors.YELLOW
+        window = f"{r.start} .. {r.end}"
+        note = f"{r.observed}/{r.expected} on {r.calendar}"
+        pct = f"{r.pct}%"
+        source = r.source or "-"
+        typer.secho(
+            f"{r.import_key:<10} {source:<10} {pct:>9}  {window:<25} {note}",
+            fg=colour,
+        )
+        for lo, hi, length in r.gaps:
+            typer.secho(f"    gap: {lo} .. {hi} ({length} days)", fg=typer.colors.YELLOW)
+        if r.error:
+            typer.secho(f"    {r.error}", fg=typer.colors.RED)
+
+    failed = [r for r in results if not r.ok]
+    if failed:
+        typer.echo("")
+        typer.echo(f"{len(failed)} instrument(s) below 98% coverage")
+        if strict:
+            raise typer.Exit(code=1)
 
 
 @app.command()
