@@ -14,7 +14,7 @@ import typer
 
 from portfolio_tracker import __version__
 from portfolio_tracker import seeds as instrument_seeds
-from portfolio_tracker.core import fx
+from portfolio_tracker.core import fx, lots, valuation
 from portfolio_tracker.db import migrate as migrations
 from portfolio_tracker.db.connection import DEFAULT_DB_PATH, connect
 from portfolio_tracker.importers import overrides
@@ -278,6 +278,62 @@ def fetch_prices(
         typer.echo(f"{len(failed)} instrument(s) below 98% coverage")
         if strict:
             raise typer.Exit(code=1)
+
+
+@app.command()
+def rebuild(
+    db: DbPath = DEFAULT_DB_PATH,
+    end: Annotated[str | None, typer.Option("--end", help="Last valuation date.")] = None,
+    strict: Annotated[
+        bool, typer.Option("--strict", help="Fail on a stale price instead of flagging it.")
+    ] = False,
+) -> None:
+    """Recompute FIFO lots and the daily valuation from the ledger.
+
+    Everything here is derived, so this is always safe to run: it deletes and
+    recomputes rather than patching. An edit anywhere in the history changes
+    which lots a later sale consumes, which is why nothing is updated in place.
+    """
+    as_of = date.fromisoformat(end) if end else date.today()
+    conn = connect(db)
+    try:
+        lot_report = lots.rebuild_lots(conn)
+        conn.commit()
+        typer.echo(
+            f"lots: {lot_report.lots_created} open, {lot_report.disposals_created} disposals"
+        )
+        for problem in lot_report.oversold:
+            typer.secho(f"  oversold: {problem}", fg=typer.colors.RED)
+        if lot_report.missing_fx:
+            typer.secho(
+                f"  {len(lot_report.missing_fx)} lot(s) with no trade-date FX rate",
+                fg=typer.colors.YELLOW,
+            )
+
+        try:
+            value_report = valuation.build_position_daily(conn, end=as_of, strict=strict)
+        except valuation.StalePriceError as exc:
+            typer.secho(f"valuation refused: {exc}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from exc
+        conn.commit()
+
+        typer.echo(
+            f"valuation: {value_report.rows} position-days over {value_report.days} grid days"
+        )
+        for problem in value_report.stale[:5]:
+            typer.secho(f"  stale: {problem}", fg=typer.colors.YELLOW)
+        for problem in value_report.missing[:5]:
+            typer.secho(f"  unvalued: {problem}", fg=typer.colors.YELLOW)
+        if len(value_report.missing) > 5:
+            typer.secho(
+                f"  ... and {len(value_report.missing) - 5} more unvalued position-days",
+                fg=typer.colors.YELLOW,
+            )
+
+        if not lot_report.ok:
+            raise typer.Exit(code=1)
+    finally:
+        conn.close()
 
 
 @app.command()

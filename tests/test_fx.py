@@ -205,7 +205,14 @@ def test_only_modules_permitted_to_convert_contain_fx_arithmetic() -> None:
     conversion, and the single-direction guarantee no longer holds.
     """
     root = Path(__file__).resolve().parent.parent / "src" / "portfolio_tracker"
-    allowed = {"core/fx.py", "ingest/fx.py"}
+    # ADR 0004 rule 3 names exactly three places that may convert, plus the
+    # module that defines the conversion itself and the one that fetches rates.
+    allowed = {
+        "core/fx.py",  # defines to_eur
+        "ingest/fx.py",  # fetches rates
+        "core/lots.py",  # freezes cost basis at the acquisition rate
+        "core/valuation.py",  # the daily revaluation loop
+    }
     offenders = []
     for path in root.rglob("*.py"):
         rel = path.relative_to(root).as_posix()

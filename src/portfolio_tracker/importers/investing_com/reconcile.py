@@ -26,7 +26,7 @@ from enum import StrEnum
 from portfolio_tracker.importers.investing_com.normalize import ClosedPosition, OpenPosition
 from portfolio_tracker.importers.investing_com.parse import Currency, Interval
 from portfolio_tracker.importers.report import ImportReport, Severity
-from portfolio_tracker.money import plain
+from portfolio_tracker.money import plain, quantize_money
 
 EXTERNAL_ID_VERSION = "invcom:v1"
 
@@ -71,6 +71,7 @@ class ReconstructedLot:
     market_value_local: Decimal | None = None
     net_pl_eur: Decimal | None = None
     cost_basis_eur: Decimal | None = None
+    cost_per_unit_eur: Decimal | None = None
     basis_quality: str = "EXACT"
 
     @property
@@ -284,11 +285,23 @@ def build_lots(
         )
 
         # Cost basis. For euro rows `market value - profit` is exact to the cent
-        # and implies a truer open price than the 2dp figure displayed. For lira
-        # rows that route is unavailable, because the profit column is computed
-        # at a single spot rate and carries no currency effect at all.
-        if open_row is not None and currency == "EUR":
-            lot.cost_basis_eur = open_row.market_value.amount - open_row.net_pl_eur
+        # and implies a truer unit cost than the 2dp open price displayed. For
+        # lira rows that route is unavailable, because the profit column is
+        # computed at a single spot rate and carries no currency effect at all.
+        #
+        # Both figures describe the REMAINING quantity, not the original
+        # purchase, so the difference has to be turned into a per-unit cost
+        # before it can be scaled back up. Using it directly would have valued
+        # a partially-sold lot at the cost of only the part still held --
+        # understating basis by 36% on one real lot here, and overstating the
+        # eventual realised gain by the same amount.
+        if open_row is not None and currency == "EUR" and remaining > 0:
+            cost_of_remaining = open_row.market_value.amount - open_row.net_pl_eur
+            lot.cost_per_unit_eur = cost_of_remaining / remaining
+            # Quantised to cents: the division above yields 28 significant
+            # digits, and a cost basis carrying more precision than the cent
+            # it was derived from is false confidence.
+            lot.cost_basis_eur = quantize_money(lot.cost_per_unit_eur * purchased)
             lot.basis_quality = "DERIVED"
         else:
             lot.basis_quality = "ESTIMATED"

@@ -117,8 +117,11 @@ def _upsert_buy(
 
     quantity = lot.quantity.value
     price = lot.open_price
-    gross_local = quantity * price
     is_eur = lot.currency == "EUR"
+    # For a euro lot the derived cost is exact to the cent and beats
+    # qty x the 2dp displayed price, so it is authoritative in BOTH legs --
+    # at a rate of 1 they must agree, or the row contradicts itself.
+    gross_local = lot.cost_basis_eur if (is_eur and lot.cost_basis_eur) else quantity * price
 
     if existing is not None:
         previous = Decimal(str(existing["quantity"]))

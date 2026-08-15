@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from portfolio_tracker.core.calendars import grid_days
@@ -27,6 +27,9 @@ from portfolio_tracker.ingest.providers.market import (
     TefasProvider,
     YFinanceProvider,
 )
+
+#: Calendar days of price history to fetch before the first trade.
+PRICE_LEAD_DAYS = 10
 
 
 def default_providers() -> dict[str, PriceProvider]:
@@ -199,7 +202,11 @@ def fetch_all(
     results: list[InstrumentCoverage] = []
 
     for instrument in held_instruments(conn):
-        window_start = start or first_trade_date(conn, instrument.instrument_id) or end
+        # Reach back before the first trade: a market can be shut on the day
+        # a position is opened, and without an earlier observation that day
+        # cannot be valued at all.
+        traded_from = first_trade_date(conn, instrument.instrument_id) or end
+        window_start = start or (traded_from - timedelta(days=PRICE_LEAD_DAYS))
         provider = registry.get(instrument.price_source)
         error: str | None = None
         used: str | None = None
@@ -234,7 +241,7 @@ def fetch_all(
                     pass
 
         conn.commit()
-        report = coverage(conn, instrument, window_start, end)
+        report = coverage(conn, instrument, max(window_start, traded_from), end)
         report.error = error
         # `coverage` reports the source most rows actually came from. Only
         # override it when this run contributed something, so a run that
