@@ -477,6 +477,40 @@ def tax_report(
 
 
 @app.command()
+def serve(
+    db: DbPath = DEFAULT_DB_PATH,
+    host: Annotated[str, typer.Option("--host")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port")] = 8000,
+) -> None:
+    """Serve the JSON API and the debug page.
+
+    Read-only. Every write in this system goes through a reviewed CLI command,
+    so there is deliberately no HTTP path to the ledger.
+    """
+    if not Path(db).exists():
+        # Better here than as a 503 on the first request: the person who typed
+        # this command is looking at the terminal right now.
+        typer.secho(f"no database at {db}; run `pt init-db` first", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        import uvicorn
+
+        from portfolio_tracker.api import app as api
+    except ImportError as exc:
+        typer.secho(
+            "the API extras are not installed; run `uv sync --extra api`",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+    api.DB_PATH = Path(db)
+    typer.echo(f"serving {db} at http://{host}:{port}/  (debug page at /)")
+    uvicorn.run(api.app, host=host, port=port, log_level="warning")
+
+
+@app.command()
 def doctor() -> None:
     """Re-run data-quality identity checks against the database."""
     typer.echo("doctor: not implemented yet (lands with the importer, phase 3)")

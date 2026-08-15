@@ -57,3 +57,10 @@ def test_doctor_exits_non_zero_while_unimplemented() -> None:
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 1
     assert "not implemented" in result.stdout
+
+
+def test_serve_refuses_a_database_that_does_not_exist(tmp_path: Path) -> None:
+    """A 503 on the first request is worse: nobody is watching the log by then."""
+    result = runner.invoke(app, ["serve", "--db", str(tmp_path / "absent.db")])
+    assert result.exit_code == 1
+    assert "init-db" in result.output

@@ -66,6 +66,27 @@ uv run pt import investing \
 uv run pt doctor
 ```
 
+Then, with the API extra installed:
+
+```bash
+uv sync --extra api
+uv run pt serve                     # http://127.0.0.1:8000/
+```
+
+`/` and `/debug` serve the same server-rendered page — no build step, no
+JavaScript framework, no CDN. The JSON lives under `/api/*`, with OpenAPI at
+`/docs`. The server opens the database **read-only**: every write goes through a
+CLI command where it can be reviewed first, so there is no HTTP path to the
+ledger at all.
+
+Three things the API does that are easy to get wrong:
+
+| Rule | Why |
+| --- | --- |
+| **The total excludes cash** | `total_value_eur` is holdings plus deposit balances. Dividend income and sale proceeds sitting in the bank appear as `uninvested_cash_eur`, beside the total and never inside it — whether that money is still held is not knowable from the source data. |
+| **A missing input is a refusal, not a zero** | `/api/tax/*` returns **409** when the year's Basiszins is unpublished. A zero would look like an answer, and answers get filed on an *Anlage KAP*. |
+| **A stale price is reported, not hidden** | A five-day Bayram gap changes `valuation_status` and `price_stale_days`; it never changes the status code. Every response carries `as_of` and a `data_quality` block. |
+
 ## The data is the interesting part
 
 The source is an Investing.com **positions view**, not a transaction log. Every row
@@ -100,16 +121,22 @@ checks passed, and what is still missing.
 
 Stated here rather than buried, because they bound what the numbers mean:
 
-1. **No fee or dividend data exists in the source.** Cost basis is understated by
-   every purchase fee, so computed taxable gains are biased high. Distributions are
-   invisible, so total return is understated. Dividends are *not* estimated from
-   price feeds — inventing a tax event is worse than omitting one.
-2. **External cash flows are unknown**, so XIRR is unreliable until contributions
-   are reconstructed. TWR via unit accounting is the number to trust.
-3. **Currency exposure is quote-currency, not economic.** A EUR-quoted S&P 500 ETF
+1. **No fee data exists in the source.** Cost basis is understated by every purchase
+   fee, so computed taxable gains are biased high. Trades carry `fees_known = 0` so
+   the bias is visible rather than assumed away.
+2. **Distributions are recovered, not recorded.** The export has no income rows at
+   all, which booked every ex-date price drop as a loss. Distributions are now
+   derived from the price feed's per-share amounts against the quantity held on the
+   ex-date — but nothing reaches the ledger without confirmation, and the feed
+   publishes *gross*, so withholding is stored as unknown rather than as zero.
+3. **External cash flows are inferred.** The source records no deposits, so a
+   purchase not funded by a prior sale implies a contribution, which the tool
+   proposes and the owner confirms. XIRR is therefore labelled
+   `"reliability": "low"`; TWR via unit accounting is the number to trust.
+4. **Currency exposure is quote-currency, not economic.** A EUR-quoted S&P 500 ETF
    reports zero FX contribution while carrying full USD risk. Correct mechanically,
    misleading economically; the API labels it rather than hiding it.
-4. **Turkish mutual funds are not on mainstream price feeds.** A TEFAS provider
+5. **Turkish mutual funds are not on mainstream price feeds.** A TEFAS provider
    exists, but the manual CSV path is a co-equal requirement, not a fallback.
 
 ## Architecture
@@ -120,8 +147,11 @@ core/fx.py                 the only currency conversion in the codebase
 core/lots.py               FIFO; freezes EUR cost basis at acquisition-date FX
 core/valuation.py          daily revaluation on the TARGET2 grid
 core/returns.py            unit accounting, TWR/XIRR, local-vs-FX decomposition
+core/cash.py               running bank balance; infers the contributions nobody recorded
+core/accounts.py           deposit accrual; interest reads as return, never as savings
 core/tax.py                German engine; zero FX arithmetic, zero currency tests
-api/                       FastAPI JSON + HTMX debug UI
+ingest/dividends.py        distributions, proposed for review rather than booked
+api/                       read-only FastAPI JSON + a server-rendered debug page
 ```
 
 Three currency rules hold everywhere:

@@ -24,21 +24,43 @@ from portfolio_tracker.money import register_decimal_support
 DEFAULT_DB_PATH = Path("data/portfolio.db")
 
 
-def connect(path: Path | str = DEFAULT_DB_PATH, *, read_only: bool = False) -> sqlite3.Connection:
-    """Open a configured connection, creating the parent directory if needed."""
+def connect(
+    path: Path | str = DEFAULT_DB_PATH,
+    *,
+    read_only: bool = False,
+    same_thread: bool = True,
+) -> sqlite3.Connection:
+    """Open a configured connection, creating the parent directory if needed.
+
+    ``same_thread=False`` is for the web server and nothing else. A sync FastAPI
+    dependency and the endpoint it feeds both run on anyio's worker pool, which
+    reuses threads but does not pin them -- so the connection opened by the
+    dependency is routinely handed to a *different* thread than the one that
+    queries it. sqlite3's default guard rejects that, and the failure surfaces as
+    a 500 on every request rather than at startup. Relaxing it is safe only
+    because each request owns its connection outright: the threads take turns,
+    they never share.
+    """
     register_decimal_support()
 
     if str(path) == ":memory:":
-        conn = sqlite3.connect(":memory:", detect_types=sqlite3.PARSE_DECLTYPES)
+        conn = sqlite3.connect(
+            ":memory:", detect_types=sqlite3.PARSE_DECLTYPES, check_same_thread=same_thread
+        )
     else:
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         if read_only:
             conn = sqlite3.connect(
-                f"file:{target}?mode=ro", uri=True, detect_types=sqlite3.PARSE_DECLTYPES
+                f"file:{target}?mode=ro",
+                uri=True,
+                detect_types=sqlite3.PARSE_DECLTYPES,
+                check_same_thread=same_thread,
             )
         else:
-            conn = sqlite3.connect(target, detect_types=sqlite3.PARSE_DECLTYPES)
+            conn = sqlite3.connect(
+                target, detect_types=sqlite3.PARSE_DECLTYPES, check_same_thread=same_thread
+            )
 
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
