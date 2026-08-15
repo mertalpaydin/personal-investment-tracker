@@ -219,6 +219,32 @@ def migrate(conn: sqlite3.Connection, *, directory: Path = MIGRATIONS_DIR) -> li
     return newly_applied
 
 
+#: The owner and the depot a fresh database needs before anything can be
+#: imported. Every transaction references an account and every account a
+#: person, so without these the first import fails on a foreign key -- which is
+#: a confusing way to say "you have not told me whose portfolio this is".
+#:
+#: Seeded only when `person` is empty, so it can never overwrite a real setup.
+DEFAULT_PERSON = "Owner"
+DEFAULT_ACCOUNT = "Depot"
+
+
+def seed_default_owner(conn: sqlite3.Connection) -> bool:
+    """Create person 1 and account 1 if the database has no people yet."""
+    if conn.execute("SELECT count(*) FROM person").fetchone()[0]:
+        return False
+    conn.execute(
+        "INSERT INTO person (id, name, joint_assessment) VALUES (1, ?, 0)",
+        (DEFAULT_PERSON,),
+    )
+    conn.execute(
+        "INSERT INTO account (id, person_id, name, kind, currency) "
+        "VALUES (1, 1, ?, 'DEPOT', 'EUR')",
+        (DEFAULT_ACCOUNT,),
+    )
+    return True
+
+
 def current_version(conn: sqlite3.Connection) -> int:
     """Highest applied migration, or 0 for an empty database."""
     known = applied(conn)

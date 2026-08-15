@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 
 from portfolio_tracker import __version__
 from portfolio_tracker.cli import app
+from portfolio_tracker.db.connection import connect
 
 runner = CliRunner()
 
@@ -84,3 +85,67 @@ def test_serve_refuses_a_database_that_does_not_exist(tmp_path: Path) -> None:
     result = runner.invoke(app, ["serve", "--db", str(tmp_path / "absent.db")])
     assert result.exit_code == 1
     assert "init-db" in result.output
+
+
+def test_init_db_seeds_an_owner_so_the_first_import_can_work(tmp_path: Path) -> None:
+    """Without a person and an account, `pt import` fails on a foreign key.
+
+    Which is a confusing way for the tool to say "you have not told me whose
+    portfolio this is". The clean-clone quickstart was broken by exactly this.
+    """
+    target = tmp_path / "portfolio.db"
+    result = runner.invoke(app, ["init-db", "--db", str(target)])
+    assert result.exit_code == 0
+    assert "created person 1" in result.output
+
+    conn = connect(target, read_only=True)
+    try:
+        assert conn.execute("SELECT count(*) FROM person").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM account").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_init_db_never_overwrites_an_existing_owner(tmp_path: Path) -> None:
+    target = tmp_path / "portfolio.db"
+    runner.invoke(app, ["init-db", "--db", str(target)])
+    conn = connect(target)
+    conn.execute("UPDATE person SET name = 'Renamed' WHERE id = 1")
+    conn.commit()
+    conn.close()
+
+    result = runner.invoke(app, ["init-db", "--db", str(target)])
+    assert "created person 1" not in result.output
+    conn = connect(target, read_only=True)
+    try:
+        assert conn.execute("SELECT name FROM person WHERE id = 1").fetchone()[0] == "Renamed"
+    finally:
+        conn.close()
+
+
+def test_a_missing_exchange_rate_is_a_message_not_a_traceback(tmp_path: Path) -> None:
+    """A non-euro holding cannot be valued in euros without a rate.
+
+    Inventing one is the failure the whole FX design exists to avoid, so this
+    refuses -- but it refuses by naming the missing prerequisite.
+    """
+    target = tmp_path / "portfolio.db"
+    runner.invoke(app, ["init-db", "--db", str(target)])
+    runner.invoke(
+        app,
+        [
+            "import",
+            "--open",
+            "data/example/open.csv",
+            "--closed",
+            "data/example/closed.csv",
+            "--account",
+            "1",
+            "--db",
+            str(target),
+        ],
+    )
+    result = runner.invoke(app, ["rebuild", "--db", str(target)])
+    assert result.exit_code == 1
+    assert "fetch-fx" in result.output
+    assert "Traceback" not in result.output

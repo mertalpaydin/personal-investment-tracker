@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 from portfolio_tracker import __version__
 from portfolio_tracker.api.render import render_dashboard
-from portfolio_tracker.core import goal, inbox, rebuild, returns, tax, valuation
+from portfolio_tracker.core import fx, goal, inbox, rebuild, returns, tax, valuation
 from portfolio_tracker.db.connection import DEFAULT_DB_PATH, connect, transaction
 from portfolio_tracker.money import ZERO
 
@@ -572,6 +572,8 @@ def admin_rebuild(
         result = rebuild.run(conn, end=as_of, strict=False)
     except valuation.StalePriceError as exc:
         raise HTTPException(409, str(exc)) from exc
+    except fx.FxUnavailable as exc:
+        raise HTTPException(409, f"{exc}; run `pt fetch-fx` first") from exc
 
     return {
         "as_of": as_of.isoformat(),

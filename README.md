@@ -186,6 +186,21 @@ Stated here rather than buried, because they bound what the numbers mean:
 5. **Turkish mutual funds are not on mainstream price feeds.** A TEFAS provider
    exists, but the manual CSV path is a co-equal requirement, not a fallback.
 
+## Known gaps
+
+Things a visitor will hit, listed rather than discovered:
+
+- **The example corpus has no price or FX series**, so `pt rebuild` and the
+  dashboard cannot run on it. The ledger reconstruction and import report can.
+- **`seeds/instruments.example.yaml` covers 4 of the 11 synthetic instruments**,
+  so `pt doctor` reports unresolved Teilfreistellung on the rest — correctly, but
+  it means the example run exits non-zero.
+- **Deposit accounts have no CLI**. `account` rows beyond the default depot are
+  created by hand.
+- **Accrued-but-unpaid interest is computed and stored but never surfaced.**
+  `interest_accrual` has the daily figures; nothing proposes a payment to the
+  review inbox, so between payment dates the accrued amount is invisible.
+
 ## Architecture
 
 ```text

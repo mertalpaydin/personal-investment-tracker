@@ -92,6 +92,13 @@ def init_db(
         else:
             typer.echo("schema already up to date")
 
+        if migrations.seed_default_owner(conn):
+            conn.commit()
+            typer.echo(
+                f"created person 1 ({migrations.DEFAULT_PERSON}) and account 1 "
+                f"({migrations.DEFAULT_ACCOUNT}) -- rename them, or add your own"
+            )
+
         if reset_derived:
             deleted = migrations.reset_derived(conn)
             total = sum(deleted.values())
@@ -309,6 +316,13 @@ def rebuild(
             result = rebuild_all.run(conn, end=as_of, strict=strict)
         except valuation.StalePriceError as exc:
             typer.secho(f"valuation refused: {exc}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from exc
+        except fx.FxUnavailable as exc:
+            # A traceback here reads as a crash. It is a missing prerequisite:
+            # a non-euro holding cannot be valued in euros without a rate, and
+            # inventing one is the failure this whole design exists to avoid.
+            typer.secho(f"cannot value the portfolio: {exc}", fg=typer.colors.RED, err=True)
+            typer.secho("run `pt fetch-fx` first", fg=typer.colors.YELLOW, err=True)
             raise typer.Exit(code=1) from exc
 
         typer.echo(f"lots: {result.lots_created} open, {result.disposals_created} disposals")
