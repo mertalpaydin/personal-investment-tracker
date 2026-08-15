@@ -61,11 +61,22 @@ rejected.
 2. **Native is authoritative; euro is a stored derivation** carrying the exact
    rate, its as-of date and its source. Prices are never stored in euro, enforced
    by a trigger asserting `price.currency == instrument.currency`.
-3. **Conversion happens in exactly three places**: the importer (freezing
-   transaction amounts at trade date), the lot builder (freezing cost basis at
-   acquisition-date FX — the immutable German *Anschaffungskosten*), and the
-   daily valuation loop. `returns.py`, `tax.py` and the API contain none, which
-   is checkable by grep and therefore lintable.
+3. **Conversion is allowed only where a rate is pinned to a date**, and in
+   exactly two situations:
+
+   - **Freezing**, at the moment a transaction is recorded — the importer, the
+     lot builder (the immutable German *Anschaffungskosten*), and confirming an
+     inferred cash flow.
+   - **Daily revaluation**, in the position and cash valuation loops.
+
+   Everywhere else — `returns.py`, `tax.py`, the API — contains no FX
+   arithmetic at all. That is checkable by grep and is enforced by a test.
+
+   *Amended 2026-08-15:* originally written as "exactly three places", naming
+   files. Adding the cash-flow engine showed that a file list is the wrong
+   invariant — it has to be re-litigated every time a module is added, which
+   invites loosening the test instead of thinking. The rule is about *when* a
+   rate is chosen, not which file chooses it.
 
 **Decompose return into local and currency components.** The identity is exact:
 

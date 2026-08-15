@@ -12,7 +12,7 @@ from typing import Annotated
 
 import typer
 
-from portfolio_tracker import __version__
+from portfolio_tracker import __version__, cli_flows
 from portfolio_tracker import seeds as instrument_seeds
 from portfolio_tracker.core import fx, lots, valuation
 from portfolio_tracker.db import migrate as migrations
@@ -49,6 +49,8 @@ def main(
 ) -> None:
     """Personal investment tracker."""
 
+
+app.add_typer(cli_flows.app, name="flows")
 
 DbPath = Annotated[Path, typer.Option("--db", help="Database file.")]
 

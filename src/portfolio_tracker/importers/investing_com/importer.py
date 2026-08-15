@@ -165,7 +165,10 @@ def _upsert_buy(
             fees_eur,
             1 if fees_eur is not None else 0,
             Decimal(1) if is_eur else None,
-            lot.cost_basis_eur if is_eur else None,
+            # At a rate of 1 the two legs must agree. A fully-closed lot has
+            # no derived cost, so it falls back to the same local figure
+            # rather than being left NULL and read downstream as zero.
+            gross_local if is_eur else None,
             "RECONSTRUCTED",
             str(lot.quantity.confidence),
             lot.quantity.interval.lo,
