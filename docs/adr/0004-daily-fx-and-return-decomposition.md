@@ -24,9 +24,22 @@ These lots span two years in which the lira roughly halved. A constant implied
 rate is only possible if the profit column computes `(current_price −
 open_price) × quantity ÷ today's spot`. It contains **no currency effect at all**.
 
-The practical size of the error: one gold-fund lot reports a gain of **+€2,105**.
-Its actual gain in euro is **+€1,089**. The €1,016 difference is lira
-depreciation on the original capital, and it is invisible.
+The practical size of the error, now measured against real ECB rates rather
+than estimated. Across the whole lira book of 14 lots:
+
+| | |
+|---|---|
+| Cost basis at acquisition-date rates | €17,196.58 |
+| Market value at today's rate | €19,908.76 |
+| **True gain** | **€2,712.18** |
+| What the export reports | €5,485.52 |
+| **Overstatement** | **€2,773.34 — more than double** |
+
+The largest single lot reports **+€2,107.93** against a true **+€1,087.80**.
+And one lot inverts entirely: a position the export shows as **+€36.36** has in
+fact **lost €75.57**. A tracker that reports a loss-making position as
+profitable is not imprecise, it is giving the wrong answer to the only question
+being asked of it.
 
 This also disposes of the brief's Phase 1 acceptance criterion — "matches the
 broker's screen to the cent" — for the lira book. Matching that number to the
@@ -64,8 +77,18 @@ Logarithmic components are stored, because they are exactly additive across both
 legs *and* across time. For display, the local return is reported as
 `exp(L_local) − 1` and the currency line as `r_eur − local`, labelled **"currency
 effect (incl. cross term)"** — so the two displayed figures sum exactly to the
-headline and the label is honest about where the cross term went. The cross term
-is large here (−31pp on the worked example) and must never be split silently.
+headline and the label is honest about where the cross term went.
+
+The cross term is large here and must never be split silently. Worked against
+the largest lira lot, using its real acquisition rate of 37.7045 and today's
+55.3879:
+
+```text
+r_loc = 0.627 / 0.318      − 1 = +97.2%    local price return
+r_fx  = 37.7045 / 55.3879  − 1 = −31.9%    currency return
+r_eur = 1.972 × 0.681      − 1 = +34.3%    what actually happened
+cross term = 0.972 × (−0.319)  = −31.0pp   why the two cannot simply be added
+```
 
 At position level the same split is available in *level* form with no cross term
 at all, via one extra stored column:
@@ -78,8 +101,8 @@ unrealized_fx_eur    = cost_basis_eur_at_spot − cost_basis_eur
 ```
 
 `unrealized_local_eur` is *exactly* the number the source export reports. That is
-what lets the API say: "the export shows +€2,105; that is your lira gain
-translated at today's rate; your actual euro gain is +€1,089; the difference is
+what lets the API say: "the export shows +€2,108; that is your lira gain
+translated at today's rate; your actual euro gain is +€1,088; the difference is
 lira depreciation on your original capital."
 
 **The valuation grid is TARGET2 business days** — not Xetra, not the Turkish

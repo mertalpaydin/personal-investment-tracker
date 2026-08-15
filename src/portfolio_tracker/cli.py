@@ -6,16 +6,19 @@ with no business logic of its own.
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
 from portfolio_tracker import __version__
+from portfolio_tracker.core import fx
 from portfolio_tracker.db import migrate as migrations
 from portfolio_tracker.db.connection import DEFAULT_DB_PATH, connect
 from portfolio_tracker.importers import overrides
 from portfolio_tracker.importers.investing_com.importer import import_positions
+from portfolio_tracker.ingest import fx as ingest_fx
 
 app = typer.Typer(
     add_completion=False,
@@ -135,6 +138,65 @@ def import_(
 
     if report.errors or (strict and report.warnings):
         raise typer.Exit(code=1)
+
+
+@app.command("fetch-fx")
+def fetch_fx(
+    db: DbPath = DEFAULT_DB_PATH,
+    start: Annotated[
+        str, typer.Option("--start", help="Earliest date to fetch (YYYY-MM-DD).")
+    ] = "2024-07-01",
+    quote: Annotated[
+        str | None, typer.Option("--quote", help="Single currency; default is all needed.")
+    ] = None,
+    offline: Annotated[
+        bool, typer.Option("--offline", help="Use only data/fx_manual/, no network.")
+    ] = False,
+) -> None:
+    """Fetch daily reference rates, then report coverage against the grid."""
+    start_date = date.fromisoformat(start)
+    conn = connect(db)
+    try:
+        quotes = {quote} if quote else fx.required_quotes(conn)
+        if not quotes:
+            typer.echo("no non-euro currencies in this database; nothing to fetch")
+            return
+
+        for code in sorted(quotes):
+            observations = ingest_fx.load_manual(code)
+            source = "manual"
+            if not offline:
+                try:
+                    observations = ingest_fx.fetch_ecb(code, start_date) + observations
+                    source = "ecb + manual" if observations else "ecb"
+                except ingest_fx.FxIngestError as exc:
+                    typer.secho(f"{code}: {exc}", fg=typer.colors.YELLOW, err=True)
+                    if not observations:
+                        typer.secho(
+                            f"{code}: no rates available; drop a CSV in "
+                            f"{ingest_fx.MANUAL_DIR}/{code}.csv",
+                            fg=typer.colors.RED,
+                            err=True,
+                        )
+                        raise typer.Exit(code=1) from exc
+            written = ingest_fx.store(conn, observations)
+            conn.commit()
+            typer.echo(f"{code}: {written} rate(s) stored from {source}")
+
+        today = date.today()
+        for gap in fx.coverage_report(conn, start_date, today, quotes=quotes):
+            if gap.is_complete:
+                typer.echo(
+                    f"{gap.quote}: complete from {start_date} to {today} "
+                    f"(observed {gap.first_available} .. {gap.last_available})"
+                )
+            else:
+                typer.secho(
+                    f"{gap.quote}: {len(gap.missing)} grid day(s) missing, first {gap.missing[0]}",
+                    fg=typer.colors.YELLOW,
+                )
+    finally:
+        conn.close()
 
 
 @app.command()
