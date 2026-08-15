@@ -1,0 +1,44 @@
+# The primary job of pre-commit here is hosting the PII guard, not formatting.
+#
+# The exclude below is not cosmetic. `trailing-whitespace` strips the U+00A0
+# that terminates every Name cell in the example corpus, and `end-of-file-fixer`
+# appends a newline to files whose byte layout is the thing under test. Either
+# would leave the parser tests green while they test nothing.
+exclude: '^(data/example/|tests/data/).*\.csv$'
+
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.5
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-added-large-files
+        # Kept tight on purpose: a large file appearing in this repo is far
+        # more likely to be an exported statement than something legitimate.
+        # uv.lock is the one known exception -- it is ~340 KB of pinned hashes
+        # and must be committed for CI to resolve reproducibly.
+        args: [--maxkb=256]
+        exclude: '^uv\.lock$'
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: detect-private-key
+
+  - repo: local
+    hooks:
+      - id: check-no-pii
+        name: refuse real financial data or third-party PII
+        entry: python scripts/check_no_pii.py
+        language: system
+        pass_filenames: true
+        always_run: true
+        stages: [pre-commit, pre-push]

@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_FROZEN: "1"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --all-extras --dev
+      - run: uv run ruff check --output-format=github .
+      - run: uv run ruff format --check .
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --all-extras --dev
+      - run: uv run mypy
+
+  test:
+    # Windows is not optional. The example corpus deliberately carries a UTF-8
+    # BOM and CRLF line endings, and cross-platform line-ending handling is
+    # exactly the thing that breaks silently.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python }}
+      - run: uv sync --all-extras --dev
+      - run: uv run pytest -q --cov --cov-report=term-missing
+
+  pii:
+    # The guard runs over the whole worktree, not just a diff, and then over
+    # history. A file that was committed and later deleted is still reachable
+    # and still served by the GitHub API -- deleting it does not undo the leak.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --dev
+      - name: Scan working tree
+        run: uv run python scripts/check_no_pii.py --all
+      - name: Scan history for ever-added data files
+        run: uv run python scripts/check_no_pii.py --history
+
+  data-drift:
+    # The example corpus, its truth oracle and the PII guard's symbol allowlist
+    # are all produced by one generator. Regenerating must be byte-identical, so
+    # they cannot silently drift apart.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --dev
+      - name: Check generated example data is current
+        run: |
+          if [ -f scripts/make_example_data.py ]; then
+            uv run python scripts/make_example_data.py --check
+          else
+            echo "generator not present yet; skipping"
+          fi
