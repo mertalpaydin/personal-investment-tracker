@@ -15,7 +15,7 @@ import html
 import sqlite3
 from decimal import Decimal
 
-from portfolio_tracker.core import returns
+from portfolio_tracker.core import goal, returns
 from portfolio_tracker.money import ZERO
 
 _STYLE = """
@@ -47,6 +47,17 @@ ul.caveats { padding-left: 1.1rem; color: var(--muted); font-size: .88rem; }
 ul.caveats li { margin-bottom: .4rem; }
 .tag { font-size: .72rem; padding: .1rem .4rem; border-radius: .25rem;
        border: 1px solid currentColor; opacity: .7; }
+.bar { height: .6rem; border-radius: .3rem; margin: 1rem 0 .5rem;
+       background: color-mix(in srgb, currentColor 12%, transparent); overflow: hidden; }
+.bar span { display: block; height: 100%; background: var(--gain); }
+form.goal { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap;
+            margin: .75rem 0 0; font-size: .88rem; color: var(--muted); }
+form.goal input { width: 9rem; padding: .3rem .5rem; font: inherit;
+                  border-radius: .3rem; background: transparent; color: inherit;
+                  border: 1px solid color-mix(in srgb, currentColor 30%, transparent); }
+form.goal button { padding: .3rem .8rem; font: inherit; border-radius: .3rem;
+                   background: transparent; color: inherit; cursor: pointer;
+                   border: 1px solid color-mix(in srgb, currentColor 30%, transparent); }
 """
 
 
@@ -115,6 +126,8 @@ def render_dashboard(conn: sqlite3.Connection, *, person_id: int = 1) -> str:
     )
     parts.append("</div>")
 
+    parts.append(_goal_section(conn, person_id))
+
     parts.append("<h2>Return</h2><div class='cards'>")
     parts.append(_card("Time-weighted", _pct(summary.twr)))
     parts.append(_card("Annualised", _pct(summary.twr_annualised)))
@@ -182,6 +195,51 @@ def render_dashboard(conn: sqlite3.Connection, *, person_id: int = 1) -> str:
         "Steuerbescheinigung is authoritative. Not tax or investment advice.</p>"
     )
     return "\n".join(parts)
+
+
+def _goal_section(conn: sqlite3.Connection, person_id: int) -> str:
+    """The goal panel: a bar, an editable target, and the projection's caveats.
+
+    The target is editable here because a number nobody chose has no business
+    driving a progress bar. The form PUTs and reloads -- twelve lines of inline
+    JavaScript rather than a framework, for one field.
+    """
+    try:
+        state = goal.progress(conn, person_id=person_id)
+    except LookupError:
+        return ""
+
+    filled = min(Decimal(1), max(ZERO, state.progress_pct))
+    when = state.projected_date.isoformat() if state.projected_date else None
+    if when:
+        forecast = (
+            f"At {_eur(state.monthly_contribution_eur)} EUR/month of contributions and "
+            f"no investment return at all, around <strong>{html.escape(when)}</strong>."
+        )
+    else:
+        forecast = "Not enough contribution history to put a date on it."
+
+    caveats = "".join(f"<li>{html.escape(c)}</li>" for c in state.caveats)
+    return (
+        "<h2>Goal</h2>"
+        "<div class='cards'>"
+        + _card("Target", _eur(state.target_eur))
+        + _card("Reached", _pct(state.progress_pct))
+        + _card("Remaining", _eur(state.remaining_eur))
+        + "</div>"
+        f"<div class='bar'><span style='width:{filled:.4%}'></span></div>"
+        f"<p class='note'>{forecast}</p>"
+        "<form class='goal' onsubmit=\"event.preventDefault();"
+        "fetch('/api/goal',{method:'PUT',headers:{'Content-Type':'application/json'},"
+        "body:JSON.stringify({target_eur:this.target.value})})"
+        '.then(r=>r.ok?location.reload():r.json().then(e=>alert(e.detail)))">'
+        "<label for='target'>Change target</label>"
+        f"<input id='target' name='target' type='number' min='1' step='100' "
+        f"value='{state.target_eur:f}'>"
+        "<button type='submit'>Save</button>"
+        "</form>"
+        f"<ul class='caveats'>{caveats}</ul>"
+    )
 
 
 def _card(label: str, value: str, *, extra: str = "", note: str = "") -> str:

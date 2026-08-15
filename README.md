@@ -30,7 +30,7 @@ showing currency effect, and it flatters every position in a depreciating curren
 
 This tracker separates the two:
 
-```
+```text
 (1 + local return) × (1 + FX return) = (1 + EUR return)     exact, always
 ```
 
@@ -48,6 +48,7 @@ both be true and visible at once.
   as *return* rather than as new savings
 - **TWR via unit accounting**, XIRR, volatility, max drawdown
 - **JSON API** at `/api/*` plus a minimal server-rendered debug UI
+- **A goal target you set**, with a projection that assumes no investment return
 
 Not a trading system. Nothing places orders. Output is a planning worksheet, not
 tax advice — the bank's *Steuerbescheinigung* is authoritative.
@@ -76,8 +77,10 @@ uv run pt serve                     # http://127.0.0.1:8000/
 `/` and `/debug` serve the same server-rendered page — no build step, no
 JavaScript framework, no CDN. The JSON lives under `/api/*`, with OpenAPI at
 `/docs`. The server opens the database **read-only**: every write goes through a
-CLI command where it can be reviewed first, so there is no HTTP path to the
-ledger at all.
+CLI command where the inference behind it can be read before it is accepted, so
+there is no HTTP path to the ledger. The single exception is `PUT /api/goal`,
+which sets a display preference nothing derived depends on, and which takes its
+own connection so that reaching for write access is visible in the signature.
 
 Three things the API does that are easy to get wrong:
 
@@ -86,6 +89,27 @@ Three things the API does that are easy to get wrong:
 | **The total excludes cash** | `total_value_eur` is holdings plus deposit balances. Dividend income and sale proceeds sitting in the bank appear as `uninvested_cash_eur`, beside the total and never inside it — whether that money is still held is not knowable from the source data. |
 | **A missing input is a refusal, not a zero** | `/api/tax/*` returns **409** when the year's Basiszins is unpublished. A zero would look like an answer, and answers get filed on an *Anlage KAP*. |
 | **A stale price is reported, not hidden** | A five-day Bayram gap changes `valuation_status` and `price_stale_days`; it never changes the status code. Every response carries `as_of` and a `data_quality` block. |
+
+```text
+GET  /api/health/data          what can be trusted, and where it cannot
+GET  /api/portfolio            headline total, cost basis, gain split by currency
+GET  /api/positions            every open position
+GET  /api/positions/{key}      one position, incl. why it disagrees with the export
+GET  /api/allocation?dim=      asset_class | currency | account
+GET  /api/returns  · /series   TWR, XIRR, volatility, drawdown; the daily unit index
+GET  /api/fx?quote=TRY         stored rates, in the one direction they are stored
+GET  /api/accounts/deposits    deposit terms, including withholding at source
+GET  /api/tax/allowance        with a mandatory out-of-scope block
+GET  /api/tax/vorabpauschale   §18 InvStG forecast
+GET  /api/pending              inferences that have not reached the ledger
+GET  /api/goal  · PUT          progress toward the target; the only write
+```
+
+The goal target is stored, not compiled in — the €120,000 figure in the original
+brief was invented by the document that proposed it, and a number nobody chose has
+no business driving a progress bar. Its projection counts contributions and **no
+investment return at all**, and refuses to give a date when there is under six
+months of history to measure a rate from.
 
 ## The data is the interesting part
 
@@ -141,7 +165,7 @@ Stated here rather than buried, because they bound what the numbers mean:
 
 ## Architecture
 
-```
+```text
 importers/investing_com/   parse -> normalize -> reconcile -> import   (pure, then DB)
 core/fx.py                 the only currency conversion in the codebase
 core/lots.py               FIFO; freezes EUR cost basis at acquisition-date FX
@@ -150,6 +174,7 @@ core/returns.py            unit accounting, TWR/XIRR, local-vs-FX decomposition
 core/cash.py               running bank balance; infers the contributions nobody recorded
 core/accounts.py           deposit accrual; interest reads as return, never as savings
 core/tax.py                German engine; zero FX arithmetic, zero currency tests
+core/goal.py               target and projection; contributions only, no assumed return
 ingest/dividends.py        distributions, proposed for review rather than booked
 api/                       read-only FastAPI JSON + a server-rendered debug page
 ```

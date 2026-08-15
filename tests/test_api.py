@@ -24,7 +24,7 @@ from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 
-from portfolio_tracker.api.app import app, get_db
+from portfolio_tracker.api.app import app, get_db, get_writable_db
 from portfolio_tracker.db import migrate as M
 from portfolio_tracker.db.connection import connect
 
@@ -147,6 +147,7 @@ def client() -> Iterator[TestClient]:
     M.migrate(conn)
     _seed(conn)
     app.dependency_overrides[get_db] = lambda: conn
+    app.dependency_overrides[get_writable_db] = lambda: conn
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
@@ -161,6 +162,7 @@ def empty_client() -> Iterator[TestClient]:
     conn.execute("INSERT INTO person (id, name, joint_assessment) VALUES (1, 'A', 0)")
     conn.commit()
     app.dependency_overrides[get_db] = lambda: conn
+    app.dependency_overrides[get_writable_db] = lambda: conn
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
@@ -327,3 +329,111 @@ def test_the_page_shows_cash_outside_the_total(client: TestClient) -> None:
 
 def test_the_page_flags_unreviewed_inferences(client: TestClient) -> None:
     assert "Awaiting review" in client.get("/debug").text
+
+
+# ---------------------------------------------------------------------------
+# Position detail: the sentence this whole FX design exists to produce
+# ---------------------------------------------------------------------------
+
+
+def test_a_foreign_position_explains_why_it_disagrees_with_the_export(
+    client: TestClient,
+) -> None:
+    body = client.get("/api/positions/ZTFA").json()
+    split = body["return_decomposition"]
+    assert split["true_eur_gain"] == 200.0
+    assert split["local_gain_at_todays_rate"] == 1000.0
+    assert split["currency_effect"] == -800.0
+    explanation = split["vs_broker_export"]
+    assert "1,000.00" in explanation and "200.00" in explanation
+    assert "800.00" in explanation
+    assert "TRY depreciation" in explanation
+
+
+def test_a_euro_position_makes_no_currency_claim(client: TestClient) -> None:
+    """There is nothing to explain, so nothing is said. A EUR gain is the gain."""
+    split = client.get("/api/positions/ZGEQ").json()["return_decomposition"]
+    assert "vs_broker_export" not in split
+    assert split["currency_effect"] == 0.0
+
+
+def test_an_unknown_instrument_is_a_404(client: TestClient) -> None:
+    assert client.get("/api/positions/NOPE").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Allocation
+# ---------------------------------------------------------------------------
+
+
+def test_allocation_weights_sum_to_one(client: TestClient) -> None:
+    for dim in ("asset_class", "currency", "account"):
+        body = client.get("/api/allocation", params={"dim": dim}).json()
+        assert sum(b["weight"] for b in body["buckets"]) == pytest.approx(1.0)
+        assert body["total_eur"] == 10000.0
+
+
+def test_currency_allocation_names_the_basis_it_used(client: TestClient) -> None:
+    """A EUR-quoted S&P tracker carries dollar risk. The label is the honesty."""
+    body = client.get("/api/allocation", params={"dim": "currency"}).json()
+    assert body["basis"] == "quote_currency"
+
+
+def test_an_unknown_dimension_is_rejected_rather_than_interpolated(client: TestClient) -> None:
+    assert client.get("/api/allocation", params={"dim": "instrument"}).status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# The goal
+# ---------------------------------------------------------------------------
+
+
+def test_the_default_target_is_the_one_its_owner_chose(client: TestClient) -> None:
+    body = client.get("/api/goal").json()
+    assert body["target_eur"] == 200000.0
+    assert body["current_eur"] == 12500.0
+    assert body["remaining_eur"] == 187500.0
+    assert body["basis"] == "holdings plus deposit balances"
+
+
+def test_too_little_history_yields_no_projected_date(client: TestClient) -> None:
+    """One day of history cannot support a date, so none is offered."""
+    body = client.get("/api/goal").json()
+    assert body["projected_date"] is None
+    assert body["months_at_current_rate"] is None
+    assert any("too few to measure" in c for c in body["caveats"])
+
+
+def test_the_target_can_be_changed_and_persists(client: TestClient) -> None:
+    assert client.put("/api/goal", json={"target_eur": "50000"}).status_code == 200
+    assert client.get("/api/goal").json()["target_eur"] == 50000.0
+
+
+def test_a_non_positive_target_is_refused(client: TestClient) -> None:
+    for bad in ("0", "-100"):
+        assert client.put("/api/goal", json={"target_eur": bad}).status_code == 422
+    # And the stored value is untouched.
+    assert client.get("/api/goal").json()["target_eur"] == 200000.0
+
+
+def test_the_page_shows_the_goal_and_its_assumptions(client: TestClient) -> None:
+    page = client.get("/debug").text
+    assert "Goal" in page
+    assert "200,000.00" in page
+    assert "Change target" in page
+
+
+# ---------------------------------------------------------------------------
+# FX and deposits
+# ---------------------------------------------------------------------------
+
+
+def test_fx_states_its_direction(client: TestClient) -> None:
+    client.app.state  # noqa: B018 - touch nothing; the seed has no rates
+    assert client.get("/api/fx", params={"quote": "TRY"}).status_code == 404
+
+
+def test_deposit_terms_include_the_withholding_rate(client: TestClient) -> None:
+    """Turkish stopaj is taken at source; a model that accrues gross drifts high."""
+    body = client.get("/api/accounts/deposits").json()
+    assert body["accounts"] == []  # the seed has a depot, not a deposit account

@@ -20,14 +20,21 @@ from typing import Any, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel, Field
 
 from portfolio_tracker import __version__
 from portfolio_tracker.api.render import render_dashboard
-from portfolio_tracker.core import returns, tax
-from portfolio_tracker.db.connection import DEFAULT_DB_PATH, connect
+from portfolio_tracker.core import goal, returns, tax
+from portfolio_tracker.db.connection import DEFAULT_DB_PATH, connect, transaction
 from portfolio_tracker.money import ZERO
 
 DB_PATH = Path(DEFAULT_DB_PATH)
+
+
+class GoalUpdate(BaseModel):
+    """A target amount. Decimal on the way in, so a typed figure stays exact."""
+
+    target_eur: Decimal = Field(gt=0, description="Target portfolio value in EUR")
 
 
 def get_db() -> Any:
@@ -38,6 +45,19 @@ def get_db() -> Any:
     has no path to the ledger at all.
     """
     conn = connect(DB_PATH, read_only=True, same_thread=False)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def get_writable_db() -> Any:
+    """The one writable connection, reached by exactly one endpoint.
+
+    Separate from ``get_db`` so that read-only is the default a new route gets
+    for free, and reaching for write access is a visible act in the signature.
+    """
+    conn = connect(DB_PATH, same_thread=False)
     try:
         yield conn
     finally:
@@ -410,6 +430,253 @@ def pending(
             for r in rows
         ],
     }
+
+
+@app.get("/api/positions/{import_key}")
+def position_detail(
+    import_key: str,
+    conn: sqlite3.Connection = Depends(get_db),
+    person_id: int = Query(1, alias="person"),
+) -> dict[str, Any]:
+    """One position, with the currency question answered in words.
+
+    For a foreign-currency holding this is the endpoint the whole FX design
+    exists to serve: the source export shows the local gain translated at
+    today's rate, which is not what the owner made, and the difference has a
+    name and a size.
+    """
+    row = conn.execute(
+        """
+        SELECT i.import_key, i.name, i.currency, i.asset_class, i.tax_regime,
+               i.tax_scope_note, p.*
+        FROM position_daily p
+        JOIN instrument i ON i.id = p.instrument_id
+        JOIN account a ON a.id = p.account_id
+        WHERE i.import_key = ? AND a.person_id = ?
+        ORDER BY p.date DESC LIMIT 1
+        """,
+        (import_key, person_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(404, f"no position in {import_key!r}")
+
+    history = [
+        {
+            "date": r["date"],
+            "price_local": _decimal(r["price_local"]),
+            "fx_rate": _decimal(r["fx_rate"]),
+            "market_value_eur": _decimal(r["market_value_eur"]),
+            "unrealized_eur": _decimal(r["unrealized_eur"]),
+            "unrealized_local_eur": _decimal(r["unrealized_local_eur"]),
+            "unrealized_fx_eur": _decimal(r["unrealized_fx_eur"]),
+        }
+        for r in conn.execute(
+            "SELECT * FROM position_daily WHERE instrument_id = ? ORDER BY date",
+            (row["instrument_id"],),
+        )
+    ]
+
+    decomposition: dict[str, Any] = {
+        "true_eur_gain": _decimal(row["unrealized_eur"]),
+        "local_gain_at_todays_rate": _decimal(row["unrealized_local_eur"]),
+        "currency_effect": _decimal(row["unrealized_fx_eur"]),
+        "identity": "true_eur_gain = local_gain_at_todays_rate + currency_effect",
+    }
+    if row["currency"] != "EUR":
+        local = row["unrealized_local_eur"]
+        actual = row["unrealized_eur"]
+        gap = row["unrealized_fx_eur"]
+        direction = "depreciation" if gap < ZERO else "appreciation"
+        decomposition["vs_broker_export"] = (
+            f"A tracker translating at today's rate shows EUR {local:,.2f}. That is the "
+            f"{row['currency']} gain converted as if the capital had been invested today. "
+            f"The actual euro gain is EUR {actual:,.2f}; the EUR {abs(gap):,.2f} gap is "
+            f"{row['currency']} {direction} against the original capital."
+        )
+
+    return {
+        "as_of": row["date"],
+        "instrument": row["import_key"],
+        "name": row["name"],
+        "currency": row["currency"],
+        "asset_class": row["asset_class"],
+        "quantity": _decimal(row["quantity"]),
+        "market_value_local": _decimal(row["market_value_local"]),
+        "market_value_eur": _decimal(row["market_value_eur"]),
+        "cost_basis_eur": _decimal(row["cost_basis_eur"]),
+        "cost_basis_eur_at_spot": _decimal(row["cost_basis_eur_at_spot"]),
+        "return_decomposition": decomposition,
+        "tax_regime": row["tax_regime"],
+        "tax_scope_note": row["tax_scope_note"],
+        "valuation_status": row["valuation_status"],
+        "history": history,
+    }
+
+
+@app.get("/api/allocation")
+def allocation(
+    conn: sqlite3.Connection = Depends(get_db),
+    person_id: int = Query(1, alias="person"),
+    dim: str = Query("asset_class", pattern="^(asset_class|currency|account)$"),
+) -> dict[str, Any]:
+    """Weights by one dimension.
+
+    ``dim=currency`` reports the *quote* currency, which is not the same as the
+    economic one: a EUR-quoted S&P 500 tracker carries full dollar risk and is
+    counted here as EUR. That is mechanically right and economically misleading,
+    so the response says which basis it used rather than leaving it inferred.
+    """
+    row = _latest(conn, person_id)
+    column = {
+        "asset_class": "i.asset_class",
+        "currency": "i.currency",
+        "account": "a.name",
+    }[dim]
+
+    buckets: dict[str, Decimal] = {}
+    for r in conn.execute(
+        f"""
+        SELECT {column} AS bucket, p.market_value_eur
+        FROM position_daily p
+        JOIN instrument i ON i.id = p.instrument_id
+        JOIN account a ON a.id = p.account_id
+        WHERE p.date = ? AND a.person_id = ?
+        """,  # `column` comes from the fixed map above, never from the request
+        (row["date"], person_id),
+    ):
+        buckets[r["bucket"]] = buckets.get(r["bucket"], ZERO) + r["market_value_eur"]
+
+    total = sum(buckets.values(), ZERO)
+    return {
+        "as_of": row["date"],
+        "dimension": dim,
+        "basis": "quote_currency" if dim == "currency" else dim,
+        "total_eur": _decimal(total),
+        "buckets": sorted(
+            (
+                {
+                    "name": name,
+                    "value_eur": _decimal(value),
+                    "weight": _decimal(value / total) if total > ZERO else 0.0,
+                }
+                for name, value in buckets.items()
+            ),
+            key=lambda b: b["value_eur"] or 0.0,
+            reverse=True,
+        ),
+        "note": (
+            "Weights are on holdings only; deposits and cash are reported by "
+            "/api/portfolio and are not allocated here."
+        ),
+    }
+
+
+@app.get("/api/fx")
+def fx_series(
+    conn: sqlite3.Connection = Depends(get_db),
+    quote: str = Query("TRY"),
+    start: str | None = Query(None, alias="from"),
+    end: str | None = Query(None, alias="to"),
+) -> dict[str, Any]:
+    """Stored rates, in the one direction this system stores them."""
+    rows = conn.execute(
+        "SELECT date, rate, source FROM fx_rate WHERE quote = ? "
+        "AND date >= ifnull(?, date) AND date <= ifnull(?, date) ORDER BY date",
+        (quote.upper(), start, end),
+    ).fetchall()
+    if not rows:
+        raise HTTPException(404, f"no stored rates for EUR/{quote.upper()}")
+    return {
+        "base": "EUR",
+        "quote": quote.upper(),
+        "direction": f"{quote.upper()} per 1 EUR; conversion is always division",
+        "points": [
+            {"date": r["date"], "rate": _decimal(r["rate"]), "source": r["source"]} for r in rows
+        ],
+    }
+
+
+@app.get("/api/accounts/deposits")
+def deposit_accounts(
+    conn: sqlite3.Connection = Depends(get_db),
+    person_id: int = Query(1, alias="person"),
+) -> dict[str, Any]:
+    """Deposit accounts and their terms.
+
+    ``withholding_rate`` matters more than it looks: Turkish *stopaj* is taken
+    at source, so a model that accrues gross drifts above the real balance on
+    every payment date.
+    """
+    rows = conn.execute(
+        "SELECT id, name, kind, currency, interest_rate, interest_day_count, "
+        "interest_frequency, interest_last_paid, withholding_rate, maturity_date, "
+        "rollover_policy FROM account WHERE person_id = ? AND kind IN ('TAGESGELD', 'FESTGELD') "
+        "ORDER BY name",
+        (person_id,),
+    ).fetchall()
+    return {
+        "accounts": [
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "kind": r["kind"],
+                "currency": r["currency"],
+                "interest_rate": _decimal(r["interest_rate"]),
+                "day_count": r["interest_day_count"],
+                "frequency": r["interest_frequency"],
+                "last_paid": r["interest_last_paid"],
+                "withholding_rate": _decimal(r["withholding_rate"]),
+                "maturity_date": r["maturity_date"],
+                "rollover_policy": r["rollover_policy"],
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.get("/api/goal")
+def read_goal(
+    conn: sqlite3.Connection = Depends(get_db),
+    person_id: int = Query(1, alias="person"),
+) -> dict[str, Any]:
+    """Progress toward the target, with the projection's assumptions attached."""
+    try:
+        state = goal.progress(conn, person_id=person_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {
+        "as_of": state.as_of.isoformat(),
+        "target_eur": _decimal(state.target_eur),
+        "current_eur": _decimal(state.current_eur),
+        "remaining_eur": _decimal(state.remaining_eur),
+        "progress_pct": _decimal(state.progress_pct),
+        "basis": state.basis,
+        "monthly_contribution_eur": _decimal(state.monthly_contribution_eur),
+        "months_at_current_rate": state.months_at_current_rate,
+        "projected_date": state.projected_date.isoformat() if state.projected_date else None,
+        "caveats": state.caveats,
+    }
+
+
+@app.put("/api/goal")
+def write_goal(
+    payload: GoalUpdate,
+    conn: sqlite3.Connection = Depends(get_writable_db),
+) -> dict[str, Any]:
+    """Set the target.
+
+    The only write the HTTP surface can perform. A goal is a preference, not a
+    fact about the portfolio; nothing derived depends on it, so it cannot
+    corrupt a figure by being wrong. Everything that *would* corrupt a figure --
+    a confirmed cash flow, a booked distribution -- stays on the CLI, where the
+    inference behind it can be read before it is accepted.
+    """
+    try:
+        with transaction(conn):
+            stored = goal.set_target(conn, payload.target_eur)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"target_eur": _decimal(stored)}
 
 
 @app.get("/", response_class=HTMLResponse)
