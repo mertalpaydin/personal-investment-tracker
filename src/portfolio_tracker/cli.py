@@ -7,6 +7,7 @@ with no business logic of its own.
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import Annotated
 
@@ -14,7 +15,7 @@ import typer
 
 from portfolio_tracker import __version__, cli_flows
 from portfolio_tracker import seeds as instrument_seeds
-from portfolio_tracker.core import fx, lots, valuation
+from portfolio_tracker.core import cash, fx, lots, returns, valuation
 from portfolio_tracker.db import migrate as migrations
 from portfolio_tracker.db.connection import DEFAULT_DB_PATH, connect
 from portfolio_tracker.importers import overrides
@@ -322,6 +323,19 @@ def rebuild(
         typer.echo(
             f"valuation: {value_report.rows} position-days over {value_report.days} grid days"
         )
+
+        cash_rows = cash.build_cash_daily(conn, end=as_of)
+        conn.commit()
+        typer.echo(f"cash: {cash_rows} daily balance row(s)")
+
+        for person in conn.execute("SELECT id FROM person ORDER BY id"):
+            breaks = returns.build_portfolio_daily(conn, person_id=int(person["id"]), end=as_of)
+            conn.commit()
+            for problem in breaks:
+                typer.secho(f"  {problem}", fg=typer.colors.RED)
+            if breaks:
+                raise typer.Exit(code=1)
+        typer.echo("returns: unit series rebuilt")
         for problem in value_report.stale[:5]:
             typer.secho(f"  stale: {problem}", fg=typer.colors.YELLOW)
         for problem in value_report.missing[:5]:
@@ -334,6 +348,54 @@ def rebuild(
 
         if not lot_report.ok:
             raise typer.Exit(code=1)
+    finally:
+        conn.close()
+
+
+@app.command()
+def report(
+    db: DbPath = DEFAULT_DB_PATH,
+    person_id: Annotated[int, typer.Option("--person", help="Whose portfolio.")] = 1,
+) -> None:
+    """Headline performance, with the caveats that qualify it."""
+    conn = connect(db)
+    try:
+        summary = returns.summarise(conn, person_id=person_id)
+        if summary.days == 0:
+            typer.echo("no portfolio history; run `pt rebuild` first")
+            raise typer.Exit(code=1)
+
+        def pct(value: object) -> str:
+            return f"{value:.2%}" if isinstance(value, Decimal) else "n/a"
+
+        typer.echo(f"{summary.start} .. {summary.end}   ({summary.days} days)")
+        typer.echo("")
+        typer.echo(f"  time-weighted return   {pct(summary.twr):>10}")
+        typer.echo(f"    annualised           {pct(summary.twr_annualised):>10}")
+        typer.echo(
+            f"  money-weighted (XIRR)  {pct(summary.xirr):>10}"
+            f"   [reliability: {summary.xirr_reliability}]"
+        )
+        typer.echo(f"    timing gap           {pct(summary.timing_gap):>10}")
+        typer.echo(f"  volatility             {pct(summary.volatility):>10}")
+        typer.echo(f"  max drawdown           {pct(summary.max_drawdown):>10}")
+        typer.echo("")
+        typer.echo(f"  contributions          EUR {summary.external_flows_eur:>12,.2f}")
+
+        last = conn.execute(
+            "SELECT * FROM portfolio_daily WHERE person_id = ? ORDER BY date DESC LIMIT 1",
+            (person_id,),
+        ).fetchone()
+        if last is not None:
+            typer.echo(f"  positions              EUR {last['market_value_eur']:>12,.2f}")
+            typer.echo(f"  cash                   EUR {last['cash_eur']:>12,.2f}")
+            typer.echo(f"  total value            EUR {last['total_value_eur']:>12,.2f}")
+
+        if summary.caveats:
+            typer.echo("")
+            typer.echo("caveats:")
+            for caveat in summary.caveats:
+                typer.secho(f"  - {caveat}", fg=typer.colors.YELLOW)
     finally:
         conn.close()
 

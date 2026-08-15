@@ -215,12 +215,40 @@ def build_position_daily(
             calendar = instrument["trading_calendar"]
             currency = instrument["currency"]
 
+            quantity = sum((lot.quantity_on(day) for lot in lots), ZERO)
+            # Quantised: a per-unit cost is a division, so summing across lots
+            # accumulates 20-odd meaningless digits. A cost basis carrying more
+            # precision than the cent it came from is false confidence.
+            cost_local = quantize_money(
+                sum((lot.cost_per_unit_local * lot.quantity_on(day) for lot in lots), ZERO)
+            )
+            cost_eur = quantize_money(
+                sum(((lot.cost_per_unit_eur or ZERO) * lot.quantity_on(day) for lot in lots), ZERO)
+            )
+
             observed = [(d, p) for d, p in prices[instrument_id] if d <= day]
-            if not observed:
-                report.missing.append(f"{instrument['import_key']} {day}: no price at all")
-                continue
-            price_asof, price = observed[-1]
-            price_stale = business_days_between(price_asof, day, calendar)
+            if observed:
+                price_asof, price = observed[-1]
+                price_stale = business_days_between(price_asof, day, calendar)
+                held_at_cost = False
+            else:
+                # No market price yet -- typically the day a position is opened,
+                # before the feed's history begins. Hold it at what was paid.
+                #
+                # Skipping the row instead would drop the position from the
+                # portfolio's value while its funding contribution had already
+                # been recorded, and the day the price finally appears would
+                # register as pure return. That produced a +569% day before
+                # this fallback existed.
+                if quantity <= ZERO:
+                    continue
+                price = cost_local / quantity
+                price_asof = day
+                price_stale = 0
+                held_at_cost = True
+                report.missing.append(
+                    f"{instrument['import_key']} {day}: no market price; held at cost"
+                )
 
             rate_info = rates[currency].get(day)
             if rate_info is None:
@@ -236,19 +264,11 @@ def build_position_daily(
                     raise StalePriceError(message)
                 report.stale.append(message)
 
-            quantity = sum((lot.quantity_on(day) for lot in lots), ZERO)
-            # Quantised: a per-unit cost is a division, so summing across lots
-            # accumulates 20-odd meaningless digits. A cost basis carrying more
-            # precision than the cent it came from is false confidence.
-            cost_local = quantize_money(
-                sum((lot.cost_per_unit_local * lot.quantity_on(day) for lot in lots), ZERO)
-            )
-            cost_eur = quantize_money(
-                sum(((lot.cost_per_unit_eur or ZERO) * lot.quantity_on(day) for lot in lots), ZERO)
-            )
-
             value = value_position(quantity, price, rate_info.rate, cost_local, cost_eur)
-            status = "OK" if price_stale <= MAX_STALE_DAYS else "STALE"
+            if held_at_cost:
+                status = "MISSING"
+            else:
+                status = "OK" if price_stale <= MAX_STALE_DAYS else "STALE"
 
             conn.execute(
                 """
