@@ -7,6 +7,7 @@ when the data it was supposed to produce turns out to be missing.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -52,11 +53,30 @@ def test_init_db_reset_derived_reports_what_it_cleared(tmp_path: Path) -> None:
     assert "derived table" in result.stdout
 
 
-def test_doctor_exits_non_zero_while_unimplemented() -> None:
-    """It reports honestly rather than pretending to have checked anything."""
-    result = runner.invoke(app, ["doctor"])
+def test_doctor_refuses_a_database_that_does_not_exist(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["doctor", "--db", str(tmp_path / "absent.db")])
     assert result.exit_code == 1
-    assert "not implemented" in result.stdout
+    assert "init-db" in result.output
+
+
+def test_doctor_passes_on_an_empty_but_valid_database(tmp_path: Path) -> None:
+    """Nothing to check is not the same as something wrong."""
+    target = tmp_path / "portfolio.db"
+    runner.invoke(app, ["init-db", "--db", str(target)])
+    result = runner.invoke(app, ["doctor", "--db", str(target)])
+    assert result.exit_code == 0, result.output
+    assert "every identity holds" in result.output
+
+
+def test_doctor_json_is_machine_readable(tmp_path: Path) -> None:
+    target = tmp_path / "portfolio.db"
+    runner.invoke(app, ["init-db", "--db", str(target)])
+    result = runner.invoke(app, ["doctor", "--db", str(target), "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["checks_run"] > 0
+    assert isinstance(payload["findings"], list)
 
 
 def test_serve_refuses_a_database_that_does_not_exist(tmp_path: Path) -> None:

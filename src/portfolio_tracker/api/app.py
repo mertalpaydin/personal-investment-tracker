@@ -210,6 +210,21 @@ def portfolio(
         "holdings_eur": _decimal(row["market_value_eur"]),
         "deposits_eur": _decimal(row["deposits_eur"]),
         "uninvested_cash_eur": _decimal(row["cash_eur"]),
+        # Where that cash came from. "EUR 2,548 uninvested" answers the wrong
+        # question: capital waiting to be reinvested and income that may
+        # already have been spent have different meanings and different fates.
+        "uninvested_cash": {
+            "total_eur": _decimal(row["cash_eur"]),
+            "from_income_eur": _decimal(row["income_cash_eur"]),
+            "from_capital_eur": _decimal(row["cash_eur"] - row["income_cash_eur"]),
+            "attribution_rule": (
+                "capital spent before income. A bank account is fungible, so this "
+                "is a stated convention, not an observation."
+            ),
+        },
+        # Income *earned*, whether or not it is still in cash. A reinvested
+        # dividend leaves the balance without ceasing to have been received.
+        "income_received_eur": _decimal(row["income_received_eur"]),
         "cost_basis_eur": _decimal(row["cost_basis_eur"]),
         "unrealized_eur": _decimal(sum((r["u"] for r in unrealized), ZERO)),
         "unrealized_local_eur": _decimal(sum((r["l"] for r in unrealized), ZERO)),
@@ -308,7 +323,8 @@ def series(
 ) -> dict[str, Any]:
     """The daily unit-price index, base 100 at inception."""
     rows = conn.execute(
-        "SELECT date, unit_price, total_value_eur, cash_eur, deposits_eur, drawdown_pct "
+        "SELECT date, unit_price, total_value_eur, cash_eur, deposits_eur, "
+        "income_cash_eur, income_received_eur, drawdown_pct "
         "FROM portfolio_daily WHERE person_id = ? ORDER BY date",
         (person_id,),
     ).fetchall()
@@ -321,6 +337,8 @@ def series(
                 "total_value_eur": _decimal(r["total_value_eur"]),
                 "deposits_eur": _decimal(r["deposits_eur"]),
                 "uninvested_cash_eur": _decimal(r["cash_eur"]),
+                "income_cash_eur": _decimal(r["income_cash_eur"]),
+                "income_received_eur": _decimal(r["income_received_eur"]),
                 "drawdown_pct": _decimal(r["drawdown_pct"]),
             }
             for r in rows

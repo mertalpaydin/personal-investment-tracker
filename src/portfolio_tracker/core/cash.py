@@ -59,6 +59,19 @@ class FlowEvent:
     balance_after: Decimal
     txn_id: int | None = None
     note: str = ""
+    #: The part of ``balance_after`` that is realised income rather than
+    #: capital awaiting investment. See ``INCOME_KINDS`` and the drawdown rule.
+    income_after: Decimal = ZERO
+    #: Cumulative income credited to this account up to and including this
+    #: event, whether or not it is still sitting in cash. Reinvested income
+    #: leaves the balance but does not stop having been earned.
+    income_received: Decimal = ZERO
+
+
+#: Credits that are *return* rather than money entering the portfolio. The
+#: distinction is the same one ``flow_class`` makes in the ledger, restated
+#: here because the cash balance needs it per event rather than per row.
+INCOME_KINDS = frozenset({"DISTRIBUTION", "INTEREST"})
 
 
 @dataclass
@@ -117,24 +130,59 @@ def compute_flows(conn: sqlite3.Connection, *, account_id: int | None = None) ->
     ).fetchall()
 
     balances: dict[tuple[int, str], Decimal] = {}
+    # The part of each balance that is realised income, and the running total
+    # of income ever credited. The second is not derivable from the first:
+    # reinvested income leaves the balance without ceasing to have been earned.
+    income_pots: dict[tuple[int, str], Decimal] = {}
+    income_totals: dict[tuple[int, str], Decimal] = {}
 
     for row in rows:
         key = (int(row["account_id"]), row["currency"])
         balance = balances.get(key, ZERO)
+        income = income_pots.get(key, ZERO)
+        received = income_totals.get(key, ZERO)
         when = date.fromisoformat(row["trade_date"])
         value = _amount(row)
+
+        def record(
+            kind: str,
+            amount: Decimal,
+            balance_after: Decimal,
+            income_after: Decimal,
+            received_after: Decimal,
+            note: str = "",
+            *,
+            when: date = when,
+            key: tuple[int, str] = key,
+            row: sqlite3.Row = row,
+        ) -> FlowEvent:
+            event = FlowEvent(
+                when,
+                key[0],
+                key[1],
+                kind,
+                amount,
+                balance_after,
+                int(row["id"]),
+                note,
+                income_after=income_after,
+                income_received=received_after,
+            )
+            report.events.append(event)
+            return event
 
         if row["type"] in ("DEPOSIT", "WITHDRAWAL"):
             # Money crossing the boundary, already recorded. It credits (or
             # debits) the balance, and it is NOT re-inferred: a confirmed
             # contribution funding a later purchase is exactly what the
             # inference was proposing in the first place.
-            signed = value if row["type"] == "DEPOSIT" else -value
-            balance += signed
-            report.events.append(
-                FlowEvent(when, key[0], key[1], row["type"], signed, balance, int(row["id"]))
-            )
-            balances[key] = max(balance, ZERO)
+            if row["type"] == "DEPOSIT":
+                signed, balance = value, balance + value
+            else:
+                signed = -value
+                balance, income = _spend(balance, income, value)
+            record(row["type"], signed, max(balance, ZERO), income, received)
+            balances[key], income_pots[key] = max(balance, ZERO), income
             continue
 
         if row["type"] == "INTEREST":
@@ -142,20 +190,20 @@ def compute_flows(conn: sqlite3.Connection, *, account_id: int | None = None) ->
             # leaves the account. `quantity` carries what was retained.
             retained = Decimal(str(row["quantity"] or 0))
             balance += retained
-            report.events.append(
-                FlowEvent(when, key[0], key[1], "INTEREST", retained, balance, int(row["id"]))
-            )
-            balances[key] = balance
+            income += retained
+            received += retained
+            record("INTEREST", retained, balance, income, received)
+            balances[key], income_pots[key], income_totals[key] = balance, income, received
             continue
 
         if row["type"] == "DIVIDEND":
             # Income, not a contribution: it credits cash so the ex-date price
             # fall is offset, but it is return rather than new money.
             balance += value
-            report.events.append(
-                FlowEvent(when, key[0], key[1], "DISTRIBUTION", value, balance, int(row["id"]))
-            )
-            balances[key] = balance
+            income += value
+            received += value
+            record("DISTRIBUTION", value, balance, income, received)
+            balances[key], income_pots[key], income_totals[key] = balance, income, received
             continue
 
         if row["type"] == "SELL":
@@ -165,53 +213,55 @@ def compute_flows(conn: sqlite3.Connection, *, account_id: int | None = None) ->
             if disposition == "WITHDRAW":
                 # The money left the portfolio: it neither stays as cash nor
                 # funds anything later.
-                report.events.append(
-                    FlowEvent(
-                        when,
-                        key[0],
-                        key[1],
-                        "WITHDRAWAL",
-                        -value,
-                        balance,
-                        int(row["id"]),
-                        "proceeds taken out of the portfolio",
-                    )
+                record(
+                    "WITHDRAWAL",
+                    -value,
+                    balance,
+                    income,
+                    received,
+                    "proceeds taken out of the portfolio",
                 )
                 continue
             balance += value
-            report.events.append(
-                FlowEvent(when, key[0], key[1], "SELL_PROCEEDS", value, balance, int(row["id"]))
-            )
+            record("SELL_PROCEEDS", value, balance, income, received)
         else:
             shortfall = value - balance
             if shortfall > DUST:
                 # Only the part not covered by existing cash is new money.
-                deposit = FlowEvent(
-                    when,
-                    key[0],
-                    key[1],
+                deposit = record(
                     "INFERRED_DEPOSIT",
                     quantize_money(shortfall),
                     ZERO,
-                    int(row["id"]),
+                    ZERO,
+                    received,
                     f"purchase of {quantize_money(value)} against a cash balance of "
                     f"{quantize_money(balance)}",
                 )
                 report.inferred_deposits.append(deposit)
-                report.events.append(deposit)
-                balance = ZERO
+                balance, income = ZERO, ZERO
             else:
-                balance -= value
-            report.events.append(
-                FlowEvent(
-                    when, key[0], key[1], "PURCHASE", -value, max(balance, ZERO), int(row["id"])
-                )
-            )
+                balance, income = _spend(balance, income, value)
+            record("PURCHASE", -value, max(balance, ZERO), income, received)
 
-        balances[key] = max(balance, ZERO)
+        balances[key], income_pots[key] = max(balance, ZERO), income
 
     report.idle_periods = _idle_periods(report.events)
     return report
+
+
+def _spend(balance: Decimal, income: Decimal, amount: Decimal) -> tuple[Decimal, Decimal]:
+    """Draw ``amount`` out of a balance, spending capital before income.
+
+    A bank account is fungible: no record says which euro funded which
+    purchase, so this is a stated convention rather than an observation. It is
+    the one that matches intent -- money deposited in order to buy something is
+    spent on it -- and it is the conservative direction. Spending income first
+    would report the dividends as reinvested and leave the owner believing a
+    balance is capital, which is the more misleading of the two errors.
+    """
+    capital = balance - income
+    from_capital = min(capital, amount)
+    return balance - amount, income - (amount - from_capital)
 
 
 def _idle_periods(events: list[FlowEvent]) -> list[tuple[date, date, Decimal, int]]:
@@ -354,12 +404,14 @@ def build_cash_daily(conn: sqlite3.Connection, *, end: date, start: date | None 
         ]
         rates = fx.get_rate_series(conn, currency, days, strict=False)
         balance = ZERO
+        income = ZERO
         idle = 0
         cursor = 0
         for day in days:
             moved = False
             while cursor < len(relevant) and relevant[cursor].on <= day:
                 balance = relevant[cursor].balance_after
+                income = relevant[cursor].income_after
                 cursor += 1
                 moved = True
             idle = 0 if moved else (idle + 1 if balance > DUST else 0)
@@ -367,8 +419,9 @@ def build_cash_daily(conn: sqlite3.Connection, *, end: date, start: date | None 
             conn.execute(
                 """
                 INSERT INTO cash_daily
-                    (date, account_id, currency, balance_local, balance_eur, fx_rate, idle_days)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (date, account_id, currency, balance_local, balance_eur, fx_rate,
+                     idle_days, income_local, income_eur)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     day.isoformat(),
@@ -378,6 +431,8 @@ def build_cash_daily(conn: sqlite3.Connection, *, end: date, start: date | None 
                     quantize_money(fx.to_eur(balance, rate.rate)) if rate else None,
                     rate.rate if rate else None,
                     idle,
+                    quantize_money(income),
+                    quantize_money(fx.to_eur(income, rate.rate)) if rate else None,
                 ),
             )
             written += 1

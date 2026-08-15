@@ -18,6 +18,8 @@ from portfolio_tracker.core import cash
 from portfolio_tracker.db import migrate as M
 from portfolio_tracker.db.connection import connect
 
+D = Decimal
+
 
 @pytest.fixture
 def db() -> sqlite3.Connection:
@@ -253,3 +255,87 @@ def test_the_proposal_explains_its_own_arithmetic(db: sqlite3.Connection) -> Non
     cash.propose_deposits(db)
     basis = db.execute("SELECT basis FROM pending_entry").fetchone()["basis"]
     assert "1500" in basis and "1000" in basis
+
+
+# ---------------------------------------------------------------------------
+# Provenance: which part of the idle balance is income
+# ---------------------------------------------------------------------------
+
+
+def final(report: cash.FlowReport) -> cash.FlowEvent:
+    return report.events[-1]
+
+
+def test_a_distribution_is_income_and_says_so(db: sqlite3.Connection) -> None:
+    trade(db, "SELL", "2026-01-05", "1000")
+    trade(db, "DIVIDEND", "2026-01-06", "100")
+    state = final(cash.compute_flows(db))
+    assert state.balance_after == D(1100)
+    assert state.income_after == D(100)
+    assert state.income_received == D(100)
+
+
+def test_a_purchase_spends_capital_before_income(db: sqlite3.Connection) -> None:
+    """The conservative direction, and the one that matches intent.
+
+    Spending income first would report the dividend as reinvested and leave the
+    owner believing the remaining balance is capital -- the more misleading of
+    the two available errors.
+    """
+    trade(db, "SELL", "2026-01-05", "1000")
+    trade(db, "DIVIDEND", "2026-01-06", "100")
+    trade(db, "BUY", "2026-01-07", "900")
+    state = final(cash.compute_flows(db))
+    assert state.balance_after == D(200)
+    assert state.income_after == D(100)  # untouched: capital covered the purchase
+
+
+def test_income_is_spent_only_once_capital_runs_out(db: sqlite3.Connection) -> None:
+    trade(db, "SELL", "2026-01-05", "1000")
+    trade(db, "DIVIDEND", "2026-01-06", "100")
+    trade(db, "BUY", "2026-01-07", "1040")
+    state = final(cash.compute_flows(db))
+    assert state.balance_after == D(60)
+    assert state.income_after == D(60)  # 1000 capital, then 40 of the income
+
+
+def test_reinvested_income_leaves_the_balance_but_stays_received(
+    db: sqlite3.Connection,
+) -> None:
+    """The distinction the two fields exist for.
+
+    A tool that reports only the cash balance makes an income stream vanish the
+    moment it is put back to work, which is how EUR 2,549 of distributions came
+    to be booked as a loss in the first place.
+    """
+    trade(db, "DIVIDEND", "2026-01-06", "100")
+    trade(db, "BUY", "2026-01-07", "100")
+    state = final(cash.compute_flows(db))
+    assert state.balance_after == D(0)
+    assert state.income_after == D(0)
+    assert state.income_received == D(100)
+
+
+def test_the_split_always_sums_to_the_balance(db: sqlite3.Connection) -> None:
+    trade(db, "SELL", "2026-01-05", "1000")
+    trade(db, "DIVIDEND", "2026-01-06", "100")
+    trade(db, "BUY", "2026-01-07", "300")
+    trade(db, "DIVIDEND", "2026-01-08", "50")
+    trade(db, "BUY", "2026-01-09", "800")
+    for event in cash.compute_flows(db).events:
+        capital = event.balance_after - event.income_after
+        assert capital >= D(0), f"{event.kind} on {event.on} attributed negative capital"
+        assert event.income_after >= D(0)
+        assert event.income_after <= event.balance_after
+
+
+def test_an_inferred_deposit_resets_both_pots(db: sqlite3.Connection) -> None:
+    """The purchase consumed everything, income included, and needed more."""
+    trade(db, "DIVIDEND", "2026-01-06", "100")
+    trade(db, "BUY", "2026-01-07", "5000")
+    report = cash.compute_flows(db)
+    assert report.inferred_deposits[0].amount == D("4900.00")
+    state = final(report)
+    assert state.balance_after == D(0)
+    assert state.income_after == D(0)
+    assert state.income_received == D(100)

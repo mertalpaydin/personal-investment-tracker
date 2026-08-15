@@ -24,6 +24,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
+from typing import NamedTuple
 
 from portfolio_tracker.core.calendars import TARGET2, grid_days
 from portfolio_tracker.money import ZERO, quantize_money
@@ -257,10 +258,26 @@ def max_drawdown(states: list[DayState]) -> Decimal | None:
 # ---------------------------------------------------------------------------
 
 
+class DayValues(NamedTuple):
+    """One day's inputs, named because six positional Decimals is a trap."""
+
+    market: Decimal
+    cash: Decimal
+    cost: Decimal
+    realized: Decimal
+    stale: int
+    deposits: Decimal
+    #: The part of `cash` that is realised income rather than capital waiting
+    #: to be invested. Not added to anything -- reported beside it.
+    income_cash: Decimal
+    #: All income ever credited, whether or not it is still sitting in cash.
+    income_received: Decimal
+
+
 def _daily_values(
     conn: sqlite3.Connection, person_id: int, days: list[date]
-) -> dict[date, tuple[Decimal, Decimal, Decimal, Decimal, int, Decimal]]:
-    """Per day: positions, brokerage cash, cost, realised gain, stale count, deposits."""
+) -> dict[date, DayValues]:
+    """Per day: positions, brokerage cash and its income share, cost, and the rest."""
     positions: dict[date, list[Decimal]] = {}
     stale: dict[date, int] = {}
     for row in conn.execute(
@@ -285,17 +302,40 @@ def _daily_values(
     # still there or has been spent.
     cash: dict[date, Decimal] = {}
     deposits: dict[date, Decimal] = {}
+    income_cash: dict[date, Decimal] = {}
     for row in conn.execute(
         """
-        SELECT c.date, c.balance_eur, a.kind FROM cash_daily c
+        SELECT c.date, c.balance_eur, c.income_eur, a.kind FROM cash_daily c
         JOIN account a ON a.id = c.account_id
         WHERE a.person_id = ? AND c.balance_eur IS NOT NULL
         """,
         (person_id,),
     ):
         when = date.fromisoformat(row["date"])
-        bucket = deposits if row["kind"] in ("TAGESGELD", "FESTGELD") else cash
+        is_deposit = row["kind"] in ("TAGESGELD", "FESTGELD")
+        bucket = deposits if is_deposit else cash
         bucket[when] = bucket.get(when, ZERO) + row["balance_eur"]
+        if not is_deposit and row["income_eur"] is not None:
+            income_cash[when] = income_cash.get(when, ZERO) + row["income_eur"]
+
+    # Income *received*, running. Distinct from the income still sitting in
+    # cash: a reinvested dividend leaves the balance but was still earned, and
+    # a tool that reports only the balance makes the income stream vanish the
+    # moment it is put back to work.
+    income_received: dict[date, Decimal] = {}
+    running_income = ZERO
+    for row in conn.execute(
+        """
+        SELECT t.trade_date, t.gross_amount_eur FROM transaction_ t
+        JOIN account a ON a.id = t.account_id
+        WHERE a.person_id = ? AND t.type IN ('DIVIDEND', 'INTEREST')
+        ORDER BY t.trade_date
+        """,
+        (person_id,),
+    ):
+        if row["gross_amount_eur"] is not None:
+            running_income += row["gross_amount_eur"]
+        income_received[date.fromisoformat(row["trade_date"])] = running_income
 
     realized: dict[date, Decimal] = {}
     running = ZERO
@@ -312,18 +352,22 @@ def _daily_values(
             running += row["gross_gain_eur"]
         realized[date.fromisoformat(row["trade_date"])] = running
 
-    out: dict[date, tuple[Decimal, Decimal, Decimal, Decimal, int, Decimal]] = {}
+    out: dict[date, DayValues] = {}
     carried = ZERO
+    carried_income = ZERO
     for day in days:
         market, cost = positions.get(day, [ZERO, ZERO])
         carried = realized.get(day, carried)
-        out[day] = (
-            market,
-            cash.get(day, ZERO),
-            cost,
-            carried,
-            stale.get(day, 0),
-            deposits.get(day, ZERO),
+        carried_income = income_received.get(day, carried_income)
+        out[day] = DayValues(
+            market=market,
+            cash=cash.get(day, ZERO),
+            cost=cost,
+            realized=carried,
+            stale=stale.get(day, 0),
+            deposits=deposits.get(day, ZERO),
+            income_cash=income_cash.get(day, ZERO),
+            income_received=carried_income,
         )
     return out
 
@@ -402,11 +446,12 @@ def build_portfolio_daily(
     values = _daily_values(conn, person_id, days)
     flows = _external_flows(conn, person_id, days)
 
-    series = [
-        (day, values[day][0] + values[day][1] + values[day][5], flows.get(day, ZERO))
-        for day in days
-        if values[day][0] + values[day][1] + values[day][5] > ZERO
-    ]
+    def basis(day: date) -> Decimal:
+        """What the return maths runs on: everything the portfolio holds."""
+        v = values[day]
+        return v.market + v.cash + v.deposits
+
+    series = [(day, basis(day), flows.get(day, ZERO)) for day in days if basis(day) > ZERO]
     states = build_units(series)
     breaks = check_unit_identity(states)
 
@@ -429,38 +474,40 @@ def build_portfolio_daily(
 
     peak = states[0].unit_price if states else ZERO
     for state in states:
-        market, cash_eur, cost, realized, stale_count, deposits_eur = values[state.on]
+        v = values[state.on]
         # Headline: what the owner has. Basis: what the return maths needs.
-        headline = market + deposits_eur
+        headline = v.market + v.deposits
         peak = max(peak, state.unit_price)
         conn.execute(
             """
             INSERT INTO portfolio_daily
                 (date, person_id, market_value_eur, accrued_income_eur, total_value_eur,
                  cost_basis_eur, cash_eur, deposits_eur, valuation_basis_eur,
-                 realized_gain_eur,
+                 income_cash_eur, income_received_eur, realized_gain_eur,
                  net_external_flow_eur, units_issued, units_outstanding, unit_price,
                  daily_return, drawdown_pct, completeness, stale_instruments)
-            VALUES (?, ?, ?, '0', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, '0', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 state.on.isoformat(),
                 person_id,
-                quantize_money(market),
+                quantize_money(v.market),
                 quantize_money(headline),
-                quantize_money(cost),
-                quantize_money(cash_eur),
-                quantize_money(deposits_eur),
+                quantize_money(v.cost),
+                quantize_money(v.cash),
+                quantize_money(v.deposits),
                 quantize_money(state.value_eur),
-                quantize_money(realized),
+                quantize_money(v.income_cash),
+                quantize_money(v.income_received),
+                quantize_money(v.realized),
                 quantize_money(state.external_flow_eur),
                 state.units_issued,
                 state.units_outstanding,
                 state.unit_price,
                 state.daily_return,
                 (state.unit_price / peak - 1) if peak > ZERO else None,
-                "PARTIAL" if stale_count else "FULL",
-                stale_count,
+                "PARTIAL" if v.stale else "FULL",
+                v.stale,
             ),
         )
     return breaks

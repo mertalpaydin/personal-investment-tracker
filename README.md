@@ -74,6 +74,12 @@ uv sync --extra api
 uv run pt serve                     # http://127.0.0.1:8000/
 ```
 
+Or just run [`run.py`](run.py) — from an IDE's run button or `python run.py`. It
+checks the database is present and migrated, picks a free port if 8000 is taken,
+waits for the server to actually answer, and only then opens the browser. That
+last step is the point: opening it immediately races a cold start and loses,
+which means a connection-refused page and a manual reload every time.
+
 `/` and `/debug` serve the same server-rendered page — no build step, no
 JavaScript framework, no CDN. The JSON lives under `/api/*`, with OpenAPI at
 `/docs`. The server opens the database **read-only**: every write goes through a
@@ -104,6 +110,13 @@ GET  /api/tax/vorabpauschale   §18 InvStG forecast
 GET  /api/pending              inferences that have not reached the ledger
 GET  /api/goal  · PUT          progress toward the target; the only write
 ```
+
+`uv run pt doctor` checks the derived data against the identities it must
+satisfy — market value is quantity times price, the gain split's parts sum to
+the whole, contributions in the daily series match contributions in the ledger.
+Errors are bugs; warnings are gaps in the source that bound what the numbers
+mean. Three of those checks caught real bugs during development, including a
+1326% return produced by five contributions that fell off the valuation grid.
 
 The goal target is stored, not compiled in — the €120,000 figure in the original
 brief was invented by the document that proposed it, and a number nobody chose has

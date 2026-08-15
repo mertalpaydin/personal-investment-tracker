@@ -6,6 +6,8 @@ with no business logic of its own.
 
 from __future__ import annotations
 
+import json
+from contextlib import closing
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -16,10 +18,12 @@ import typer
 from portfolio_tracker import __version__, cli_flows
 from portfolio_tracker import seeds as instrument_seeds
 from portfolio_tracker.core import cash, fx, lots, returns, tax, valuation
+from portfolio_tracker.core import doctor as doctor_checks
 from portfolio_tracker.db import migrate as migrations
 from portfolio_tracker.db.connection import DEFAULT_DB_PATH, connect
 from portfolio_tracker.importers import overrides
 from portfolio_tracker.importers.investing_com.importer import import_positions
+from portfolio_tracker.importers.report import Severity
 from portfolio_tracker.ingest import fx as ingest_fx
 from portfolio_tracker.ingest import prices as ingest_prices
 
@@ -511,10 +515,74 @@ def serve(
 
 
 @app.command()
-def doctor() -> None:
-    """Re-run data-quality identity checks against the database."""
-    typer.echo("doctor: not implemented yet (lands with the importer, phase 3)")
-    raise typer.Exit(code=1)
+def doctor(
+    db: DbPath = DEFAULT_DB_PATH,
+    strict: Annotated[
+        bool, typer.Option("--strict", help="Exit non-zero on warnings too, not just errors.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Machine-readable output.")] = False,
+) -> None:
+    """Check the derived data against the identities it must satisfy.
+
+    Errors are inconsistencies: a market value that is not quantity times
+    price, a gain split whose parts do not sum, contributions in the daily
+    series that do not match the ledger. Each is a bug, not a surprise.
+
+    Warnings and notes are gaps rather than faults -- unresolved sale
+    dispositions, missing fees, prices carried forward. They bound what the
+    numbers mean, which is why they are printed instead of filtered out.
+    """
+    if not Path(db).exists():
+        typer.secho(f"no database at {db}; run `pt init-db` first", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    with closing(connect(db, read_only=True)) as conn:
+        report = doctor_checks.run(conn)
+
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {
+                    "ok": report.ok,
+                    "checks_run": report.checks_run,
+                    "rows_examined": report.rows_examined,
+                    "findings": [
+                        {
+                            "code": f.code,
+                            "severity": str(f.severity),
+                            "message": f.message,
+                            "detail": f.detail,
+                        }
+                        for f in report.findings
+                    ],
+                },
+                indent=2,
+            )
+        )
+    else:
+        colours = {
+            Severity.ERROR: typer.colors.RED,
+            Severity.WARNING: typer.colors.YELLOW,
+            Severity.INFO: typer.colors.CYAN,
+        }
+        # Errors first: a wrong number matters more than a missing one.
+        order = (Severity.ERROR, Severity.WARNING, Severity.INFO)
+        for finding in sorted(report.findings, key=lambda f: order.index(f.severity)):
+            typer.secho(str(finding), fg=colours[finding.severity])
+        typer.echo(
+            f"\n{report.checks_run} check group(s), {report.rows_examined:,} row(s) examined: "
+            f"{len(report.errors)} error(s), {len(report.warnings)} warning(s)"
+        )
+        if report.ok and not report.warnings:
+            typer.secho("every identity holds", fg=typer.colors.GREEN)
+        elif report.ok:
+            typer.secho(
+                "every identity holds; the warnings are gaps in the source, not faults",
+                fg=typer.colors.GREEN,
+            )
+
+    if report.errors or (strict and report.warnings):
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":  # pragma: no cover

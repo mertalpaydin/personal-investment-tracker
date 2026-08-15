@@ -115,8 +115,9 @@ def _seed(conn: sqlite3.Connection) -> None:
         INSERT INTO portfolio_daily
             (date, person_id, market_value_eur, total_value_eur, cost_basis_eur,
              units_outstanding, unit_price, cash_eur, deposits_eur,
-             realized_gain_eur, valuation_basis_eur, completeness, drawdown_pct)
-        VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PARTIAL', ?)
+             realized_gain_eur, valuation_basis_eur, income_cash_eur,
+             income_received_eur, completeness, drawdown_pct)
+        VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PARTIAL', ?)
         """,
         (
             AS_OF,
@@ -129,6 +130,11 @@ def _seed(conn: sqlite3.Connection) -> None:
             D("2500"),
             D("40"),
             D("12800"),
+            # Of the EUR 300 idle, EUR 220 is dividend income never reinvested
+            # and EUR 80 is sale proceeds. EUR 260 has been received in all,
+            # so EUR 40 of income went back into the market.
+            D("220"),
+            D("260"),
             D("-0.02"),
         ),
     )
@@ -183,6 +189,26 @@ def test_total_is_holdings_plus_deposits_and_excludes_cash(client: TestClient) -
     # not knowable from the source data, so it is never counted as if it were.
     assert body["uninvested_cash_eur"] == 300.0
     assert body["holdings_eur"] + body["deposits_eur"] == body["total_value_eur"]
+
+
+def test_idle_cash_is_split_by_where_it_came_from(client: TestClient) -> None:
+    """ "EUR 300 uninvested" answers the wrong question.
+
+    Capital awaiting reinvestment and income that may already have been spent
+    have different meanings, so the balance is attributed rather than lumped.
+    """
+    split = client.get("/api/portfolio").json()["uninvested_cash"]
+    assert split["from_income_eur"] == 220.0
+    assert split["from_capital_eur"] == 80.0
+    assert split["from_income_eur"] + split["from_capital_eur"] == split["total_eur"]
+    assert "capital spent before income" in split["attribution_rule"]
+
+
+def test_income_received_outlives_the_cash_it_arrived_as(client: TestClient) -> None:
+    """A reinvested dividend leaves the balance without ceasing to be income."""
+    body = client.get("/api/portfolio").json()
+    assert body["income_received_eur"] == 260.0
+    assert body["uninvested_cash"]["from_income_eur"] == 220.0
 
 
 def test_the_total_basis_is_stated_in_the_response(client: TestClient) -> None:
@@ -322,9 +348,11 @@ def test_pending_entries_are_listed_before_they_reach_the_ledger(client: TestCli
 
 def test_the_page_shows_cash_outside_the_total(client: TestClient) -> None:
     page = client.get("/debug").text
-    assert "not in the total" in page
+    assert "Outside the total" in page
     assert "12,500.00" in page  # the total
-    assert "300.00" in page  # the cash, present but separate
+    assert "Dividends in cash" in page and "220.00" in page
+    assert "Capital in cash" in page and "80.00" in page
+    assert "Income received" in page and "260.00" in page
 
 
 def test_the_page_flags_unreviewed_inferences(client: TestClient) -> None:

@@ -116,15 +116,47 @@ def render_dashboard(conn: sqlite3.Connection, *, person_id: int = 1) -> str:
     parts.append(_card("Holdings", _eur(latest["market_value_eur"])))
     parts.append(_card("Deposits", _eur(latest["deposits_eur"])))
     parts.append(_card("Total", _eur(latest["total_value_eur"]), extra="total"))
+    parts.append("</div>")
+
+    # Outside the total, and split by where it came from. "Uninvested cash:
+    # EUR 2,548" answers the wrong question -- capital waiting to be reinvested
+    # and income that may already have been spent are not the same thing.
+    income_cash = latest["income_cash_eur"]
+    capital_cash = latest["cash_eur"] - income_cash
+    parts.append("<h2>Outside the total</h2>")
+    parts.append("<div class='cards'>")
     parts.append(
         _card(
-            "Uninvested cash",
-            _eur(latest["cash_eur"]),
+            "Dividends in cash",
+            _eur(income_cash),
             extra="aside",
-            note="not in the total",
+            note="income received and not reinvested",
+        )
+    )
+    parts.append(
+        _card(
+            "Capital in cash",
+            _eur(capital_cash),
+            extra="aside",
+            note="sale proceeds awaiting reinvestment",
+        )
+    )
+    parts.append(
+        _card(
+            "Income received",
+            _eur(latest["income_received_eur"]),
+            extra="aside",
+            note="dividends and interest, ever",
         )
     )
     parts.append("</div>")
+    parts.append(
+        "<p class='note'>None of these are in the total. The tracker knows what was "
+        "received; it cannot know what was then spent, so counting it as held would "
+        "be a guess. Cash is attributed <em>capital first, income last</em> &mdash; a "
+        "bank account is fungible, so that is a stated convention rather than an "
+        "observation.</p>"
+    )
 
     parts.append(_goal_section(conn, person_id))
 
