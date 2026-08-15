@@ -63,11 +63,15 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["E501"]
-# The parser test corpus contains deliberately odd literals (BOM, NBSP,
-# currency glyphs). Ruff's ambiguous-unicode check would flag them, but
-# they are the point.
+# These files deliberately contain the confusable characters the corpus is
+# built from -- Turkish dotless i, currency glyphs, non-breaking spaces.
+# RUF001-003 flag exactly those, correctly, so the rule stays on everywhere
+# else and is waived only where the ambiguity is the subject under test.
 "tests/test_parse.py" = ["RUF001", "RUF002", "RUF003", "E501"]
-"scripts/make_example_data.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/test_example_data.py" = ["RUF001", "RUF002", "RUF003", "E501"]
+# Plus E501: the LANDMINES table is a data structure of prose sentences, and
+# wrapping them across lines would hurt the thing it exists to communicate.
+"scripts/make_example_data.py" = ["RUF001", "RUF002", "RUF003", "E501"]
 
 [tool.ruff.format]
 docstring-code-format = true

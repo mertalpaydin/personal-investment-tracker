@@ -1,0 +1,371 @@
+{
+  "generated_by": "scripts/make_example_data.py",
+  "as_of": "2026-08-14",
+  "fx_try_per_eur": "55.25",
+  "k_threshold": "100000",
+  "symbols": [
+    "ACRO",
+    "GBEX",
+    "ZBNK",
+    "ZDIV",
+    "ZEC/EUR",
+    "ZGEQ",
+    "ZGLD",
+    "ZOVN",
+    "ZSEM",
+    "ZTFA",
+    "ZTFB"
+  ],
+  "open_rows": 36,
+  "closed_rows": 7,
+  "lots": [
+    {
+      "key": "ZGEQ:2025-08-08:14.01",
+      "symbol": "ZGEQ",
+      "currency": "EUR",
+      "true_open_quantity": "221.2074",
+      "true_remaining_quantity": "221.2074",
+      "rendered_amount": "221.2074",
+      "abbreviated": false
+    },
+    {
+      "key": "ZGEQ:2026-03-05:16.02",
+      "symbol": "ZGEQ",
+      "currency": "EUR",
+      "true_open_quantity": "140",
+      "true_remaining_quantity": "140",
+      "rendered_amount": "140",
+      "abbreviated": false
+    },
+    {
+      "key": "ZGEQ:2026-06-24:17.3",
+      "symbol": "ZGEQ",
+      "currency": "EUR",
+      "true_open_quantity": "30.5",
+      "true_remaining_quantity": "30.5",
+      "rendered_amount": "30.5",
+      "abbreviated": false
+    },
+    {
+      "key": "ZSEM:2025-06-11:6.81",
+      "symbol": "ZSEM",
+      "currency": "EUR",
+      "true_open_quantity": "440.5993",
+      "true_remaining_quantity": "440.5993",
+      "rendered_amount": "440.5993",
+      "abbreviated": false
+    },
+    {
+      "key": "ZBNK:2025-08-04:261.25",
+      "symbol": "ZBNK",
+      "currency": "EUR",
+      "true_open_quantity": "19",
+      "true_remaining_quantity": "19",
+      "rendered_amount": "19",
+      "abbreviated": false
+    },
+    {
+      "key": "ZBNK:2026-07-15:376.8",
+      "symbol": "ZBNK",
+      "currency": "EUR",
+      "true_open_quantity": "5.311",
+      "true_remaining_quantity": "5.311",
+      "rendered_amount": "5.311",
+      "abbreviated": false
+    },
+    {
+      "key": "ZGLD:2025-11-12:31.27",
+      "symbol": "ZGLD",
+      "currency": "EUR",
+      "true_open_quantity": "315.68847",
+      "true_remaining_quantity": "315.68847",
+      "rendered_amount": "315.68847",
+      "abbreviated": false
+    },
+    {
+      "key": "ZGLD:2026-03-24:33.08",
+      "symbol": "ZGLD",
+      "currency": "EUR",
+      "true_open_quantity": "45.4583",
+      "true_remaining_quantity": "45.4583",
+      "rendered_amount": "45.4583",
+      "abbreviated": false
+    },
+    {
+      "key": "ZGLD:2025-12-17:33.06",
+      "symbol": "ZGLD",
+      "currency": "EUR",
+      "true_open_quantity": "43.99",
+      "true_remaining_quantity": "43.99",
+      "rendered_amount": "43.99",
+      "abbreviated": false
+    },
+    {
+      "key": "ZGLD:2026-02-12:38.83",
+      "symbol": "ZGLD",
+      "currency": "EUR",
+      "true_open_quantity": "90.1393",
+      "true_remaining_quantity": "90.1393",
+      "rendered_amount": "90.1393",
+      "abbreviated": false
+    },
+    {
+      "key": "ZDIV:2025-06-23:31.55",
+      "symbol": "ZDIV",
+      "currency": "EUR",
+      "true_open_quantity": "162.4471",
+      "true_remaining_quantity": "162.4471",
+      "rendered_amount": "162.4471",
+      "abbreviated": false
+    },
+    {
+      "key": "ZDIV:2025-05-18:32.87",
+      "symbol": "ZDIV",
+      "currency": "EUR",
+      "true_open_quantity": "174.9302",
+      "true_remaining_quantity": "174.9302",
+      "rendered_amount": "174.9302",
+      "abbreviated": false
+    },
+    {
+      "key": "ZDIV:2025-03-23:30.94",
+      "symbol": "ZDIV",
+      "currency": "EUR",
+      "true_open_quantity": "118.2036",
+      "true_remaining_quantity": "118.2036",
+      "rendered_amount": "118.2036",
+      "abbreviated": false
+    },
+    {
+      "key": "ZDIV:2026-06-24:36.28",
+      "symbol": "ZDIV",
+      "currency": "EUR",
+      "true_open_quantity": "14.2258",
+      "true_remaining_quantity": "14.2258",
+      "rendered_amount": "14.2258",
+      "abbreviated": false
+    },
+    {
+      "key": "ZDIV:2026-04-14:37.14",
+      "symbol": "ZDIV",
+      "currency": "EUR",
+      "true_open_quantity": "71.06",
+      "true_remaining_quantity": "71.06",
+      "rendered_amount": "71.06",
+      "abbreviated": false
+    },
+    {
+      "key": "ZOVN:2025-03-13:101.05",
+      "symbol": "ZOVN",
+      "currency": "EUR",
+      "true_open_quantity": "322.4471",
+      "true_remaining_quantity": "322.4471",
+      "rendered_amount": "322.4471",
+      "abbreviated": false
+    },
+    {
+      "key": "ZOVN:2025-05-04:101.38",
+      "symbol": "ZOVN",
+      "currency": "EUR",
+      "true_open_quantity": "81.2265",
+      "true_remaining_quantity": "81.2265",
+      "rendered_amount": "81.2265",
+      "abbreviated": false
+    },
+    {
+      "key": "ZOVN:2025-05-05:101.29",
+      "symbol": "ZOVN",
+      "currency": "EUR",
+      "true_open_quantity": "21.447",
+      "true_remaining_quantity": "21.447",
+      "rendered_amount": "21.447",
+      "abbreviated": false
+    },
+    {
+      "key": "ZOVN:2025-06-13:101.88",
+      "symbol": "ZOVN",
+      "currency": "EUR",
+      "true_open_quantity": "203.8874",
+      "true_remaining_quantity": "131.4756",
+      "rendered_amount": "131.4756",
+      "abbreviated": false
+    },
+    {
+      "key": "ACRO:2025-05-09:138.94",
+      "symbol": "ACRO",
+      "currency": "EUR",
+      "true_open_quantity": "38.2617",
+      "true_remaining_quantity": "38.2617",
+      "rendered_amount": "38.2617",
+      "abbreviated": false
+    },
+    {
+      "key": "ACRO:2025-05-27:151.22",
+      "symbol": "ACRO",
+      "currency": "EUR",
+      "true_open_quantity": "21.8104",
+      "true_remaining_quantity": "3.8104",
+      "rendered_amount": "3.8104",
+      "abbreviated": false
+    },
+    {
+      "key": "GBEX:2025-10-06:188.2",
+      "symbol": "GBEX",
+      "currency": "EUR",
+      "true_open_quantity": "16",
+      "true_remaining_quantity": "16",
+      "rendered_amount": "16",
+      "abbreviated": false
+    },
+    {
+      "key": "ZTFB:2024-10-03:0.3105",
+      "symbol": "ZTFB",
+      "currency": "TRY",
+      "true_open_quantity": "412300",
+      "true_remaining_quantity": "412300",
+      "rendered_amount": "412.3K",
+      "abbreviated": true,
+      "amount_interval": [
+        "412250",
+        "412350"
+      ],
+      "recoverable_from_market_value": false,
+      "rendered_market_value": "₺258.51K"
+    },
+    {
+      "key": "ZTFB:2024-07-22:0.2634",
+      "symbol": "ZTFB",
+      "currency": "TRY",
+      "true_open_quantity": "137482",
+      "true_remaining_quantity": "137482",
+      "rendered_amount": "137.48K",
+      "abbreviated": true,
+      "amount_interval": [
+        "137475",
+        "137485"
+      ],
+      "recoverable_from_market_value": true,
+      "rendered_market_value": "₺86,201.21"
+    },
+    {
+      "key": "ZTFB:2024-09-02:0.2891",
+      "symbol": "ZTFB",
+      "currency": "TRY",
+      "true_open_quantity": "91206",
+      "true_remaining_quantity": "91206",
+      "rendered_amount": "91206",
+      "abbreviated": false
+    },
+    {
+      "key": "ZTFB:2025-12-22:0.6012",
+      "symbol": "ZTFB",
+      "currency": "TRY",
+      "true_open_quantity": "118394",
+      "true_remaining_quantity": "118394",
+      "rendered_amount": "118.39K",
+      "abbreviated": true,
+      "amount_interval": [
+        "118385",
+        "118395"
+      ],
+      "recoverable_from_market_value": true,
+      "rendered_market_value": "₺74,233.04"
+    },
+    {
+      "key": "ZTFA:2025-08-31:0.6702",
+      "symbol": "ZTFA",
+      "currency": "TRY",
+      "true_open_quantity": "115627",
+      "true_remaining_quantity": "115627",
+      "rendered_amount": "115.63K",
+      "abbreviated": true,
+      "amount_interval": [
+        "115625",
+        "115635"
+      ],
+      "recoverable_from_market_value": false,
+      "rendered_market_value": "₺114.85K"
+    },
+    {
+      "key": "ZTFA:2026-03-05:0.8241",
+      "symbol": "ZTFA",
+      "currency": "TRY",
+      "true_open_quantity": "94218",
+      "true_remaining_quantity": "94218",
+      "rendered_amount": "94218",
+      "abbreviated": false
+    },
+    {
+      "key": "ZTFA:2025-10-03:0.7934",
+      "symbol": "ZTFA",
+      "currency": "TRY",
+      "true_open_quantity": "76140",
+      "true_remaining_quantity": "76140",
+      "rendered_amount": "76140",
+      "abbreviated": false
+    },
+    {
+      "key": "ZTFA:2025-11-04:0.8288",
+      "symbol": "ZTFA",
+      "currency": "TRY",
+      "true_open_quantity": "64007",
+      "true_remaining_quantity": "64007",
+      "rendered_amount": "64007",
+      "abbreviated": false
+    },
+    {
+      "key": "ZTFA:2026-01-04:0.8655",
+      "symbol": "ZTFA",
+      "currency": "TRY",
+      "true_open_quantity": "82911",
+      "true_remaining_quantity": "82911",
+      "rendered_amount": "82911",
+      "abbreviated": false
+    },
+    {
+      "key": "ZTFA:2025-10-07:0.7981",
+      "symbol": "ZTFA",
+      "currency": "TRY",
+      "true_open_quantity": "46893",
+      "true_remaining_quantity": "46893",
+      "rendered_amount": "46893",
+      "abbreviated": false
+    },
+    {
+      "key": "ZTFA:2025-12-04:0.8302",
+      "symbol": "ZTFA",
+      "currency": "TRY",
+      "true_open_quantity": "40872",
+      "true_remaining_quantity": "40872",
+      "rendered_amount": "40872",
+      "abbreviated": false
+    },
+    {
+      "key": "ZTFA:2026-05-05:0.9361",
+      "symbol": "ZTFA",
+      "currency": "TRY",
+      "true_open_quantity": "76118",
+      "true_remaining_quantity": "76118",
+      "rendered_amount": "76118",
+      "abbreviated": false
+    },
+    {
+      "key": "ZTFA:2026-08-10:0.9662",
+      "symbol": "ZTFA",
+      "currency": "TRY",
+      "true_open_quantity": "14553",
+      "true_remaining_quantity": "14553",
+      "rendered_amount": "14553",
+      "abbreviated": false
+    },
+    {
+      "key": "ZTFA:2026-06-04:1.0397",
+      "symbol": "ZTFA",
+      "currency": "TRY",
+      "true_open_quantity": "32294",
+      "true_remaining_quantity": "32294",
+      "rendered_amount": "32294",
+      "abbreviated": false
+    }
+  ]
+}
