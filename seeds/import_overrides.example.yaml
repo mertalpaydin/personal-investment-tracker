@@ -1,0 +1,70 @@
+# Authoritative values for fields the source export renders lossily.
+#
+# Copy to seeds/import_overrides.yaml (gitignored) and fill in from your broker
+# or fund-provider statements. This example file describes the synthetic corpus
+# in data/example/ and is what CI runs against.
+#
+# Keys are lot keys -- "SYMBOL:YYYY-MM-DD:OPEN_PRICE" -- the same identity the
+# importer uses to build external_id, so there is one notion of "which lot"
+# in the system rather than two.
+
+version: 1
+
+lots:
+  # ---------------------------------------------------------------------
+  # Quantities the source UI abbreviated above 100,000 units.
+  #
+  # The importer independently derives the quantity from
+  # market value / current price, and compares. If an override falls outside
+  # the derived interval it is still applied, but the import report raises
+  # OVERRIDE_CONTRADICTS_DERIVED -- you may well be right, but a silent
+  # disagreement between a typed number and the arithmetic is exactly what
+  # the report exists to surface.
+  # ---------------------------------------------------------------------
+
+  # Market value was ALSO abbreviated, so derivation only gives an interval.
+  # An authoritative figure is the only way to pin this one down.
+  - key: "ZTFB:2024-10-03:0.3105"
+    quantity: 412300
+    source: "provider statement 2024-10-03"
+
+  - key: "ZTFA:2025-08-31:0.6702"
+    quantity: 115627
+    source: "provider statement 2025-08-31"
+
+  # Market value was printed in full, so these two are already recovered
+  # exactly. Supplying them is a cross-check rather than a correction: if the
+  # statement agrees, the derivation method is proven for the lots above,
+  # where it is the only option available.
+  - key: "ZTFB:2024-07-22:0.2634"
+    quantity: 137482
+    source: "provider statement 2024-07-22"
+
+  - key: "ZTFB:2025-12-22:0.6012"
+    quantity: 118394
+    source: "provider statement 2025-12-22"
+
+  # ---------------------------------------------------------------------
+  # Fees. Absent from the export entirely, so every cost basis is understated
+  # and every computed taxable gain is biased high until these are supplied.
+  # Optional -- omit and the lot keeps fees_known = 0.
+  # ---------------------------------------------------------------------
+  # - key: "ZGEQ:2025-08-08:14.01"
+  #   fees_eur: 4.90
+
+# Disposals are keyed by lot plus close date, since one lot can have several.
+disposals: []
+  # - key: "ZGLD:2025-05-07:19.88"
+  #   close_date: 2025-10-27
+  #   fees_eur: 4.90
+
+# Instrument-level facts the importer refuses to guess, because guessing them
+# wrong is materially expensive. Teilfreistellung in particular must never
+# default to 0.30: a money-market or commodity fund is 0.00, and applying 30%
+# to the wrong instrument understates tax on the largest position.
+instruments: {}
+  # ZTFB:
+  #   currency: TRY
+  #   is_fund: true
+  #   teilfreistellung_pct: null   # unresolved -- importer keeps warning
+  #   tax_regime: OUT_OF_SCOPE
