@@ -15,7 +15,7 @@ import typer
 
 from portfolio_tracker import __version__, cli_flows
 from portfolio_tracker import seeds as instrument_seeds
-from portfolio_tracker.core import cash, fx, lots, returns, valuation
+from portfolio_tracker.core import cash, fx, lots, returns, tax, valuation
 from portfolio_tracker.db import migrate as migrations
 from portfolio_tracker.db.connection import DEFAULT_DB_PATH, connect
 from portfolio_tracker.importers import overrides
@@ -396,6 +396,73 @@ def report(
             typer.echo("caveats:")
             for caveat in summary.caveats:
                 typer.secho(f"  - {caveat}", fg=typer.colors.YELLOW)
+    finally:
+        conn.close()
+
+
+@app.command("tax")
+def tax_report(
+    db: DbPath = DEFAULT_DB_PATH,
+    year: Annotated[int, typer.Option("--year", help="Tax year.")] = 2026,
+    person_id: Annotated[int, typer.Option("--person", help="Whose return.")] = 1,
+) -> None:
+    """German capital-gains position for a tax year.
+
+    A planning worksheet. The bank's Steuerbescheinigung is authoritative.
+    """
+    conn = connect(db)
+    try:
+        excluded = tax.out_of_scope_report(conn, tax_year=year, as_of=date.today())
+        try:
+            state = tax.allowance_state(conn, person_id=person_id, tax_year=year)
+        except tax.TaxDataMissing as exc:
+            typer.secho(f"cannot compute: {exc}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from exc
+
+        typer.echo(f"tax year {year}, person {person_id}")
+        typer.echo("")
+        typer.echo(f"  gains in scope             EUR {state.gross_gains_eur:>10,.2f}")
+        typer.echo(f"  losses offset              EUR {state.losses_offset_eur:>10,.2f}")
+        typer.echo(f"  after losses               EUR {state.after_losses_eur:>10,.2f}")
+        cap = f"{state.statutory_cap_eur:,.0f}"
+        typer.echo(f"  allowance (cap {cap})       EUR {state.consumed_eur:>10,.2f} used")
+        typer.echo(f"    remaining                EUR {state.remaining_eur:>10,.2f}")
+        typer.echo(f"  taxable                    EUR {state.taxable_after_allowance_eur:>10,.2f}")
+        typer.echo(f"  estimated tax (26.375%)    EUR {state.estimated_tax_eur:>10,.2f}")
+        if state.carried_forward.aktien or state.carried_forward.sonstige:
+            typer.echo("")
+            typer.echo(
+                f"  losses carried forward: shares EUR {state.carried_forward.aktien:,.2f}, "
+                f"other EUR {state.carried_forward.sonstige:,.2f}"
+            )
+
+        rows = tax.forecast_vorabpauschale(conn, tax_year=year)
+        charged = [r for r in rows if r.taxable_eur > 0]
+        if charged:
+            typer.echo("")
+            typer.echo(f"  Vorabpauschale for {year} (taxable {year + 1}-01-02):")
+            for row in charged:
+                typer.echo(
+                    f"    {row.instrument:<8} basisertrag {row.basisertrag:>9,.2f} "
+                    f"-> taxable {row.taxable_eur:>9,.2f}"
+                )
+
+        if not excluded.is_empty:
+            typer.echo("")
+            typer.secho("  NOT INCLUDED IN THE ABOVE:", fg=typer.colors.YELLOW, bold=True)
+            for key in excluded.instruments:
+                typer.secho(f"    {key:<12} {excluded.reasons[key]}", fg=typer.colors.YELLOW)
+            if excluded.value_eur:
+                typer.secho(
+                    f"    holdings worth EUR {excluded.value_eur:,.2f} are outside this figure",
+                    fg=typer.colors.YELLOW,
+                )
+
+        typer.echo("")
+        typer.secho(
+            "  Planning worksheet only. The bank's Steuerbescheinigung is authoritative.",
+            fg=typer.colors.BLUE,
+        )
     finally:
         conn.close()
 
