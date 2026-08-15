@@ -82,6 +82,44 @@ def discover(directory: Path = MIGRATIONS_DIR) -> list[Migration]:
     return found
 
 
+def split_statements(script: str) -> list[str]:
+    """Split SQL into executable statements.
+
+    ``Connection.executescript`` cannot be used here: it issues an implicit
+    COMMIT before running, which silently defeats any surrounding transaction
+    and lets a migration that fails halfway leave debris behind. Splitting
+    manually and executing each statement keeps the whole migration atomic.
+
+    Splitting on ``;`` is wrong -- a trigger body contains its own semicolons
+    between BEGIN and END -- so ``sqlite3.complete_statement`` does the work,
+    since it understands that nesting.
+
+    ``PRAGMA foreign_keys`` is dropped: it is a no-op inside a transaction, so
+    leaving it in would read as protection that is not actually there. The
+    runner toggles it outside the transaction instead.
+    """
+    statements: list[str] = []
+    buffer = ""
+    for line in script.splitlines(keepends=True):
+        stripped = line.strip()
+        # Skip leading comments and blank lines, but keep them once a statement
+        # is underway: a trigger body may legitimately contain both.
+        if not buffer and (stripped.startswith("--") or not stripped):
+            continue
+        buffer += line
+        if sqlite3.complete_statement(buffer):
+            statement = buffer.strip()
+            buffer = ""
+            lowered = statement.lower()
+            if lowered.startswith("pragma foreign_keys"):
+                continue
+            if statement:
+                statements.append(statement)
+    if buffer.strip():
+        statements.append(buffer.strip())
+    return statements
+
+
 def _ensure_version_table(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
@@ -141,9 +179,15 @@ def migrate(conn: sqlite3.Connection, *, directory: Path = MIGRATIONS_DIR) -> li
         if migration.version in already:
             continue
         checksum = migration.checksum
+        # Foreign-key enforcement is toggled OUTSIDE the transaction, because
+        # `PRAGMA foreign_keys` is silently a no-op inside one -- and a
+        # table-rebuild migration needs it off while the old table is dropped.
+        had_fk = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+        conn.execute("PRAGMA foreign_keys = OFF")
         try:
             conn.execute("BEGIN")
-            conn.executescript(migration.sql)
+            for statement in split_statements(migration.sql):
+                conn.execute(statement)
             conn.execute(
                 "INSERT INTO schema_version (version, name, checksum, applied_at) "
                 "VALUES (?, ?, ?, ?)",
@@ -158,6 +202,15 @@ def migrate(conn: sqlite3.Connection, *, directory: Path = MIGRATIONS_DIR) -> li
         except BaseException:
             conn.rollback()
             raise
+        finally:
+            conn.execute(f"PRAGMA foreign_keys = {'ON' if had_fk else 'OFF'}")
+
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise MigrationError(
+                f"migration {migration.version:04d} left {len(violations)} foreign-key "
+                f"violation(s): {violations[:3]}"
+            )
         # Mirror into user_version so the schema level is visible to any tool
         # that has never heard of this project.
         conn.execute(f"PRAGMA user_version = {migration.version}")

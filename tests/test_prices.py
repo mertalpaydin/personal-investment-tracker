@@ -343,3 +343,112 @@ def test_committed_example_seed_file_is_valid() -> None:
     entries = seeds.load(Path("seeds/instruments.example.yaml"))
     assert entries
     assert all(set(fields) <= seeds.SETTABLE for fields in entries.values())
+
+
+# ---------------------------------------------------------------------------
+# Fintables -- the working route to Turkish fund NAVs
+# ---------------------------------------------------------------------------
+
+
+FINTABLES_SAMPLE = json.dumps(
+    {
+        "price": 0.622452,
+        "day": "2026-08-14",
+        "prev_price": 0.626853,
+        "market_cap": 26638859070.558926,
+    }
+)
+
+
+def test_fintables_parses_the_dated_price() -> None:
+    from portfolio_tracker.ingest.providers.market import FintablesProvider
+
+    observations = FintablesProvider.parse(FINTABLES_SAMPLE, "TTA")
+    assert len(observations) == 1
+    assert observations[0].on == date(2026, 8, 14)
+    assert observations[0].close == Decimal("0.622452")
+
+
+def test_fintables_ignores_prev_price_because_its_date_is_unstated() -> None:
+    """The payload carries a previous price but not the day it belongs to.
+
+    Inferring it would mean guessing around Turkish public holidays, which move
+    against the Gregorian calendar. A price filed under the wrong date is worse
+    than a missing one.
+    """
+    from portfolio_tracker.ingest.providers.market import FintablesProvider
+
+    observations = FintablesProvider.parse(FINTABLES_SAMPLE, "TTA")
+    assert all(o.close != Decimal("0.626853") for o in observations)
+
+
+def test_fintables_publishes_nav_only() -> None:
+    from portfolio_tracker.ingest.providers.market import FintablesProvider
+
+    assert FintablesProvider.parse(FINTABLES_SAMPLE, "TTA")[0].total_return_close is None
+
+
+def test_fintables_missing_price_points_at_the_manual_path() -> None:
+    from portfolio_tracker.ingest.providers.market import FintablesProvider
+
+    with pytest.raises(ProviderUnavailable, match=r"prices_manual/TTA\.csv"):
+        FintablesProvider.parse(json.dumps({"day": "2026-08-14"}), "TTA")
+
+
+def test_fintables_uses_the_injected_fetcher() -> None:
+    from portfolio_tracker.ingest.providers.market import FintablesProvider
+
+    seen: list[str] = []
+
+    def fake(url: str) -> str:
+        seen.append(url)
+        return FINTABLES_SAMPLE
+
+    provider = FintablesProvider(fetcher=fake)
+    observations = provider.fetch(
+        ref(import_key="TTA", price_source="fintables"), date(2026, 8, 1), date(2026, 8, 31)
+    )
+    assert "funds/TTA/price/" in seen[0]
+    assert len(observations) == 1
+
+
+class _LatestOnlyProvider:
+    """Stands in for a feed that serves only today's observation."""
+
+    name = "fintables"
+
+    def supports(self, instrument: InstrumentRef) -> bool:
+        return True
+
+    def fetch(self, instrument: InstrumentRef, start: date, end: date) -> list[PriceObservation]:
+        return [PriceObservation(end, Decimal("2.0"))]
+
+
+def test_a_manual_file_supplements_a_working_feed(db: sqlite3.Connection, tmp_path: Path) -> None:
+    """History from a file and today's figure from a feed must coexist.
+
+    A feed that only serves the latest price cannot backfill, and a user who
+    supplied a figure should not have it discarded because the feed answered.
+    """
+    (tmp_path / "AAA.csv").write_text(
+        "date,close\n2026-08-03,1.0\n2026-08-04,1.1\n", encoding="utf-8"
+    )
+    db.execute("UPDATE instrument SET price_source = 'fintables' WHERE id = 1")
+    db.commit()
+
+    results = prices.fetch_all(
+        db,
+        end=date(2026, 8, 5),
+        providers={"manual": ManualProvider(tmp_path), "fintables": _LatestOnlyProvider()},
+    )
+    stored = {
+        date.fromisoformat(r["date"]): r["source"]
+        for r in db.execute("SELECT date, source FROM price")
+    }
+    assert stored == {
+        date(2026, 8, 3): "manual",
+        date(2026, 8, 4): "manual",
+        date(2026, 8, 5): "fintables",
+    }
+    assert results[0].source == "fintables+manual"
+    assert results[0].error is None

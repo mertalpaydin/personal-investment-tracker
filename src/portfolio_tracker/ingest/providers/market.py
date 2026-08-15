@@ -204,6 +204,88 @@ class TefasProvider:
         return self.parse(text, instrument.import_key)
 
 
+class FintablesProvider:
+    """Turkish investment funds, via a public republisher of TEFAS NAVs.
+
+    TEFAS's own endpoint sits behind a bot-protection challenge, which this
+    project does not attempt to defeat. Fintables serves the same figures over
+    a plain unauthenticated JSON endpoint; cross-checked against the broker
+    export, both funds agreed to within 0.02%.
+
+    **It returns only the latest observation.** The payload carries a
+    ``prev_price`` too, but not the date that price belongs to -- and inferring
+    it would mean guessing around Turkish public holidays, which move against
+    the Gregorian calendar. A price stored against the wrong date is worse than
+    a missing one, so only the dated figure is kept.
+
+    The practical consequence: this keeps a series current once it exists, but
+    it cannot backfill. History has to be loaded once from a manual file.
+    """
+
+    name = "fintables"
+    url_template = "https://api.fintables.com/funds/{code}/price/"
+
+    def __init__(self, fetcher: Callable[[str], str] | None = None) -> None:
+        self._fetch = fetcher or self._get
+
+    def supports(self, instrument: InstrumentRef) -> bool:
+        return instrument.price_source == "fintables"
+
+    @staticmethod
+    def _get(url: str) -> str:
+        request = urllib.request.Request(
+            url, headers={"User-Agent": "portfolio-tracker/0.1", "Accept": "application/json"}
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            body: bytes = response.read()
+            return body.decode("utf-8")
+
+    @staticmethod
+    def parse(text: str, import_key: str) -> list[PriceObservation]:
+        try:
+            payload: dict[str, Any] = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ProviderUnavailable(
+                f"{import_key}: fintables returned non-JSON; the endpoint may have changed. "
+                f"Use data/prices_manual/{import_key}.csv instead."
+            ) from exc
+
+        day, price = payload.get("day"), payload.get("price")
+        if not day or price in (None, ""):
+            raise ProviderUnavailable(
+                f"{import_key}: fintables returned no dated price ({payload}). "
+                f"Use data/prices_manual/{import_key}.csv instead."
+            )
+        try:
+            value = Decimal(str(price))
+        except InvalidOperation as exc:
+            raise ProviderUnavailable(
+                f"{import_key}: unparseable fintables price {price!r}"
+            ) from exc
+        if value <= 0:
+            raise ProviderUnavailable(f"{import_key}: non-positive fintables price {price!r}")
+
+        # NAV only, as with TEFAS: no distribution-adjusted series is published,
+        # so total_return_close stays None rather than being faked from NAV.
+        return [PriceObservation(date.fromisoformat(day), value)]
+
+    def fetch(self, instrument: InstrumentRef, start: date, end: date) -> list[PriceObservation]:
+        code = instrument.price_symbol or instrument.import_key
+        try:
+            text = self._fetch(self.url_template.format(code=code))
+        except urllib.error.HTTPError as exc:
+            raise ProviderUnavailable(
+                f"{instrument.import_key}: fintables returned HTTP {exc.code} for {code!r}. "
+                f"Use data/prices_manual/{instrument.import_key}.csv instead."
+            ) from exc
+        except urllib.error.URLError as exc:
+            raise ProviderUnavailable(
+                f"{instrument.import_key}: could not reach fintables ({exc.reason}). "
+                f"Use data/prices_manual/{instrument.import_key}.csv instead."
+            ) from exc
+        return [o for o in self.parse(text, instrument.import_key) if start <= o.on <= end]
+
+
 class SyntheticProvider:
     """Cash proxies.
 

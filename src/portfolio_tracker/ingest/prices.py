@@ -22,6 +22,7 @@ from portfolio_tracker.ingest.providers.base import (
 )
 from portfolio_tracker.ingest.providers.manual import ManualProvider
 from portfolio_tracker.ingest.providers.market import (
+    FintablesProvider,
     SyntheticProvider,
     TefasProvider,
     YFinanceProvider,
@@ -32,6 +33,7 @@ def default_providers() -> dict[str, PriceProvider]:
     return {
         "yfinance": YFinanceProvider(),
         "tefas": TefasProvider(),
+        "fintables": FintablesProvider(),
         "synthetic": SyntheticProvider(),
         "manual": ManualProvider(),
     }
@@ -211,14 +213,23 @@ def fetch_all(
                 used = provider.name
             except ProviderUnavailable as exc:
                 error = str(exc)
-                if allow_manual_fallback and manual is not None and provider is not manual:
-                    try:
-                        observations = manual.fetch(instrument, window_start, end)
-                        store(conn, instrument, observations, manual.name)
-                        used = manual.name
-                        error = f"{error}  [recovered from manual file]"
-                    except ProviderUnavailable:
-                        pass
+
+            # A manual file is a *supplement*, not only a rescue. Some feeds
+            # serve only the latest observation, so history has to come from a
+            # file alongside them; and a user who has taken the trouble to
+            # supply a figure should not have it ignored because the feed
+            # happened to answer. Storage is keyed by (instrument, date) and
+            # never overwrites, so merging the two is safe.
+            if allow_manual_fallback and manual is not None and provider is not manual:
+                try:
+                    supplement = manual.fetch(instrument, window_start, end)
+                    added = store(conn, instrument, supplement, manual.name)
+                    if added:
+                        used = f"{used}+manual" if used else "manual"
+                        if error:
+                            error = f"{error}  [recovered from manual file]"
+                except ProviderUnavailable:
+                    pass
 
         conn.commit()
         report = coverage(conn, instrument, window_start, end)

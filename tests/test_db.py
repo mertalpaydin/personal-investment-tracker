@@ -52,13 +52,14 @@ def seeded(db: sqlite3.Connection) -> sqlite3.Connection:
 def test_empty_database_reaches_head_in_one_call() -> None:
     conn = connect(":memory:")
     assert M.current_version(conn) == 0
-    assert M.migrate(conn) == [1]
-    assert M.current_version(conn) == 1
+    head = len(M.discover())
+    assert M.migrate(conn) == list(range(1, head + 1))
+    assert M.current_version(conn) == head
 
 
 def test_second_migrate_is_a_no_op(db: sqlite3.Connection) -> None:
     assert M.migrate(db) == []
-    assert M.current_version(db) == 1
+    assert M.current_version(db) == len(M.discover())
 
 
 def test_editing_an_applied_migration_is_refused(db: sqlite3.Connection, tmp_path: Path) -> None:
@@ -365,3 +366,108 @@ def test_a_file_database_persists_across_connections(tmp_path: Path) -> None:
     assert M.migrate(second) == []
     assert second.execute("SELECT name FROM person").fetchone()["name"] == "Persisted"
     second.close()
+
+
+# ---------------------------------------------------------------------------
+# Migration atomicity
+#
+# These exist because of a real incident: the runner originally used
+# `Connection.executescript`, which issues an implicit COMMIT before running.
+# A table-rebuild migration that failed partway therefore committed its
+# DROP TABLE and destroyed the table it was rebuilding.
+# ---------------------------------------------------------------------------
+
+
+def test_split_statements_keeps_trigger_bodies_whole() -> None:
+    """Splitting on ';' would cut a trigger in half between BEGIN and END."""
+    script = (
+        "CREATE TABLE a (x INTEGER);\n"
+        "CREATE TRIGGER t BEFORE INSERT ON a\n"
+        "FOR EACH ROW WHEN NEW.x < 0\n"
+        "BEGIN\n"
+        "    SELECT RAISE(ABORT, 'negative');\n"
+        "END;\n"
+    )
+    statements = M.split_statements(script)
+    assert len(statements) == 2
+    assert statements[1].startswith("CREATE TRIGGER")
+    assert statements[1].rstrip().endswith("END;")
+
+
+def test_split_statements_drops_foreign_key_pragmas() -> None:
+    """They are a no-op inside a transaction, so leaving them in would read as
+    protection that is not actually in force."""
+    statements = M.split_statements("PRAGMA foreign_keys = OFF;\nCREATE TABLE a (x INTEGER);\n")
+    assert len(statements) == 1
+    assert statements[0].startswith("CREATE TABLE")
+
+
+def test_a_failed_migration_leaves_nothing_behind(tmp_path: Path) -> None:
+    (tmp_path / "0001_a.sql").write_text("CREATE TABLE keep (x INTEGER);", encoding="utf-8")
+    conn = connect(":memory:")
+    M.migrate(conn, directory=tmp_path)
+
+    (tmp_path / "0002_bad.sql").write_text(
+        "CREATE TABLE debris (x INTEGER);\nINSERT INTO nonexistent VALUES (1);",
+        encoding="utf-8",
+    )
+    with pytest.raises(sqlite3.OperationalError):
+        M.migrate(conn, directory=tmp_path)
+
+    tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "debris" not in tables, "a failed migration committed part of its work"
+    assert "keep" in tables
+    assert M.current_version(conn) == 1
+
+
+def test_foreign_keys_are_restored_after_a_migration(db: sqlite3.Connection) -> None:
+    """A rebuild migration turns them off; leaving them off would silently
+    disable every reference in the schema for the rest of the session."""
+    assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+
+
+def test_migration_0002_rebuilt_the_table_without_losing_its_guards(
+    db: sqlite3.Connection,
+) -> None:
+    """Indexes and triggers are dropped along with a rebuilt table, so the
+    migration has to put them back."""
+    objects = {
+        r["name"]
+        for r in db.execute("SELECT name FROM sqlite_master WHERE type IN ('index', 'trigger')")
+    }
+    assert "idx_instrument_pricing" in objects
+    assert "idx_instrument_tax" in objects
+    assert "trg_price_currency_matches_instrument" in objects
+
+
+def test_migration_0002_preserves_existing_rows(tmp_path: Path) -> None:
+    """The rebuild copies data across; losing a row would be silent."""
+    staged = tmp_path / "migrations"
+    staged.mkdir()
+    first = next(m for m in M.discover() if m.version == 1)
+    (staged / first.path.name).write_bytes(first.path.read_bytes())
+
+    conn = connect(":memory:")
+    M.migrate(conn, directory=staged)
+    conn.execute(
+        "INSERT INTO instrument (import_key, name, asset_class, currency) "
+        "VALUES ('KEEP', 'Survivor', 'ETF', 'EUR')"
+    )
+    conn.commit()
+
+    M.migrate(conn)  # real directory: applies 0002 on top
+    row = conn.execute("SELECT name FROM instrument WHERE import_key = 'KEEP'").fetchone()
+    assert row is not None and row["name"] == "Survivor"
+    assert M.current_version(conn) == len(M.discover())
+
+
+def test_fintables_is_an_allowed_price_source(db: sqlite3.Connection) -> None:
+    db.execute(
+        "INSERT INTO instrument (import_key, name, asset_class, currency, price_source) "
+        "VALUES ('TR1', 'Turkish Fund', 'FUND', 'TRY', 'fintables')"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "INSERT INTO instrument (import_key, name, asset_class, currency, price_source) "
+            "VALUES ('TR2', 'Bad', 'FUND', 'TRY', 'not-a-source')"
+        )
