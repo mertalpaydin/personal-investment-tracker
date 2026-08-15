@@ -26,6 +26,7 @@ from datetime import date
 from decimal import Decimal
 from typing import NamedTuple
 
+from portfolio_tracker.core import attribution
 from portfolio_tracker.core.calendars import TARGET2, grid_days
 from portfolio_tracker.money import ZERO, quantize_money
 
@@ -455,6 +456,17 @@ def build_portfolio_daily(
     states = build_units(series)
     breaks = check_unit_identity(states)
 
+    # Where each day's return came from. Computed from the same stored prices
+    # and rates the valuation used, and the part they do not explain is named
+    # rather than distributed -- see core/attribution.py.
+    terms = attribution.daily_terms(
+        conn,
+        person_id=person_id,
+        days=[state.on for state in states],
+        basis={state.on: state.value_eur for state in states},
+        actual={s.on: s.daily_return for s in states if s.daily_return is not None},
+    )
+
     # Every euro that crossed the boundary must appear in the series. A flow
     # that goes missing reads as growth, so this is checked rather than
     # assumed -- it is how the 1326% figure was caught.
@@ -485,8 +497,10 @@ def build_portfolio_daily(
                  cost_basis_eur, cash_eur, deposits_eur, valuation_basis_eur,
                  income_cash_eur, income_received_eur, realized_gain_eur,
                  net_external_flow_eur, units_issued, units_outstanding, unit_price,
-                 daily_return, drawdown_pct, completeness, stale_instruments)
-            VALUES (?, ?, ?, '0', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 daily_return, drawdown_pct, completeness, stale_instruments,
+                 ret_local_contrib, ret_fx_contrib, ret_income_contrib, ret_residual)
+            VALUES (?, ?, ?, '0', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?)
             """,
             (
                 state.on.isoformat(),
@@ -508,9 +522,21 @@ def build_portfolio_daily(
                 (state.unit_price / peak - 1) if peak > ZERO else None,
                 "PARTIAL" if v.stale else "FULL",
                 v.stale,
+                # NULL on the inception day and on any day with no computable
+                # return. Zero would claim the return was attributed and found
+                # to be nothing, which is a different statement.
+                *_attribution_row(terms.get(state.on)),
             ),
         )
     return breaks
+
+
+def _attribution_row(
+    terms: attribution.DayTerms | None,
+) -> tuple[Decimal | None, Decimal | None, Decimal | None, Decimal | None]:
+    if terms is None:
+        return (None, None, None, None)
+    return (terms.local, terms.currency, terms.income, terms.unexplained)
 
 
 def summarise(

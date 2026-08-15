@@ -48,7 +48,9 @@ both be true and visible at once.
   the concentration that overlapping funds hide
 - **Deposit-account interest accrual**, modelled so that capitalised interest reads
   as *return* rather than as new savings
-- **TWR via unit accounting**, XIRR, volatility, max drawdown
+- **TWR via unit accounting**, XIRR, volatility, max drawdown, and the return
+  attributed to prices, currency, income and trading — Cariño-linked, so the
+  parts sum to the whole exactly
 - **JSON API** at `/api/*` plus a minimal server-rendered debug UI
 - **A goal target you set**, with a projection that assumes no investment return
 
@@ -113,7 +115,7 @@ GET  /api/allocation?dim=      asset_class | currency | account | sector | count
                     &basis=    quote (default) | look_through
 GET  /api/look-through         which funds have a composition, and how old it is
 GET  /api/exposure/concentration   underlying issuers, across funds and direct holdings
-GET  /api/returns  · /series   TWR, XIRR, volatility, drawdown; the daily unit index
+GET  /api/returns  · /series   TWR, XIRR, volatility, drawdown, attribution; the unit index
 GET  /api/fx?quote=TRY         stored rates, in the one direction they are stored
 GET  /api/accounts/deposits    deposit terms, including withholding at source
 GET  /api/tax/allowance        with a mandatory out-of-scope block
@@ -133,6 +135,40 @@ months the *why* is the only way to re-evaluate it. Nothing is recomputed
 automatically: the response says `rebuild_required`, and rebuilding is a step you
 take. The CLI (`pt flows confirm`) and the page call the same `core.inbox`
 routing, so the two cannot come to mean different things.
+
+## Where the return came from
+
+The same question the per-position view answers, asked of the whole portfolio
+over a period. On the example corpus:
+
+```text
+  asset prices             81.76%
+  currency                -25.74%
+  income                    0.00%
+  trading                  -0.06%
+  ------------------------------
+  total                    55.97%
+```
+
+The holdings did far more than the euro return shows, and the lira took the
+difference. A tracker reporting only 55.97% is not wrong — it is silent about
+the larger of the two movements.
+
+Getting the parts to add up is the hard part, and it is not a rounding
+question. Chaining daily contributions naively gives **44.85%** against an
+actual 55.97%: returns multiply, contributions add, and over 527 days the gap
+is eleven percentage points on figures that are each individually correct.
+[Cariño linking](docs/adr/0006-return-attribution-and-carino-linking.md) closes
+it exactly — the measured residual is 6 × 10⁻²⁷ — and `/api/returns` reports
+that residual anyway, because a reader has no other way to tell a smoothed
+decomposition from an unsmoothed one.
+
+`trading` is the term that could have been hidden. It is the remainder —
+fills away from the closing price, fees, quantities that changed within a day —
+and folding it into `asset prices` would report execution as stock selection
+while every total still reconciled. `pt doctor` checks both identities: the
+daily parts against the day's return, and the linked parts against a period
+return computed independently by the unit series.
 
 ## What a fund is quoted in is not what it holds
 
@@ -253,6 +289,10 @@ Things a visitor will hit, listed rather than discovered:
   genuinely valued in euro; the dollar risk it carries appears under exposure
   instead. Reconciling the two would mean modelling a return that was never
   observed. See [ADR 0005](docs/adr/0005-look-through-exposure.md).
+- **`trading` in the return attribution is a remainder**, so it silently absorbs
+  any future modelling error as well as the real thing. Its size is the
+  diagnostic: the API raises a caveat above 5% of the total return, and the
+  example corpus is pinned below 1%.
 - **Concentration merges on identifiers where files supply them**, and on names
   otherwise. Two issuers publishing the same company under different names with
   no ISIN will not merge, so the figure understates. That is the safe direction.
@@ -268,6 +308,7 @@ core/fx.py                 the only currency conversion in the codebase
 core/lots.py               FIFO; freezes EUR cost basis at acquisition-date FX
 core/valuation.py          daily revaluation on the TARGET2 grid
 core/returns.py            unit accounting, TWR/XIRR, local-vs-FX decomposition
+core/attribution.py        return split by source; Cariño-linked, residual zero
 core/look_through.py       economic exposure and concentration; four labelled bases
 core/cash.py               running bank balance; infers the contributions nobody recorded
 core/accounts.py           deposit accrual; interest reads as return, never as savings

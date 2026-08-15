@@ -158,6 +158,15 @@ reconcile exactly to a compounded period return. The API returns
 field. Cariño linking is out of v1 scope, and quietly allocating the gap away
 would be worse than showing it.
 
+> **Correction, 2026-08-15.** The paragraph above describes an intention, not
+> what shipped. No portfolio-level decomposition was ever built: the three
+> `ret_*` columns on `portfolio_daily` were never written and the API never
+> emitted `linking_method`. Only the *position-level* split in this ADR is
+> real. [ADR 0006](0006-return-attribution-and-carino-linking.md) builds the
+> period decomposition and links it with Cariño, so the residual is zero rather
+> than exposed. Left here rather than edited away, because a decision record
+> that quietly corrects itself is not a record.
+
 ## Alternatives rejected
 
 **Convert at transaction date only** (the inherited assumption). Cheap, and

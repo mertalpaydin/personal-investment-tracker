@@ -1,0 +1,28 @@
+-- =====================================================================
+-- 0010 -- one more return contribution: income.
+--
+-- `portfolio_daily` has carried ret_local_contrib, ret_fx_contrib and
+-- ret_residual since 0001, and nothing ever wrote to them. Filling them
+-- in needs a fourth term.
+--
+-- Without it a distribution's ex-date lands entirely in the local term as
+-- a price fall, with the offsetting credit appearing nowhere -- which is
+-- precisely the failure the distribution work fixed at the ledger level,
+-- reintroduced one layer up in the attribution. Interest credited on a
+-- deposit has the same shape: a value increase no price explains.
+--
+-- ret_residual keeps its name and changes its meaning, which is worth
+-- being explicit about. It was specified in 0001 as holding "cross terms
+-- and intraday trading". There are no cross terms under the convention
+-- actually implemented -- the price move is converted at the closing
+-- rate, so the interaction sits inside the currency leg -- and the
+-- linking gap it was also expected to absorb is now exactly zero, by
+-- Cariño smoothing. What remains is trading: fills away from the closing
+-- price, fees, and quantities that changed within a day. Real return,
+-- named rather than distributed. See core/attribution.py.
+--
+-- Nullable, like the three columns it joins: a database migrated before
+-- the next rebuild has no attribution yet, and 0 would claim it did.
+-- =====================================================================
+
+ALTER TABLE portfolio_daily ADD COLUMN ret_income_contrib DECIMAL_TEXT;

@@ -24,7 +24,17 @@ from pydantic import BaseModel, Field
 
 from portfolio_tracker import __version__
 from portfolio_tracker.api.render import render_dashboard
-from portfolio_tracker.core import fx, goal, inbox, look_through, rebuild, returns, tax, valuation
+from portfolio_tracker.core import (
+    attribution,
+    fx,
+    goal,
+    inbox,
+    look_through,
+    rebuild,
+    returns,
+    tax,
+    valuation,
+)
 from portfolio_tracker.db.connection import DEFAULT_DB_PATH, connect, transaction
 from portfolio_tracker.money import ZERO
 
@@ -334,7 +344,41 @@ def performance(
             "holdings, deposits and uninvested cash. Excluding cash would make a "
             "sale read as a loss on the day it settles."
         ),
+        "attribution": _attribution(conn, person_id),
         "caveats": summary.caveats,
+    }
+
+
+def _attribution(conn: sqlite3.Connection, person_id: int) -> dict[str, Any] | None:
+    """Where the return came from, with the parts summing to the whole.
+
+    ``residual`` is reported even though it is zero by construction, and that is
+    the point of reporting it: chaining daily contributions naively leaves a gap
+    of eleven percentage points on this portfolio, and a reader has no way to
+    tell a smoothed decomposition from an unsmoothed one except by checking.
+    """
+    state = attribution.summarise(conn, person_id=person_id)
+    if state is None:
+        return None
+    return {
+        "total": _decimal(state.total),
+        "local": _decimal(state.local),
+        "currency": _decimal(state.currency),
+        "income": _decimal(state.income),
+        "unexplained": _decimal(state.unexplained),
+        "residual": _decimal(state.residual),
+        "linking_method": state.linking,
+        "identity": "total = local + currency + income + unexplained",
+        "meanings": {
+            "local": "asset prices, in the currency each is quoted in",
+            "currency": "the opening capital re-translated as rates moved",
+            "income": "distributions and credited interest",
+            "unexplained": (
+                "trading: fills away from the closing price, fees, and quantities "
+                "that changed within a day. Named, not distributed."
+            ),
+        },
+        "caveats": state.caveats,
     }
 
 

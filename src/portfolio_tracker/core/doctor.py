@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
-from portfolio_tracker.core import cash, fx, look_through, returns
+from portfolio_tracker.core import attribution, cash, fx, look_through, returns
 from portfolio_tracker.core.calendars import TARGET2, grid_days
 from portfolio_tracker.importers.report import Finding, Severity
 from portfolio_tracker.ingest import look_through as look_through_ingest
@@ -392,6 +392,75 @@ def check_data_quality(conn: sqlite3.Connection, report: DoctorReport) -> None:
         )
 
 
+def check_attribution(conn: sqlite3.Connection, report: DoctorReport) -> None:
+    """Whether the return's parts still add up to the return.
+
+    Two identities, at two different levels, and they fail for different
+    reasons. The daily one breaks if the decomposition and the unit series stop
+    describing the same day. The period one breaks if the linking is wrong --
+    and a wrong linking is invisible, because every daily figure it consumes is
+    still correct and every number it produces is still plausible. Naive
+    chaining on this portfolio understates the total by 11 percentage points and
+    nothing about the output looks unusual.
+
+    The period check also compares two independently computed period returns:
+    the compounded daily returns from the attribution, and the unit price the
+    valuation produced. They come from different code and must agree.
+    """
+    for row in conn.execute(
+        "SELECT date, person_id, daily_return, ret_local_contrib, ret_fx_contrib, "
+        "ret_income_contrib, ret_residual FROM portfolio_daily "
+        "WHERE ret_local_contrib IS NOT NULL AND daily_return IS NOT NULL"
+    ):
+        report.rows_examined += 1
+        parts = (
+            _d(row["ret_local_contrib"])
+            + _d(row["ret_fx_contrib"])
+            + _d(row["ret_income_contrib"])
+            + _d(row["ret_residual"])
+        )
+        if _off_by(parts, _d(row["daily_return"]), Decimal("0.0000001")):
+            report.add(
+                "ATTRIBUTION_DOES_NOT_SUM",
+                Severity.ERROR,
+                f"{row['date']}: price {row['ret_local_contrib']} plus currency "
+                f"{row['ret_fx_contrib']} plus income {row['ret_income_contrib']} plus "
+                f"unexplained {row['ret_residual']} is {parts}, not the day's return "
+                f"{row['daily_return']}",
+                date=row["date"],
+            )
+
+    for person in conn.execute("SELECT id FROM person"):
+        person_id = int(person["id"])
+        state = attribution.summarise(conn, person_id=person_id)
+        if state is None:
+            continue
+
+        if abs(state.residual) > attribution.LINKING_TOLERANCE:
+            report.add(
+                "ATTRIBUTION_LINKING_RESIDUAL",
+                Severity.ERROR,
+                f"person {person_id}: the linked parts sum to "
+                f"{state.total - state.residual} against a period return of {state.total} "
+                f"-- a gap of {state.residual}. Cariño linking is exact, so a residual "
+                "here means the smoothing is not being applied",
+                person_id=person_id,
+            )
+
+        # Two code paths, one number. The unit series and the attribution never
+        # look at each other, so agreement is evidence rather than tautology.
+        summary = returns.summarise(conn, person_id=person_id)
+        if summary.twr is not None and _off_by(state.total, summary.twr, Decimal("0.0001")):
+            report.add(
+                "ATTRIBUTION_TOTAL_DISAGREES_WITH_TWR",
+                Severity.ERROR,
+                f"person {person_id}: compounding the attributed daily returns gives "
+                f"{state.total:.6%}, the unit series gives {summary.twr:.6%} -- one of "
+                "the two is describing a different portfolio",
+                person_id=person_id,
+            )
+
+
 def check_look_through(conn: sqlite3.Connection, report: DoctorReport) -> None:
     """Whether a stored composition still describes a whole fund.
 
@@ -488,6 +557,7 @@ CHECKS = (
     check_fx,
     check_portfolio,
     check_data_quality,
+    check_attribution,
     check_look_through,
 )
 

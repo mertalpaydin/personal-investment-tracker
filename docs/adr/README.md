@@ -11,6 +11,7 @@ record findings that contradict the original design brief.
 | [0003](0003-scope-cut.md) | 45 tables and 11 phases cut to 16 tables | Ship a correct core rather than a broad unfinished one. Two features are pulled *forward* because retrofitting them would mean recomputing all history. |
 | [0004](0004-daily-fx-and-return-decomposition.md) | Daily FX revaluation; local and currency return reported separately | The source export's foreign-currency profit column contains no currency effect at all. On one lot that is a €1,016 overstatement. |
 | [0005](0005-look-through-exposure.md) | Look-through exposure from published constituent lists, kept out of the return decomposition | "EUR" as a currency weight meant *listing venue*, not risk. Exposure is an estimate; the local/FX return split is an identity. Folding one into the other would make the model's error look like a bug. |
+| [0006](0006-return-attribution-and-carino-linking.md) | Portfolio return attributed to prices, currency, income and trading; Cariño-linked | 0004 said it exposed a residual; it had never built the decomposition at all. Chaining daily contributions naively understates this portfolio by 11 points, so the linking is the feature. |
 
 ## Reference material
 

@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 from portfolio_tracker import seeds as instrument_seeds
-from portfolio_tracker.core import cash, doctor, look_through, rebuild, returns
+from portfolio_tracker.core import attribution, cash, doctor, look_through, rebuild, returns
 from portfolio_tracker.db import migrate as M
 from portfolio_tracker.db.connection import connect
 from portfolio_tracker.importers.investing_com.importer import import_positions
@@ -225,6 +225,70 @@ def test_the_dashboard_renders_on_the_example_corpus(built: sqlite3.Connection) 
     assert "Portfolio" in page
     assert AS_OF.isoformat() in page
     assert "Outside the total" in page
+
+
+# ---------------------------------------------------------------------------
+# Where the return came from
+# ---------------------------------------------------------------------------
+
+
+def test_the_corpus_return_is_mostly_prices_and_partly_the_lira(
+    built: sqlite3.Connection,
+) -> None:
+    """The headline claim, at portfolio level rather than per position.
+
+    The holdings rose far more than the euro return shows, and the lira took
+    the difference. Both halves are real; a tracker that reports only the euro
+    figure is not wrong, it is silent about the larger of the two movements.
+    """
+    state = attribution.summarise(built, person_id=1)
+    assert state is not None
+
+    assert state.local > state.total, "prices did more than the euro return shows"
+    assert state.currency < D("-0.15"), "the lira cost more than fifteen points"
+    # And the parts are the whole. Exactly, not nearly.
+    assert abs(state.residual) < attribution.LINKING_TOLERANCE
+
+
+def test_the_model_explains_almost_all_of_the_return(built: sqlite3.Connection) -> None:
+    """`unexplained` is trading, and on this corpus trading is small.
+
+    Worth pinning: if a refactor started dumping price moves into the
+    unexplained term the totals would still reconcile perfectly and every
+    identity would still hold.
+    """
+    state = attribution.summarise(built, person_id=1)
+    assert state is not None
+    assert abs(state.unexplained) < D("0.01"), f"unexplained is {state.unexplained:.2%}"
+
+
+def test_chaining_the_daily_contributions_naively_would_be_wrong(
+    built: sqlite3.Connection,
+) -> None:
+    """The number the linking exists for, on real data.
+
+    Adding up 527 correct daily contributions gives about 45% against a true
+    56%. Nothing about the wrong figure looks wrong, which is why this is a
+    test rather than a comment.
+    """
+    rows = built.execute(
+        "SELECT ret_local_contrib l, ret_fx_contrib f, ret_income_contrib i, ret_residual r "
+        "FROM portfolio_daily WHERE person_id = 1 AND ret_local_contrib IS NOT NULL"
+    ).fetchall()
+    assert len(rows) > 500
+
+    naive = sum((r["l"] + r["f"] + (r["i"] or D(0)) + (r["r"] or D(0)) for r in rows), D(0))
+    state = attribution.summarise(built, person_id=1)
+    assert state is not None
+    assert abs(state.total - naive) > D("0.10"), "the linking gap should be ten points or more"
+
+
+def test_the_attribution_agrees_with_the_unit_series(built: sqlite3.Connection) -> None:
+    """Two code paths, one number, neither consulting the other."""
+    state = attribution.summarise(built, person_id=1)
+    summary = returns.summarise(built, person_id=1)
+    assert state is not None and summary.twr is not None
+    assert abs(state.total - summary.twr) < D("0.0001")
 
 
 # ---------------------------------------------------------------------------

@@ -15,7 +15,7 @@ import html
 import sqlite3
 from decimal import Decimal
 
-from portfolio_tracker.core import goal, inbox, look_through, returns
+from portfolio_tracker.core import attribution, goal, inbox, look_through, returns
 from portfolio_tracker.money import ZERO
 
 _STYLE = """
@@ -238,6 +238,8 @@ def render_dashboard(conn: sqlite3.Connection, *, person_id: int = 1) -> str:
         )
     parts.append("</table></div>")
 
+    parts.append(_attribution_section(conn, person_id))
+
     parts.append(_exposure_section(conn, person_id))
 
     parts.append(_review_section(conn))
@@ -333,6 +335,45 @@ def _review_section(conn: sqlite3.Connection) -> str:
             "</div></div>"
         )
     return "\n".join(parts)
+
+
+def _attribution_section(conn: sqlite3.Connection, person_id: int) -> str:
+    """Where the return came from, with the parts adding to the whole.
+
+    The portfolio-level version of the sentence this project exists for: the
+    holdings can be up 82% and the euro return be 56%, and the difference has a
+    name and a size. Per position that has always been visible; across the
+    portfolio it was not computable at all until the daily contributions were
+    linked properly.
+    """
+    state = attribution.summarise(conn, person_id=person_id)
+    if state is None:
+        return ""
+
+    rows = [
+        ("Asset prices", state.local, "the holdings, in the currency each is quoted in"),
+        ("Currency", state.currency, "the opening capital, re-translated as rates moved"),
+        ("Income", state.income, "distributions and credited interest"),
+        ("Trading", state.unexplained, "fills away from the close, fees, intraday changes"),
+    ]
+    body = "".join(
+        f"<tr><td>{html.escape(label)} <span class='note'>{html.escape(note)}</span></td>"
+        f"<td class='{_cls(value)}'>{_pct(value)}</td></tr>"
+        for label, value, note in rows
+    )
+    return (
+        "<h2>Where the return came from</h2>"
+        "<div class='wrap'><table>"
+        "<tr><th>Source</th><th>Contribution</th></tr>"
+        f"{body}"
+        f"<tr><th>Total return</th><th class='{_cls(state.total)}'>{_pct(state.total)}</th></tr>"
+        "</table></div>"
+        "<p class='note'>Daily contributions are Cari&ntilde;o-smoothed onto the compounded "
+        "return, so these four add to the total <em>exactly</em> &mdash; adding them up "
+        "unsmoothed leaves a gap of several percentage points, which is why the residual "
+        "is checked rather than assumed. Trading is named rather than folded into the "
+        "others: it is real return that no price or rate explains.</p>"
+    )
 
 
 def _exposure_section(conn: sqlite3.Connection, person_id: int) -> str:

@@ -17,8 +17,8 @@ import typer
 
 from portfolio_tracker import __version__, cli_accounts, cli_flows, cli_look_through
 from portfolio_tracker import seeds as instrument_seeds
+from portfolio_tracker.core import attribution, fx, returns, tax, valuation
 from portfolio_tracker.core import doctor as doctor_checks
-from portfolio_tracker.core import fx, returns, tax, valuation
 from portfolio_tracker.core import rebuild as rebuild_all
 from portfolio_tracker.db import migrate as migrations
 from portfolio_tracker.db.connection import DEFAULT_DB_PATH, connect
@@ -410,6 +410,20 @@ def report(
         typer.echo(f"    timing gap           {pct(summary.timing_gap):>10}")
         typer.echo(f"  volatility             {pct(summary.volatility):>10}")
         typer.echo(f"  max drawdown           {pct(summary.max_drawdown):>10}")
+
+        # Where that return came from. The two legs of the headline claim, at
+        # portfolio level: a lira book can be up sharply and down in euros.
+        split = attribution.summarise(conn, person_id=person_id)
+        if split is not None:
+            typer.echo("")
+            typer.echo("  attributed to:")
+            typer.echo(f"    asset prices         {pct(split.local):>10}")
+            typer.echo(f"    currency             {pct(split.currency):>10}")
+            typer.echo(f"    income               {pct(split.income):>10}")
+            typer.echo(f"    trading              {pct(split.unexplained):>10}")
+            typer.secho(f"    {'-' * 30}", dim=True)
+            typer.echo(f"    total                {pct(split.total):>10}")
+
         typer.echo("")
         typer.echo(f"  contributions          EUR {summary.external_flows_eur:>12,.2f}")
 

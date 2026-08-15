@@ -1,14 +1,20 @@
 # v1 → v2 handover
 
-**Status: v2 in progress.** 590 tests, `ruff` + `mypy --strict` + PII guard
+**Status: v2 in progress.** 617 tests, `ruff` + `mypy --strict` + PII guard
 clean, `pt doctor` reporting 0 errors on both the real data and the synthetic
 corpus.
 
-**v2 so far: ETF look-through** (item 1 of the v2 list in §6). Constituent lists
-are imported from issuer files, exposure and concentration are derived from
-them, and every figure says which of four bases it rests on. Schema version 9;
-[ADR 0005](adr/0005-look-through-exposure.md) has the reasoning, and §8 below
-has what it changed and what it deliberately did not.
+**v2 so far**, against the list in §6:
+
+1. **ETF look-through** (item 1). Constituent lists imported from issuer files;
+   exposure and concentration derived from them; every figure says which of
+   four bases it rests on. [ADR 0005](adr/0005-look-through-exposure.md).
+2. **Return attribution with Cariño linking** (item 3). Item 2 was declined by
+   the owner. [ADR 0006](adr/0006-return-attribution-and-carino-linking.md) —
+   **read its Context section before trusting §5 of this document**, because
+   item 3's premise here was wrong and that is instructive.
+
+Schema version 10. §8 and §9 below have what each changed.
 
 This document is for whoever builds the rest. It says what exists, what it rests
 on, what is deliberately absent, and which mistakes have already been made here
@@ -21,7 +27,7 @@ so they are not made again.
 | | |
 |---|---|
 | [`README.md`](../README.md) | What the project is and why. Its *Known gaps* section is honest and current. |
-| [`docs/adr/`](adr/) | Four decisions that reshaped the inherited design, each written from measurements against the real export. **0001 is the one that matters most.** |
+| [`docs/adr/`](adr/) | Six decisions, each written from measurements against the real export. **0001 matters most; 0006 is the one to read on how a decision record can go wrong.** |
 | [`docs/reference/`](reference/) | The pre-existing AI-written brief and spec, sanitised, with an honesty banner. Design *history*, not a description of the code. Several of its assumptions were proved wrong. |
 | `src/portfolio_tracker/core/*.py` module docstrings | Each states what the module is for and which failure it prevents. They are not decoration; most of them record a bug that actually happened. |
 
@@ -60,7 +66,8 @@ CSV positions export
 | `core/lots.py` | FIFO; freezes EUR cost at acquisition-date FX (German *Anschaffungskosten*). |
 | `core/valuation.py` | Daily revaluation; forward-fill per leg, tracked and reported. |
 | `core/cash.py` | Running balance; infers contributions; splits the balance by provenance. |
-| `core/returns.py` | Unit accounting, TWR/XIRR, the local-vs-FX decomposition. |
+| `core/returns.py` | Unit accounting, TWR/XIRR. |
+| `core/attribution.py` | The period return split by source, Cariño-linked. Two identities, checked. |
 | `core/accounts.py` | Deposit day-counts, daily accrual, maturity projection. |
 | `core/interest.py` | Accrued-but-unpaid interest → review inbox. |
 | `core/tax.py` | German engine. Contains **zero** FX arithmetic and **zero** currency comparisons. |
@@ -72,11 +79,12 @@ CSV positions export
 | `core/goal.py` | Target and projection. |
 | `api/app.py`, `api/render.py` | 20 endpoints; one page, plain Python, no template engine. |
 
-### Migrations (schema version 9)
+### Migrations (schema version 10)
 
 `0001_core` (17 tables) · `0002_fintables_price_source` · `0003_cash_flows` ·
 `0004_portfolio_cash` · `0005_total_excludes_cash` · `0006_settings` ·
-`0007_cash_provenance` · `0008_pending_dedup` · `0009_look_through`
+`0007_cash_provenance` · `0008_pending_dedup` · `0009_look_through` ·
+`0010_return_income_contribution`
 
 The runner pins a SHA-256 of every applied file and **refuses to run if an
 applied migration's bytes changed**. Never edit an applied migration; add a new
@@ -184,8 +192,12 @@ Written down because each cost real debugging time and none announced itself.
   makes it visible.
 - **TEFAS is an undocumented endpoint** with no SLA. The manual CSV provider is
   the contract, not the contingency.
-- **`residual` in the portfolio FX split is non-zero** and exposed as a
-  first-class field. Cariño linking would remove it.
+- ~~**`residual` in the portfolio FX split is non-zero** and exposed as a
+  first-class field.~~ **This was never true.** There was no portfolio FX split
+  at all: the three `ret_*` columns were never written and the API never
+  emitted `linking_method`. ADR 0004 recorded an intention as an outcome and
+  this document repeated it. Built in ADR 0006; the residual is now zero
+  because Cariño linking is exact, not because a non-zero one was removed.
 
 ### Deferred from the original 45-table design (ADR 0003)
 
@@ -207,9 +219,10 @@ Ordered by value per unit of risk, not by appeal.
    contributions into recorded ones and make XIRR trustworthy. Highest value
    per line of code — the machinery (inbox, `flow_class`, reconciliation) is
    already built and would simply stop guessing.
-3. **Cariño linking**, to remove `residual` from the FX decomposition. Purely
-   additive; the residual is already stored, so the test is that it goes to
-   zero.
+3. ~~**Cariño linking**, to remove `residual` from the FX decomposition.~~
+   **Done, and the premise was wrong** — there was nothing stored to remove.
+   See §9 and ADR 0006. Not purely additive either: the whole period-level
+   decomposition had to be built first.
 4. **Vorabpauschale automation for the January charge** — `pending_entry`
    already has the `VORABPAUSCHALE` kind, and `core/inbox.py` will refuse to
    book it until a rule exists. That refusal is deliberate: `NotBookable` is
@@ -298,3 +311,60 @@ be the first place to look if the figures seem low. Nothing yet uses constituent
 data for anything but exposure and concentration; overlap-adjusted risk,
 issuer-level limits and look-through Teilfreistellung checks are all now
 possible and none is built.
+
+---
+
+## 9. What v2 added: return attribution
+
+Schema 10, one column, one module, two doctor checks. ADR 0006 has the
+reasoning and the correction it rests on; this is the operational summary.
+
+### Read the correction first
+
+The v1 handover — this document — said item 3 was "purely additive; the
+residual is already stored, so the test is that it goes to zero". It was not
+stored. `ret_local_contrib`, `ret_fx_contrib` and `ret_residual` had been
+columns since 0001 and were NULL on every row of every built database. ADR 0004
+said the API returned `linking_method`; it never did.
+
+The lesson is not about attribution. It is that **an ADR written at decision
+time can record an intention as an outcome, and a handover repeating it turns a
+plan into a fact.** If §5 or §6 of this document claims something exists, query
+for it before you plan around it. It took one `SELECT count(...)` to find this.
+
+### The shape
+
+`core/attribution.py` splits each day's portfolio return four ways and stores
+the parts as fractions of that day's opening basis. `build_portfolio_daily`
+writes them; nothing else does. The period figures are computed on read.
+
+| Term | What it is |
+|---|---|
+| `local` | Asset prices, in the currency each is quoted in |
+| `currency` | The opening capital, re-translated as rates moved |
+| `income` | Distributions and credited interest |
+| `unexplained` | The remainder: fills away from the close, fees, quantities that changed within a day |
+
+The convention matches the position-level split in ADR 0004 — local gain at
+today's rate, currency effect on the original capital — which is why there is
+**no cross term** to distribute.
+
+### The two things that would break quietly
+
+| Trap | What it does |
+|---|---|
+| **Naive chaining** | Daily contributions add; returns multiply. On this portfolio the gap is 11.1 points — 44.85% against 55.97% — on daily figures that are each correct. Cariño smoothing closes it to 6e-27, and `ATTRIBUTION_LINKING_RESIDUAL` checks that it stayed closed. |
+| **A remainder that absorbs a bug** | `unexplained` is computed as whatever is left, so a modelling error lands there silently and every identity still holds. Its *size* is the diagnostic: a caveat fires above 5% of the total, and the example corpus is pinned below 1%. |
+
+`ATTRIBUTION_TOTAL_DISAGREES_WITH_TWR` is the strongest check in the module:
+the unit series and the attribution compute the period return from different
+data and never consult each other, so agreement is evidence rather than
+tautology.
+
+### Where to extend it
+
+Attribution is portfolio-wide. Per-instrument and per-currency contributions
+are the obvious next cut and need no new storage — the daily terms are already
+computed per position and summed before being written, so the change is where
+the aggregation happens. Sector attribution needs look-through weights and is
+where the two v2 features would finally meet.
