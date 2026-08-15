@@ -526,6 +526,34 @@ def render_readme(open_rows: int, closed_rows: int) -> bytes:
         "and anything computed against the series shows the lira decline the export",
         "structurally cannot see. That difference is the reason this project exists.",
         "",
+        "## holdings/",
+        "",
+        "Published constituent lists for five of the funds, in two different issuer",
+        "dialects, so `pt look-through` has something to look through:",
+        "",
+        "```bash",
+        "uv run pt look-through import -i ZGEQ -f data/example/holdings/ZGEQ.csv \\",
+        "    --as-of 2026-07-31",
+        "uv run pt look-through exposure --dim currency",
+        "```",
+        "",
+        "`ZGEQ` is the point of the exercise. It is quoted in euro and every v1 view",
+        "reports it as euro exposure; its constituents are 62% dollar, yen, sterling,",
+        "franc, krona, Canadian and Australian dollar. The same fund, two answers, and",
+        "only one of them is about risk.",
+        "",
+        "| Property | Detail |",
+        "|---|---|",
+        "| Two dialects | `ZBNK` uses different headers, fractions rather than per cent, a BOM and CRLF. The others are plain UTF-8 per-cent files. |",
+        "| A cash line | Every file ends with `Cash and/or Derivatives`: no ISIN, no country. It aggregates into an explicit UNKNOWN bucket rather than being dropped. |",
+        "| Weights that do not sum to 1 | `ZDIV` sums to 0.9985. Real files do this; the stored sum is what the breakdown divides by, and it is reported. |",
+        "| A stale composition | `ZDIV` is dated 2026-01-30, 196 days before the as-of date, so `pt doctor` raises `LOOK_THROUGH_STALE`. |",
+        "| Deliberate gaps | `ZOVN`, `ZTFA` and `ZTFB` have no composition at all, so coverage is genuinely partial and `LOOK_THROUGH_MISSING` fires. |",
+        "| Overlap with direct holdings | `Acme Robotics C` and `Globex Retail` are held outright *and* inside `ZGEQ` and `ZSEM`, under the same ISINs. Concentration merges them; nothing at instrument level can. |",
+        "",
+        "ISINs use the unallocated `XX` country prefix. Nothing here can collide with a",
+        "real security.",
+        "",
     ]
     return "\n".join(lines).encode("utf-8")
 
@@ -685,7 +713,271 @@ def safe_filename(symbol: str) -> str:
     return symbol.replace("/", "_")
 
 
+# ---------------------------------------------------------------------------
+# Fund compositions
+#
+# Without these the corpus demonstrates the v1 gap but never the fix: every
+# euro-quoted fund reports as euro exposure and there is nothing to compare it
+# to. Two of the fictional issuers below (`Acme Robotics C`, `Globex Retail`)
+# are ALSO held directly in the positions export, and their ISINs match, so the
+# corpus exercises the case concentration exists for -- one company owned both
+# outright and through two funds is a single exposure that no instrument-level
+# view can show.
+#
+# Deliberately incomplete: ZOVN, ZTFA and ZTFB get no composition at all, so a
+# clean clone sees a real coverage gap rather than a tidy 100%. And ZDIV's file
+# is dated far enough back to trip the staleness warning, because a corpus in
+# which every check passes teaches nothing about what the checks are for.
+#
+# ISINs use the `XX` country prefix, which is unallocated. Nothing here can be
+# mistaken for a real security.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Issuer:
+    isin: str
+    name: str
+    currency: str
+    country: str
+    sector: str
+    asset_class: str = "Equity"
+
+
+ISSUERS: dict[str, Issuer] = {
+    i.name: i
+    for i in [
+        Issuer(
+            "XX0000000101",
+            "Nordwind Technologies",
+            "USD",
+            "United States",
+            "Information Technology",
+        ),
+        Issuer(
+            "XX0000000102",
+            "Halcyon Semiconductor",
+            "USD",
+            "United States",
+            "Information Technology",
+        ),
+        Issuer(
+            "XX0000000103", "Meridian Software", "USD", "United States", "Information Technology"
+        ),
+        Issuer("XX0000000104", "Ridgeline Micro", "USD", "United States", "Information Technology"),
+        Issuer("XX0000000105", "Baltic Wafer", "EUR", "Germany", "Information Technology"),
+        Issuer("XX0000000106", "Kestrel Pharma", "CHF", "Switzerland", "Health Care"),
+        Issuer("XX0000000107", "Sakura Precision", "JPY", "Japan", "Industrials"),
+        Issuer(
+            "XX0000000108", "Thornbury Retail", "GBP", "United Kingdom", "Consumer Discretionary"
+        ),
+        Issuer("XX0000000109", "Rheinturm Industrie", "EUR", "Germany", "Industrials"),
+        Issuer("XX0000000110", "Lumen Telecom", "EUR", "Netherlands", "Communication Services"),
+        Issuer("XX0000000111", "Iberia Energia", "EUR", "Spain", "Energy"),
+        Issuer("XX0000000112", "Alderman Bank", "EUR", "Germany", "Financials"),
+        Issuer("XX0000000113", "Banque Ravel", "EUR", "France", "Financials"),
+        Issuer("XX0000000114", "Banca Vittoria", "EUR", "Italy", "Financials"),
+        Issuer("XX0000000115", "Caja del Sur", "EUR", "Spain", "Financials"),
+        Issuer("XX0000000116", "Rotterdam Krediet", "EUR", "Netherlands", "Financials"),
+        Issuer("XX0000000117", "Helvetia Assurance", "CHF", "Switzerland", "Financials"),
+        Issuer("XX0000000118", "Nordic Grid", "SEK", "Sweden", "Utilities"),
+        Issuer("XX0000000119", "Maple Ridge Mining", "CAD", "Canada", "Materials"),
+        Issuer("XX0000000120", "Southern Cross Gold", "AUD", "Australia", "Materials"),
+        Issuer("XX0000000121", "Cordillera Metals", "USD", "United States", "Materials"),
+        Issuer("XX0000000122", "Karoo Reef Resources", "ZAR", "South Africa", "Materials"),
+        Issuer("XX0000000123", "Yukon Star Mining", "CAD", "Canada", "Materials"),
+        Issuer("XX0000000124", "Andes Gold", "USD", "Chile", "Materials"),
+        # Held directly in the positions export as well. Same ISIN in both
+        # places, which is what lets concentration merge them.
+        Issuer("XX0000000201", "Acme Robotics C", "EUR", "Germany", "Industrials"),
+        Issuer("XX0000000202", "Globex Retail", "EUR", "Germany", "Consumer Discretionary"),
+    ]
+}
+
+#: The residual line every published holdings file carries. No identifier, and
+#: no country -- so the corpus also exercises the UNKNOWN bucket.
+CASH_LINE = "Cash and/or Derivatives"
+
+
+@dataclass(frozen=True)
+class Composition:
+    """One fund's published constituent list."""
+
+    as_of: date
+    source: str
+    dialect: str
+    #: Name -> weight. Percent for dialect A, fraction for dialect B, matching
+    #: what each imagined issuer actually publishes.
+    weights: dict[str, str]
+
+
+COMPOSITIONS: dict[str, Composition] = {
+    # A broad global tracker: euro-quoted, and overwhelmingly not euro
+    # exposure. This one fund is the entire argument for the feature.
+    "ZGEQ": Composition(
+        as_of=date(2026, 7, 31),
+        source="Meridian Fund Services monthly holdings, 2026-07-31",
+        dialect="A",
+        weights={
+            "Nordwind Technologies": "14.20",
+            "Halcyon Semiconductor": "11.35",
+            "Meridian Software": "9.80",
+            "Kestrel Pharma": "8.15",
+            "Sakura Precision": "7.40",
+            "Thornbury Retail": "6.85",
+            "Rheinturm Industrie": "6.30",
+            "Acme Robotics C": "5.95",
+            "Lumen Telecom": "5.40",
+            "Iberia Energia": "4.85",
+            "Alderman Bank": "4.55",
+            "Maple Ridge Mining": "4.10",
+            "Nordic Grid": "3.75",
+            "Southern Cross Gold": "3.30",
+            "Banque Ravel": "2.05",
+            "Globex Retail": "1.60",
+            CASH_LINE: "0.40",
+        },
+    ),
+    # Concentrated, and overlapping ZGEQ on its three largest names.
+    "ZSEM": Composition(
+        as_of=date(2026, 7, 31),
+        source="Vantage Index monthly holdings, 2026-07-31",
+        dialect="A",
+        weights={
+            "Halcyon Semiconductor": "26.50",
+            "Nordwind Technologies": "21.30",
+            "Meridian Software": "14.75",
+            "Ridgeline Micro": "11.90",
+            "Sakura Precision": "9.55",
+            "Baltic Wafer": "8.20",
+            "Acme Robotics C": "4.60",
+            CASH_LINE: "3.20",
+        },
+    ),
+    # The second dialect: different headers, fractions rather than per cent,
+    # no asset-class column, a BOM and CRLF line endings. If the loader only
+    # ever sees one issuer's format it is not a loader, it is a coincidence.
+    "ZBNK": Composition(
+        as_of=date(2026, 6, 30),
+        source="Northwind Asset Management quarterly disclosure, 2026-06-30",
+        dialect="B",
+        weights={
+            "Alderman Bank": "0.2840",
+            "Banque Ravel": "0.2415",
+            "Banca Vittoria": "0.1870",
+            "Caja del Sur": "0.1425",
+            "Rotterdam Krediet": "0.1180",
+            CASH_LINE: "0.0270",
+        },
+    ),
+    "ZGLD": Composition(
+        as_of=date(2026, 7, 31),
+        source="Aurum Capital monthly holdings, 2026-07-31",
+        dialect="A",
+        weights={
+            "Maple Ridge Mining": "24.60",
+            "Southern Cross Gold": "19.85",
+            "Cordillera Metals": "16.40",
+            "Karoo Reef Resources": "13.25",
+            "Yukon Star Mining": "11.70",
+            "Andes Gold": "9.30",
+            CASH_LINE: "4.90",
+        },
+    ),
+    # Six months stale at the as-of date, and its weights sum to 99.85 rather
+    # than 100. Both are ordinary in real files and both must be visible.
+    "ZDIV": Composition(
+        as_of=date(2026, 1, 30),
+        source="Harbour Investors semi-annual report, 2026-01-30",
+        dialect="A",
+        weights={
+            "Thornbury Retail": "15.40",
+            "Kestrel Pharma": "13.85",
+            "Iberia Energia": "12.30",
+            "Rheinturm Industrie": "11.55",
+            "Nordic Grid": "10.20",
+            "Lumen Telecom": "9.75",
+            "Alderman Bank": "8.60",
+            "Banque Ravel": "7.45",
+            "Helvetia Assurance": "6.90",
+            CASH_LINE: "3.85",
+        },
+    ),
+}
+
+DIALECT_A_HEADER = [
+    "Name",
+    "ISIN",
+    "Sector",
+    "Asset Class",
+    "Market Currency",
+    "Location",
+    "Weight (%)",
+]
+DIALECT_B_HEADER = ["Holding", "Identifier", "Industry", "Currency", "Country", "Weight"]
+
+
+def _holding_row(fund: str, name: str, weight: str, dialect: str) -> list[str]:
+    """One constituent line, rendered in the issuer's own column order."""
+    if name == CASH_LINE:
+        # No identifier, no country, no sector: exactly as published, and the
+        # reason UNKNOWN is a bucket rather than an error.
+        currency = INSTRUMENTS[fund].currency
+        if dialect == "A":
+            return [name, "", "Cash", "Cash", currency, "", weight]
+        return [name, "", "", currency, "", weight]
+
+    issuer = ISSUERS[name]
+    if dialect == "A":
+        return [
+            issuer.name, issuer.isin, issuer.sector, issuer.asset_class,
+            issuer.currency, issuer.country, weight,
+        ]  # fmt: skip
+    return [issuer.name, issuer.isin, issuer.sector, issuer.currency, issuer.country, weight]
+
+
+def build_holdings_files() -> dict[str, bytes]:
+    files: dict[str, bytes] = {}
+    for fund, composition in COMPOSITIONS.items():
+        header = DIALECT_A_HEADER if composition.dialect == "A" else DIALECT_B_HEADER
+        rows = [
+            _holding_row(fund, name, weight, composition.dialect)
+            for name, weight in composition.weights.items()
+        ]
+        buffer = io.StringIO(newline="")
+        # Dialect B imitates a spreadsheet export: BOM and CRLF. Dialect A is
+        # the plain UNIX-ish file. Both occur; only one of them breaks a naive
+        # reader, which is why the corpus carries it.
+        terminator = "\r\n" if composition.dialect == "B" else "\n"
+        writer = csv.writer(buffer, lineterminator=terminator, quoting=csv.QUOTE_MINIMAL)
+        writer.writerow(header)
+        writer.writerows(rows)
+        payload = buffer.getvalue().encode("utf-8")
+        files[f"holdings/{safe_filename(fund)}.csv"] = (
+            BOM + payload if composition.dialect == "B" else payload
+        )
+    return files
+
+
+def check_compositions() -> None:
+    """Every composition must sum to what its own README claims it sums to.
+
+    A generator that emits a file the importer then refuses is worse than no
+    generator: the corpus would document a working feature and demonstrate a
+    broken one.
+    """
+    for fund, composition in COMPOSITIONS.items():
+        divisor = Decimal(100) if composition.dialect == "A" else Decimal(1)
+        total = sum((Decimal(w) for w in composition.weights.values()), Decimal(0)) / divisor
+        if abs(total - Decimal(1)) > Decimal("0.02"):
+            raise AssertionError(f"{fund} composition sums to {total}, outside tolerance")
+        for name in composition.weights:
+            if name != CASH_LINE and name not in ISSUERS:
+                raise AssertionError(f"{fund} references unknown issuer {name!r}")
+
+
 def build() -> dict[str, bytes]:
+    check_compositions()
     open_rows, truth_lots = build_open_rows()
     closed_rows = build_closed_rows()
 
@@ -700,6 +992,23 @@ def build() -> dict[str, bytes]:
         "history_start": HISTORY_START.isoformat(),
         "fx_anchors": {d.isoformat(): plain(r) for d, r in FX_ANCHORS},
         "lots": truth_lots,
+        # What each composition claims, so a test can assert the loader read it
+        # rather than assert against numbers copied out of the CSV by hand.
+        "compositions": {
+            fund: {
+                "as_of": c.as_of.isoformat(),
+                "dialect": c.dialect,
+                "unit": "percent" if c.dialect == "A" else "fraction",
+                "holdings": len(c.weights),
+                "weight_sum": plain(
+                    sum((Decimal(w) for w in c.weights.values()), Decimal(0))
+                    / (Decimal(100) if c.dialect == "A" else Decimal(1))
+                ),
+                "source": c.source,
+            }
+            for fund, c in COMPOSITIONS.items()
+        },
+        "issuers": {i.name: i.isin for i in ISSUERS.values()},
     }
 
     artefacts = {
@@ -710,6 +1019,7 @@ def build() -> dict[str, bytes]:
         "fx/TRY.csv": build_fx_file(),
     }
     artefacts.update(build_price_files())
+    artefacts.update(build_holdings_files())
     return artefacts
 
 

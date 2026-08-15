@@ -1,0 +1,18 @@
+Name,ISIN,Sector,Asset Class,Market Currency,Location,Weight (%)
+Nordwind Technologies,XX0000000101,Information Technology,Equity,USD,United States,14.20
+Halcyon Semiconductor,XX0000000102,Information Technology,Equity,USD,United States,11.35
+Meridian Software,XX0000000103,Information Technology,Equity,USD,United States,9.80
+Kestrel Pharma,XX0000000106,Health Care,Equity,CHF,Switzerland,8.15
+Sakura Precision,XX0000000107,Industrials,Equity,JPY,Japan,7.40
+Thornbury Retail,XX0000000108,Consumer Discretionary,Equity,GBP,United Kingdom,6.85
+Rheinturm Industrie,XX0000000109,Industrials,Equity,EUR,Germany,6.30
+Acme Robotics C,XX0000000201,Industrials,Equity,EUR,Germany,5.95
+Lumen Telecom,XX0000000110,Communication Services,Equity,EUR,Netherlands,5.40
+Iberia Energia,XX0000000111,Energy,Equity,EUR,Spain,4.85
+Alderman Bank,XX0000000112,Financials,Equity,EUR,Germany,4.55
+Maple Ridge Mining,XX0000000119,Materials,Equity,CAD,Canada,4.10
+Nordic Grid,XX0000000118,Utilities,Equity,SEK,Sweden,3.75
+Southern Cross Gold,XX0000000120,Materials,Equity,AUD,Australia,3.30
+Banque Ravel,XX0000000113,Financials,Equity,EUR,France,2.05
+Globex Retail,XX0000000202,Consumer Discretionary,Equity,EUR,Germany,1.60
+Cash and/or Derivatives,,Cash,Cash,EUR,,0.40

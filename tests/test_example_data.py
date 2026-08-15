@@ -309,3 +309,60 @@ def test_truth_symbols_cover_every_symbol_in_both_files(truth: dict) -> None:  #
     declared = set(truth["symbols"])
     used = {r["Symbol"] for r in rows(OPEN_CSV)} | {r["Symbol"] for r in rows(CLOSED_CSV)}
     assert used <= declared
+
+
+# ---------------------------------------------------------------------------
+# Fund compositions
+# ---------------------------------------------------------------------------
+
+HOLDINGS_DIR = EXAMPLE_DIR / "holdings"
+
+
+def test_the_corpus_ships_two_different_issuer_dialects(truth: dict) -> None:  # type: ignore[type-arg]
+    """One format is a coincidence; the loader has to survive a second one.
+
+    ZBNK carries the properties that break a naive reader -- a BOM, CRLF, and
+    weights as fractions rather than per cent -- and the others do not.
+    """
+    declared = truth["compositions"]
+    assert {c["unit"] for c in declared.values()} == {"percent", "fraction"}
+
+    bank = (HOLDINGS_DIR / "ZBNK.csv").read_bytes()
+    assert bank.startswith(BOM)
+    assert bank.count(b"\r\n") == declared["ZBNK"]["holdings"] + 1
+
+    plain_file = (HOLDINGS_DIR / "ZGEQ.csv").read_bytes()
+    assert not plain_file.startswith(BOM)
+    assert b"\r\n" not in plain_file
+
+
+def test_each_composition_carries_a_cash_line_with_no_identifier() -> None:
+    """The row that makes UNKNOWN a bucket rather than an error."""
+    for path in sorted(HOLDINGS_DIR.glob("*.csv")):
+        parsed = list(csv.DictReader(io.StringIO(path.read_text(encoding="utf-8-sig"))))
+        cash = [r for r in parsed if "Cash" in (r.get("Name") or r.get("Holding") or "")]
+        assert len(cash) == 1, path.name
+        assert not (cash[0].get("ISIN") or cash[0].get("Identifier"))
+
+
+def test_declared_sums_match_the_files_that_were_written(truth: dict) -> None:  # type: ignore[type-arg]
+    """`truth.json` is what the tests assert against, so it must not drift."""
+    for fund, declared in truth["compositions"].items():
+        path = HOLDINGS_DIR / f"{fund}.csv"
+        parsed = list(csv.DictReader(io.StringIO(path.read_text(encoding="utf-8-sig"))))
+        assert len(parsed) == declared["holdings"]
+        column = "Weight (%)" if declared["unit"] == "percent" else "Weight"
+        divisor = Decimal(100) if declared["unit"] == "percent" else Decimal(1)
+        total = sum((Decimal(r[column]) for r in parsed), Decimal(0)) / divisor
+        assert total == Decimal(declared["weight_sum"])
+
+
+def test_two_issuers_are_also_held_directly_in_the_export(truth: dict) -> None:  # type: ignore[type-arg]
+    """Without an overlap the corpus cannot demonstrate concentration at all."""
+    zgeq = list(csv.DictReader(io.StringIO((HOLDINGS_DIR / "ZGEQ.csv").read_text("utf-8-sig"))))
+    inside = {r["Name"]: r["ISIN"] for r in zgeq}
+    assert inside["Acme Robotics C"] == truth["issuers"]["Acme Robotics C"]
+    assert inside["Globex Retail"] == truth["issuers"]["Globex Retail"]
+    # And those names really are in the positions export, under those symbols.
+    names = {r["Name"].strip() for r in rows(OPEN_CSV)}
+    assert {"Acme Robotics C", "Globex Retail"} <= names

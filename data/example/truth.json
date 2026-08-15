@@ -375,5 +375,75 @@
       "rendered_amount": "32294",
       "abbreviated": false
     }
-  ]
+  ],
+  "compositions": {
+    "ZGEQ": {
+      "as_of": "2026-07-31",
+      "dialect": "A",
+      "unit": "percent",
+      "holdings": 17,
+      "weight_sum": "1",
+      "source": "Meridian Fund Services monthly holdings, 2026-07-31"
+    },
+    "ZSEM": {
+      "as_of": "2026-07-31",
+      "dialect": "A",
+      "unit": "percent",
+      "holdings": 8,
+      "weight_sum": "1",
+      "source": "Vantage Index monthly holdings, 2026-07-31"
+    },
+    "ZBNK": {
+      "as_of": "2026-06-30",
+      "dialect": "B",
+      "unit": "fraction",
+      "holdings": 6,
+      "weight_sum": "1",
+      "source": "Northwind Asset Management quarterly disclosure, 2026-06-30"
+    },
+    "ZGLD": {
+      "as_of": "2026-07-31",
+      "dialect": "A",
+      "unit": "percent",
+      "holdings": 7,
+      "weight_sum": "1",
+      "source": "Aurum Capital monthly holdings, 2026-07-31"
+    },
+    "ZDIV": {
+      "as_of": "2026-01-30",
+      "dialect": "A",
+      "unit": "percent",
+      "holdings": 10,
+      "weight_sum": "0.9985",
+      "source": "Harbour Investors semi-annual report, 2026-01-30"
+    }
+  },
+  "issuers": {
+    "Nordwind Technologies": "XX0000000101",
+    "Halcyon Semiconductor": "XX0000000102",
+    "Meridian Software": "XX0000000103",
+    "Ridgeline Micro": "XX0000000104",
+    "Baltic Wafer": "XX0000000105",
+    "Kestrel Pharma": "XX0000000106",
+    "Sakura Precision": "XX0000000107",
+    "Thornbury Retail": "XX0000000108",
+    "Rheinturm Industrie": "XX0000000109",
+    "Lumen Telecom": "XX0000000110",
+    "Iberia Energia": "XX0000000111",
+    "Alderman Bank": "XX0000000112",
+    "Banque Ravel": "XX0000000113",
+    "Banca Vittoria": "XX0000000114",
+    "Caja del Sur": "XX0000000115",
+    "Rotterdam Krediet": "XX0000000116",
+    "Helvetia Assurance": "XX0000000117",
+    "Nordic Grid": "XX0000000118",
+    "Maple Ridge Mining": "XX0000000119",
+    "Southern Cross Gold": "XX0000000120",
+    "Cordillera Metals": "XX0000000121",
+    "Karoo Reef Resources": "XX0000000122",
+    "Yukon Star Mining": "XX0000000123",
+    "Andes Gold": "XX0000000124",
+    "Acme Robotics C": "XX0000000201",
+    "Globex Retail": "XX0000000202"
+  }
 }

@@ -26,6 +26,11 @@
 !/data/example/fx/
 /data/example/fx/*
 !/data/example/fx/*.csv
+# The generated fund compositions, without which look-through exposure has
+# nothing to look through.
+!/data/example/holdings/
+/data/example/holdings/*
+!/data/example/holdings/*.csv
 
 # Any tabular/statement file anywhere else is presumed to be a real
 # export. Deliberately aggressive: you will occasionally need to
@@ -39,6 +44,7 @@
 !/data/example/*.csv
 !/data/example/prices/*.csv
 !/data/example/fx/*.csv
+!/data/example/holdings/*.csv
 !/tests/data/**/*.csv
 
 # ---------------------------------------------------------------

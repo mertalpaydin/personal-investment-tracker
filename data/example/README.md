@@ -72,3 +72,31 @@ regardless of when it was opened -- and it gets there from 35.10 in July 2024.
 So anything computed against the flat rate reproduces the export to the cent,
 and anything computed against the series shows the lira decline the export
 structurally cannot see. That difference is the reason this project exists.
+
+## holdings/
+
+Published constituent lists for five of the funds, in two different issuer
+dialects, so `pt look-through` has something to look through:
+
+```bash
+uv run pt look-through import -i ZGEQ -f data/example/holdings/ZGEQ.csv \
+    --as-of 2026-07-31
+uv run pt look-through exposure --dim currency
+```
+
+`ZGEQ` is the point of the exercise. It is quoted in euro and every v1 view
+reports it as euro exposure; its constituents are 62% dollar, yen, sterling,
+franc, krona, Canadian and Australian dollar. The same fund, two answers, and
+only one of them is about risk.
+
+| Property | Detail |
+|---|---|
+| Two dialects | `ZBNK` uses different headers, fractions rather than per cent, a BOM and CRLF. The others are plain UTF-8 per-cent files. |
+| A cash line | Every file ends with `Cash and/or Derivatives`: no ISIN, no country. It aggregates into an explicit UNKNOWN bucket rather than being dropped. |
+| Weights that do not sum to 1 | `ZDIV` sums to 0.9985. Real files do this; the stored sum is what the breakdown divides by, and it is reported. |
+| A stale composition | `ZDIV` is dated 2026-01-30, 196 days before the as-of date, so `pt doctor` raises `LOOK_THROUGH_STALE`. |
+| Deliberate gaps | `ZOVN`, `ZTFA` and `ZTFB` have no composition at all, so coverage is genuinely partial and `LOOK_THROUGH_MISSING` fires. |
+| Overlap with direct holdings | `Acme Robotics C` and `Globex Retail` are held outright *and* inside `ZGEQ` and `ZSEM`, under the same ISINs. Concentration merges them; nothing at instrument level can. |
+
+ISINs use the unallocated `XX` country prefix. Nothing here can collide with a
+real security.

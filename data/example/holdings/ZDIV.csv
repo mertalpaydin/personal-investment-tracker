@@ -1,0 +1,11 @@
+Name,ISIN,Sector,Asset Class,Market Currency,Location,Weight (%)
+Thornbury Retail,XX0000000108,Consumer Discretionary,Equity,GBP,United Kingdom,15.40
+Kestrel Pharma,XX0000000106,Health Care,Equity,CHF,Switzerland,13.85
+Iberia Energia,XX0000000111,Energy,Equity,EUR,Spain,12.30
+Rheinturm Industrie,XX0000000109,Industrials,Equity,EUR,Germany,11.55
+Nordic Grid,XX0000000118,Utilities,Equity,SEK,Sweden,10.20
+Lumen Telecom,XX0000000110,Communication Services,Equity,EUR,Netherlands,9.75
+Alderman Bank,XX0000000112,Financials,Equity,EUR,Germany,8.60
+Banque Ravel,XX0000000113,Financials,Equity,EUR,France,7.45
+Helvetia Assurance,XX0000000117,Financials,Equity,CHF,Switzerland,6.90
+Cash and/or Derivatives,,Cash,Cash,EUR,,3.85

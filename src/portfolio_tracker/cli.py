@@ -15,7 +15,7 @@ from typing import Annotated
 
 import typer
 
-from portfolio_tracker import __version__, cli_accounts, cli_flows
+from portfolio_tracker import __version__, cli_accounts, cli_flows, cli_look_through
 from portfolio_tracker import seeds as instrument_seeds
 from portfolio_tracker.core import doctor as doctor_checks
 from portfolio_tracker.core import fx, returns, tax, valuation
@@ -59,6 +59,7 @@ def main(
 
 app.add_typer(cli_flows.app, name="flows")
 app.add_typer(cli_accounts.app, name="accounts")
+app.add_typer(cli_look_through.app, name="look-through")
 
 DbPath = Annotated[Path, typer.Option("--db", help="Database file.")]
 

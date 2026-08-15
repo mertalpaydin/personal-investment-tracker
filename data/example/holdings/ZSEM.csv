@@ -1,0 +1,9 @@
+Name,ISIN,Sector,Asset Class,Market Currency,Location,Weight (%)
+Halcyon Semiconductor,XX0000000102,Information Technology,Equity,USD,United States,26.50
+Nordwind Technologies,XX0000000101,Information Technology,Equity,USD,United States,21.30
+Meridian Software,XX0000000103,Information Technology,Equity,USD,United States,14.75
+Ridgeline Micro,XX0000000104,Information Technology,Equity,USD,United States,11.90
+Sakura Precision,XX0000000107,Industrials,Equity,JPY,Japan,9.55
+Baltic Wafer,XX0000000105,Information Technology,Equity,EUR,Germany,8.20
+Acme Robotics C,XX0000000201,Industrials,Equity,EUR,Germany,4.60
+Cash and/or Derivatives,,Cash,Cash,EUR,,3.20

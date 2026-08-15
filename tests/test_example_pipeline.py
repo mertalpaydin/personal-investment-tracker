@@ -24,11 +24,12 @@ from pathlib import Path
 import pytest
 
 from portfolio_tracker import seeds as instrument_seeds
-from portfolio_tracker.core import cash, doctor, rebuild, returns
+from portfolio_tracker.core import cash, doctor, look_through, rebuild, returns
 from portfolio_tracker.db import migrate as M
 from portfolio_tracker.db.connection import connect
 from portfolio_tracker.importers.investing_com.importer import import_positions
 from portfolio_tracker.ingest import fx as ingest_fx
+from portfolio_tracker.ingest import look_through as look_through_ingest
 from portfolio_tracker.ingest import prices as ingest_prices
 from portfolio_tracker.ingest.providers.manual import ManualProvider
 
@@ -38,6 +39,16 @@ SEED_FILE = REPO_ROOT / "seeds" / "instruments.example.yaml"
 
 #: The corpus's as-of date. Fixed, so the test does not drift with the calendar.
 AS_OF = date(2026, 8, 14)
+
+#: The compositions the corpus ships, with the dates their issuers published
+#: them. ZDIV's is deliberately half a year old and ZOVN/ZTFA/ZTFB have none.
+COMPOSITIONS: dict[str, date] = {
+    "ZGEQ": date(2026, 7, 31),
+    "ZSEM": date(2026, 7, 31),
+    "ZBNK": date(2026, 6, 30),
+    "ZGLD": date(2026, 7, 31),
+    "ZDIV": date(2026, 1, 30),
+}
 
 D = Decimal
 
@@ -214,3 +225,110 @@ def test_the_dashboard_renders_on_the_example_corpus(built: sqlite3.Connection) 
     assert "Portfolio" in page
     assert AS_OF.isoformat() in page
     assert "Outside the total" in page
+
+
+# ---------------------------------------------------------------------------
+# Look-through, on the committed compositions
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def with_compositions(built: sqlite3.Connection) -> sqlite3.Connection:
+    """`pt look-through import`, for every composition the corpus ships."""
+    for key, as_of in COMPOSITIONS.items():
+        parsed, digest = look_through_ingest.load(EXAMPLE / "holdings" / f"{key}.csv")
+        instrument_id = built.execute(
+            "SELECT id FROM instrument WHERE import_key = ?", (key,)
+        ).fetchone()["id"]
+        look_through_ingest.store(
+            built,
+            instrument_id=int(instrument_id),
+            as_of=as_of,
+            parsed=parsed,
+            source=f"example corpus {key}",
+            file_sha256=digest,
+        )
+    built.commit()
+    return built
+
+
+def test_every_committed_composition_loads_without_a_unit_hint(
+    with_compositions: sqlite3.Connection,
+) -> None:
+    """Two issuer dialects, one per-cent and one fractional, both read by ``auto``.
+
+    If this ever needs a hint the corpus has stopped covering the case it was
+    built for.
+    """
+    stored = with_compositions.execute(
+        "SELECT count(*) AS sets, sum(holdings) AS lines FROM fund_holding_set"
+    ).fetchone()
+    assert stored["sets"] == len(COMPOSITIONS)
+    assert stored["lines"] == 48
+    units = {
+        r["unit"] for r in with_compositions.execute("SELECT DISTINCT unit FROM fund_holding_set")
+    }
+    assert units == {"percent", "fraction"}
+
+
+def test_the_corpus_is_all_euro_quoted_and_not_remotely_all_euro_exposure(
+    with_compositions: sqlite3.Connection,
+) -> None:
+    """The v1 gap and the v2 answer, on the same portfolio, in one assertion.
+
+    Every euro-quoted instrument in the corpus contributes 100% euro exposure on
+    a quote basis. Opening five of them up moves EUR 37,000 of that into seven
+    other currencies -- risk that was not merely unreported before, it was
+    unrepresentable.
+    """
+    quoted = {
+        r["currency"]: r["v"]
+        for r in with_compositions.execute(
+            "SELECT i.currency, total(p.market_value_eur) AS v FROM position_daily p "
+            "JOIN instrument i ON i.id = p.instrument_id WHERE p.date = ? GROUP BY i.currency",
+            (AS_OF.isoformat(),),
+        )
+    }
+    result = look_through.exposure(with_compositions, dimension="currency", as_of=AS_OF)
+    economic = {b.name: b.value_eur for b in result.buckets}
+
+    assert set(quoted) == {"EUR", "TRY"}
+    assert economic["EUR"] < D(str(quoted["EUR"])) - D(30000)
+    assert {"USD", "JPY", "GBP", "CHF", "CAD", "AUD", "SEK"} <= set(economic)
+    # The lira funds have no composition, so their exposure is unchanged and
+    # correct: a lira-quoted Turkish fund really is lira exposure.
+    assert economic["TRY"] == D(str(quoted["TRY"]))
+
+
+def test_the_corpus_coverage_is_partial_and_says_so(
+    with_compositions: sqlite3.Connection,
+) -> None:
+    """A corpus where every fund is covered would teach nothing about coverage."""
+    result = look_through.exposure(with_compositions, dimension="currency", as_of=AS_OF)
+    assert {p.import_key for p in result.coverage.uncovered} == {"ZOVN", "ZTFA", "ZTFB"}
+    assert result.coverage.look_through_pct < D("0.6")
+    assert any("no published composition" in c for c in result.caveats)
+    # ZDIV is dated six months before the valuation, deliberately.
+    assert any("may no longer describe it" in c for c in result.caveats)
+
+
+def test_a_share_held_outright_and_inside_two_funds_is_one_exposure(
+    with_compositions: sqlite3.Connection,
+) -> None:
+    """The number no instrument-level view in this repository can produce."""
+    result = look_through.concentration(with_compositions, as_of=AS_OF)
+    acme = next(u for u in result.underlyings if u.name == "Acme Robotics C")
+    assert {key for key, _ in acme.via} == {"ACRO", "ZGEQ", "ZSEM"}
+    direct = with_compositions.execute(
+        "SELECT market_value_eur FROM position_daily p JOIN instrument i ON i.id = p.instrument_id "
+        "WHERE p.date = ? AND i.import_key = 'ACRO'",
+        (AS_OF.isoformat(),),
+    ).fetchone()["market_value_eur"]
+    assert acme.value_eur > direct
+
+
+def test_look_through_leaves_the_doctor_clean(with_compositions: sqlite3.Connection) -> None:
+    """Warnings for the gaps, errors for nothing."""
+    report = doctor.run(with_compositions)
+    assert report.errors == [], [str(f) for f in report.errors]
+    assert {"LOOK_THROUGH_MISSING", "LOOK_THROUGH_STALE"} <= report.codes

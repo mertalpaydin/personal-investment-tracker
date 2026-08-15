@@ -9,8 +9,9 @@
 #
 # tests/test_example_data_bytes.py asserts this survived.
 # ---------------------------------------------------------------
-/data/example/*.csv   -text -diff
-/tests/data/**/*.csv  -text -diff
+/data/example/*.csv            -text -diff
+/data/example/holdings/*.csv   -text -diff
+/tests/data/**/*.csv           -text -diff
 
 *.sql   text
 *.md    text

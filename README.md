@@ -44,6 +44,8 @@ both be true and visible at once.
   Vorabpauschale (§18 InvStG), loss pots (§20 VI EStG), Sparerpauschbetrag
 - **Daily FX revaluation** of every non-EUR position, with local/currency return
   split out
+- **ETF look-through**: economic exposure from published constituent lists, and
+  the concentration that overlapping funds hide
 - **Deposit-account interest accrual**, modelled so that capitalised interest reads
   as *return* rather than as new savings
 - **TWR via unit accounting**, XIRR, volatility, max drawdown
@@ -65,6 +67,14 @@ uv run pt import investing \
     --closed data/example/closed.csv \
     --account 1
 uv run pt doctor
+```
+
+The corpus also ships published constituent lists for five of its funds, so
+look-through has something to look through:
+
+```bash
+uv run pt look-through import -i ZGEQ -f data/example/holdings/ZGEQ.csv --as-of 2026-07-31
+uv run pt look-through exposure --dim currency
 ```
 
 Then, with the API extra installed:
@@ -99,7 +109,10 @@ GET  /api/health/data          what can be trusted, and where it cannot
 GET  /api/portfolio            headline total, cost basis, gain split by currency
 GET  /api/positions            every open position
 GET  /api/positions/{key}      one position, incl. why it disagrees with the export
-GET  /api/allocation?dim=      asset_class | currency | account
+GET  /api/allocation?dim=      asset_class | currency | account | sector | country
+                    &basis=    quote (default) | look_through
+GET  /api/look-through         which funds have a composition, and how old it is
+GET  /api/exposure/concentration   underlying issuers, across funds and direct holdings
 GET  /api/returns  · /series   TWR, XIRR, volatility, drawdown; the daily unit index
 GET  /api/fx?quote=TRY         stored rates, in the one direction they are stored
 GET  /api/accounts/deposits    deposit terms, including withholding at source
@@ -120,6 +133,46 @@ months the *why* is the only way to re-evaluate it. Nothing is recomputed
 automatically: the response says `rebuild_required`, and rebuilding is a step you
 take. The CLI (`pt flows confirm`) and the page call the same `core.inbox`
 routing, so the two cannot come to mean different things.
+
+## What a fund is quoted in is not what it holds
+
+`dim=currency` on the quote basis answers a question nobody asked: which
+currency each instrument is *listed* in. For a portfolio of UCITS ETFs that is
+almost always EUR, whatever the funds actually own. On the example corpus every
+instrument is euro- or lira-quoted, and opening five of them up moves roughly
+€37,000 of "euro exposure" into seven other currencies.
+
+Constituent lists come from the issuer, as files, because there is no feed and
+no issuer promises its format will exist next quarter:
+
+```bash
+uv run pt look-through import -i ZGEQ -f data/example/holdings/ZGEQ.csv --as-of 2026-07-31
+uv run pt look-through exposure --dim currency     # both answers, side by side
+uv run pt look-through concentration --top 20      # who you actually own
+uv run pt look-through list                        # what has no composition
+```
+
+The import prints the three decisions that could make a good file into a wrong
+answer: which column it read as the weight, what unit it concluded it was in,
+and what the weights summed to before anything scaled them. Weights are stored
+exactly as published and divided by their own recorded sum on read, so a file
+that sums to 0.9985 is scaled visibly rather than quietly.
+
+Concentration is the part no instrument-level view can produce. A company held
+through three funds *and* outright is one exposure, and only the constituent
+lists show it — on the example corpus `Acme Robotics C` is €12,531 held directly
+and €13,300 in total.
+
+Every figure carries which of four bases it rests on: a published constituent
+list, a **declared** `economic_currency` (an assertion, not evidence), a direct
+holding that is its own exposure, or a fund with none of those — still reported
+on its wrapper, and named. A 50%-covered breakdown and a fully covered one look
+identical without that block, and the second is a much stronger claim.
+
+Exposure never touches the return decomposition. The local/currency split in
+`/api/returns` is computed from the rate each position was actually valued at
+and is an exact identity; look-through is an estimate of what the portfolio is
+exposed to next. Two numbers, two questions.
 
 `uv run pt doctor` checks the derived data against the identities it must
 satisfy — market value is quantity times price, the gain split's parts sum to
@@ -180,9 +233,11 @@ Stated here rather than buried, because they bound what the numbers mean:
    purchase not funded by a prior sale implies a contribution, which the tool
    proposes and the owner confirms. XIRR is therefore labelled
    `"reliability": "low"`; TWR via unit accounting is the number to trust.
-4. **Currency exposure is quote-currency, not economic.** A EUR-quoted S&P 500 ETF
-   reports zero FX contribution while carrying full USD risk. Correct mechanically,
-   misleading economically; the API labels it rather than hiding it.
+4. **Look-through is only as complete as the files you load.** Economic exposure
+   is computed from published constituent lists; a fund with none is still
+   reported on its wrapper's own currency. Every response says which share rests
+   on evidence, and `pt doctor` warns about the rest. A composition is also a
+   snapshot: nothing refreshes it, and `LOOK_THROUGH_STALE` fires after 180 days.
 5. **Turkish mutual funds are not on mainstream price feeds.** A TEFAS provider
    exists, but the manual CSV path is a co-equal requirement, not a fallback.
 
@@ -193,9 +248,14 @@ Things a visitor will hit, listed rather than discovered:
 - **XIRR is approximate**, and says so. Contributions are inferred from
   purchases, so their dates are the days money was *invested*, not the days it
   arrived. TWR via unit accounting is unaffected and is the number to trust.
-- **Currency exposure is quote-currency**, so a EUR-quoted S&P tracker reports
-  zero FX contribution while carrying full dollar risk. Correct mechanically,
-  misleading economically; only look-through fixes it, and that is not here.
+- **The FX *return* split is still quote-based**, and deliberately. A EUR-quoted
+  S&P tracker shows zero currency contribution in `/api/returns` because it was
+  genuinely valued in euro; the dollar risk it carries appears under exposure
+  instead. Reconciling the two would mean modelling a return that was never
+  observed. See [ADR 0005](docs/adr/0005-look-through-exposure.md).
+- **Concentration merges on identifiers where files supply them**, and on names
+  otherwise. Two issuers publishing the same company under different names with
+  no ISIN will not merge, so the figure understates. That is the safe direction.
 - **Cost basis for lira lots stays estimated.** The export prints open prices to
   three or four decimals and there is no lossless route to the true figure, so
   `basis_quality` records the doubt rather than hiding it.
@@ -208,6 +268,7 @@ core/fx.py                 the only currency conversion in the codebase
 core/lots.py               FIFO; freezes EUR cost basis at acquisition-date FX
 core/valuation.py          daily revaluation on the TARGET2 grid
 core/returns.py            unit accounting, TWR/XIRR, local-vs-FX decomposition
+core/look_through.py       economic exposure and concentration; four labelled bases
 core/cash.py               running bank balance; infers the contributions nobody recorded
 core/accounts.py           deposit accrual; interest reads as return, never as savings
 core/tax.py                German engine; zero FX arithmetic, zero currency tests
@@ -215,6 +276,7 @@ core/interest.py           accrued-but-unpaid interest, proposed for review
 core/inbox.py              what confirming an inference means, for every front end
 core/goal.py               target and projection; contributions only, no assumed return
 ingest/dividends.py        distributions, proposed for review rather than booked
+ingest/look_through.py     issuer holdings files; refuses rather than guesses a unit
 api/                       read-only FastAPI JSON + a server-rendered debug page
 ```
 

@@ -1,12 +1,18 @@
 # v1 → v2 handover
 
-**Status: v1 complete.** 529 tests, `ruff` + `mypy --strict` + PII guard clean,
-`pt doctor` reporting 0 errors across 4,610 rows of the author's real data and
-4,496 rows of the synthetic corpus.
+**Status: v2 in progress.** 590 tests, `ruff` + `mypy --strict` + PII guard
+clean, `pt doctor` reporting 0 errors on both the real data and the synthetic
+corpus.
 
-This document is for whoever builds v2. It says what exists, what it rests on,
-what is deliberately absent, and which mistakes have already been made here so
-they are not made again.
+**v2 so far: ETF look-through** (item 1 of the v2 list in §6). Constituent lists
+are imported from issuer files, exposure and concentration are derived from
+them, and every figure says which of four bases it rests on. Schema version 9;
+[ADR 0005](adr/0005-look-through-exposure.md) has the reasoning, and §8 below
+has what it changed and what it deliberately did not.
+
+This document is for whoever builds the rest. It says what exists, what it rests
+on, what is deliberately absent, and which mistakes have already been made here
+so they are not made again.
 
 ---
 
@@ -58,17 +64,19 @@ CSV positions export
 | `core/accounts.py` | Deposit day-counts, daily accrual, maturity projection. |
 | `core/interest.py` | Accrued-but-unpaid interest → review inbox. |
 | `core/tax.py` | German engine. Contains **zero** FX arithmetic and **zero** currency comparisons. |
+| `core/look_through.py` | Economic exposure and concentration, on four labelled bases. Touches no return figure. |
+| `ingest/look_through.py` | Issuer holdings files. Refuses an ambiguous weight unit rather than guessing. |
 | `core/inbox.py` | What confirming an inference *means*, for every front end. |
 | `core/rebuild.py` | Recompute the derived layer. Called by CLI and API alike. |
 | `core/doctor.py` | Identity checks. |
 | `core/goal.py` | Target and projection. |
 | `api/app.py`, `api/render.py` | 20 endpoints; one page, plain Python, no template engine. |
 
-### Migrations (schema version 8)
+### Migrations (schema version 9)
 
 `0001_core` (17 tables) · `0002_fintables_price_source` · `0003_cash_flows` ·
 `0004_portfolio_cash` · `0005_total_excludes_cash` · `0006_settings` ·
-`0007_cash_provenance` · `0008_pending_dedup`
+`0007_cash_provenance` · `0008_pending_dedup` · `0009_look_through`
 
 The runner pins a SHA-256 of every applied file and **refuses to run if an
 applied migration's bytes changed**. Never edit an applied migration; add a new
@@ -78,7 +86,8 @@ one.
 
 `init-db` · `import` · `seed` · `fetch-fx` · `fetch-prices` · `rebuild` ·
 `report` · `tax` · `doctor` · `serve` · `flows {list,propose,confirm,reject,sale}` ·
-`accounts {list,add,set,import,accrue,propose-interest}`
+`accounts {list,add,set,import,accrue,propose-interest}` ·
+`look-through {import,list,show,exposure,concentration}`
 
 Plus [`run.py`](../run.py): one file, runnable from an IDE, that starts the
 server and opens a browser once it answers.
@@ -121,7 +130,16 @@ These are not style preferences. Each one has a test, and most have a scar.
 
 8. **Derived data is never patched, only rebuilt.** Everything below
    `transaction_` is a pure function of it. `pt init-db --reset-derived` exists
-   for this.
+   for this. `fund_holding` and `fund_holding_set` are **facts**, not
+   derivations — they come from a published file and cannot be recomputed — so
+   they are deliberately absent from `DERIVED_TABLES`.
+
+9. **Exposure is an estimate; the return decomposition is an identity.** They
+   are not reconciled and must not be. `returns.py` splits a gain using the rate
+   the position was actually valued at, and `doctor` checks the parts sum to the
+   whole. Look-through says what the portfolio is exposed to *next*. Folding the
+   second into the first would make a modelling error indistinguishable from a
+   bug (ADR 0005).
 
 ---
 
@@ -151,9 +169,14 @@ Written down because each cost real debugging time and none announced itself.
 - **XIRR is approximate.** Contributions are inferred from purchases, so their
   dates are when money was *invested*, not when it arrived. Labelled
   `"reliability": "low"`. TWR via unit accounting is unaffected.
-- **Currency exposure is quote-currency, not economic.** A EUR-quoted S&P
-  tracker reports zero FX contribution while carrying full dollar risk.
-  Mechanically correct, economically misleading. Only look-through fixes it.
+- **Currency *return* is quote-currency, and stays that way.** A EUR-quoted S&P
+  tracker shows zero FX contribution in `/api/returns` because it was genuinely
+  valued in euro. Its dollar risk now appears under exposure instead. The two
+  are deliberately not reconciled — invariant 9.
+- **Look-through coverage is a maintenance obligation.** Exposure is only as
+  complete as the compositions imported, and a composition goes stale with
+  nothing to refresh it. `LOOK_THROUGH_MISSING` and `LOOK_THROUGH_STALE` exist
+  so the gap is reported rather than discovered.
 - **Lira cost basis stays `ESTIMATED`.** The export prints open prices to 3–4
   decimals and there is no lossless route to the true figure.
 - **No fee data exists in the source.** Cost basis is understated by every
@@ -166,8 +189,9 @@ Written down because each cost real debugging time and none announced itself.
 
 ### Deferred from the original 45-table design (ADR 0003)
 
-ETF look-through · Cariño attribution · Monte Carlo projection · LLM narration ·
-what-if scenarios · peer scanning · news sentiment. Roughly 29 tables.
+~~ETF look-through~~ (built, ADR 0005, two tables) · Cariño attribution · Monte
+Carlo projection · LLM narration · what-if scenarios · peer scanning · news
+sentiment.
 
 ---
 
@@ -175,10 +199,10 @@ what-if scenarios · peer scanning · news sentiment. Roughly 29 tables.
 
 Ordered by value per unit of risk, not by appeal.
 
-1. **ETF look-through.** Unlocks the largest honest gap: real currency and
-   sector exposure. Needs a holdings source per fund and a `look_through`
-   table. Everything downstream (`/api/allocation`) already labels its basis,
-   so the API contract barely changes.
+1. ~~**ETF look-through.**~~ **Done.** See §8 and ADR 0005. The estimate in the
+   original list was right about the shape and wrong about the size: the API
+   contract did barely change, but the honest part turned out to be the coverage
+   reporting rather than the arithmetic.
 2. **Broker cash-flow import**, if a source can be found. Would turn inferred
    contributions into recorded ones and make XIRR trustworthy. Highest value
    per line of code — the machinery (inbox, `flow_class`, reconciliation) is
@@ -225,3 +249,52 @@ single-byte drift, and pre-commit is configured to leave those files alone.
 well as fixing it. The checks there are the ones whose violations do not look
 like violations, and every one is tested against a planted failure as well as
 against clean data.
+
+---
+
+## 8. What v2 added: look-through
+
+Schema 9, two tables, one new CLI group, three API changes. ADR 0005 has the
+reasoning; this is what a maintainer needs to know.
+
+### The shape
+
+`fund_holding_set` is one row per (fund, publication date): source, raw weight
+sum, the unit the file used, a SHA-256 of the bytes. `fund_holding` is the
+lines, weights stored as **fractions of fund NAV**, converted exactly once at
+parse time. A composite FK with `ON DELETE CASCADE` means a set and its lines
+cannot come apart.
+
+Exposure is computed **on read**. There is no derived table, nothing to rebuild,
+and `pt look-through import` says so. Adding a composition changes what the API
+reports on the next request.
+
+### Four bases, and why the fourth exists
+
+`look_through` → `declared` → `direct` → `quote_only`. The last one is the v1
+answer, kept and named rather than hidden, because a fund reported on its
+wrapper's currency and a fund reported on its constituents' currencies are
+different claims and must not render alike. Every response carries `coverage`.
+
+`declared` is the old `economic_currency` column, which was dead metadata in v1.
+It applies to the currency dimension only — an assertion about currency says
+nothing about sector, and inventing one would be indistinguishable from evidence
+a week later.
+
+### Traps this added
+
+| Trap | What it does |
+|---|---|
+| **The weight unit** | `7.24` and `0.0724` are the same weight in two issuers' files. `auto` commits only when the sum is unmistakably near 1 or near 100, and otherwise refuses with both readings printed. This is the `41.5 → 0.00415` trap in a new place. |
+| **Normalising at import** | A file summing to 0.62 scaled silently to 1.0 destroys the evidence that it was ever partial. Raw weights and the raw sum are stored; the division happens on read and is reported. |
+| **Rows lost after import** | Delete lines from `fund_holding` and the remaining percentages still add to 100% of the *stored divisor*. Nothing downstream notices. `LOOK_THROUGH_ROWS_MISSING` and `LOOK_THROUGH_SUM_MISMATCH` compare the rows against what the file said it contained. |
+| **A composition dated after the valuation** | Would back-date today's holdings onto last year's exposure. `composition_date()` is bounded by the valuation date, not by today. |
+
+### Where to extend it
+
+Concentration groups on the identifier when a file supplies one and on the
+upper-cased name otherwise — an issuer-mapping table would improve it, and would
+be the first place to look if the figures seem low. Nothing yet uses constituent
+data for anything but exposure and concentration; overlap-adjusted risk,
+issuer-level limits and look-through Teilfreistellung checks are all now
+possible and none is built.

@@ -25,9 +25,10 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
-from portfolio_tracker.core import cash, fx, returns
+from portfolio_tracker.core import cash, fx, look_through, returns
 from portfolio_tracker.core.calendars import TARGET2, grid_days
 from portfolio_tracker.importers.report import Finding, Severity
+from portfolio_tracker.ingest import look_through as look_through_ingest
 from portfolio_tracker.money import ZERO
 
 #: Identities are exact in principle; each side is independently rounded to the
@@ -391,12 +392,103 @@ def check_data_quality(conn: sqlite3.Connection, report: DoctorReport) -> None:
         )
 
 
+def check_look_through(conn: sqlite3.Connection, report: DoctorReport) -> None:
+    """Whether a stored composition still describes a whole fund.
+
+    A holdings file is the one input here that arrives as a bulk load and is
+    then used as a divisor. If rows go missing afterwards -- a partial delete, a
+    half-applied import, a hand-edit -- the stored ``weight_sum`` no longer
+    matches the rows it summarises, and every exposure figure derived from it is
+    scaled by a number that describes a file that is no longer there. Nothing
+    else in the system would notice: the percentages still add to 100%.
+    """
+    for row in conn.execute(
+        "SELECT s.instrument_id, s.as_of, s.weight_sum, s.holdings, i.import_key, "
+        "  (SELECT count(*) FROM fund_holding h "
+        "     WHERE h.instrument_id = s.instrument_id AND h.as_of = s.as_of) AS rows_stored "
+        "FROM fund_holding_set s JOIN instrument i ON i.id = s.instrument_id"
+    ):
+        report.rows_examined += 1
+        where = f"{row['import_key']} as of {row['as_of']}"
+
+        if row["rows_stored"] != row["holdings"]:
+            report.add(
+                "LOOK_THROUGH_ROWS_MISSING",
+                Severity.ERROR,
+                f"{where}: the file recorded {row['holdings']} holding(s) and "
+                f"{row['rows_stored']} are stored -- the composition is incomplete and "
+                "every exposure figure from it is scaled by a sum it no longer has",
+                instrument_id=row["instrument_id"],
+                as_of=row["as_of"],
+            )
+
+        stored = conn.execute(
+            "SELECT weight FROM fund_holding WHERE instrument_id = ? AND as_of = ?",
+            (row["instrument_id"], row["as_of"]),
+        ).fetchall()
+        actual = sum((_d(r["weight"]) for r in stored), ZERO)
+        if _off_by(actual, _d(row["weight_sum"]), Decimal("0.000001")):
+            report.add(
+                "LOOK_THROUGH_SUM_MISMATCH",
+                Severity.ERROR,
+                f"{where}: the rows sum to {actual} but the set records {row['weight_sum']}",
+                instrument_id=row["instrument_id"],
+                as_of=row["as_of"],
+            )
+
+        # The tolerance the importer enforces. A row that violates it now was
+        # either loaded by an older rule or edited since.
+        if abs(_d(row["weight_sum"]) - Decimal(1)) > look_through_ingest.DEFAULT_TOLERANCE:
+            report.add(
+                "LOOK_THROUGH_WEIGHTS_UNBALANCED",
+                Severity.ERROR,
+                f"{where}: published weights sum to {row['weight_sum']}, which is not a "
+                "whole fund; the breakdown scales a partial file up to 100%",
+                instrument_id=row["instrument_id"],
+                as_of=row["as_of"],
+            )
+
+    # Coverage is a property of the *portfolio*, not of any stored row, so it
+    # is reported per person against what is actually held.
+    for person in conn.execute("SELECT id FROM person"):
+        try:
+            funds = look_through.fund_coverage(conn, person_id=int(person["id"]))
+        except look_through.NoValuation:
+            continue
+        held = sum((f.value_eur for f in funds), ZERO)
+        if held <= ZERO:
+            continue
+
+        uncovered = [f for f in funds if f.is_fund and not f.covered]
+        if uncovered:
+            value = sum((f.value_eur for f in uncovered), ZERO)
+            report.add(
+                "LOOK_THROUGH_MISSING",
+                Severity.WARNING,
+                f"{len(uncovered)} fund(s) worth EUR {value:,.2f} ({value / held:.1%} of "
+                f"holdings) have no published composition: "
+                f"{', '.join(sorted(f.import_key for f in uncovered))} -- their currency "
+                "and sector exposure is reported on the wrapper, not on what they hold",
+                person_id=person["id"],
+            )
+        for fund in funds:
+            if fund.stale:
+                report.add(
+                    "LOOK_THROUGH_STALE",
+                    Severity.WARNING,
+                    f"{fund.import_key}: composition is from {fund.composition_date}, "
+                    f"{fund.stale_days} days before the latest valuation",
+                    instrument_id=fund.instrument_id,
+                )
+
+
 CHECKS = (
     check_lots,
     check_position_identities,
     check_fx,
     check_portfolio,
     check_data_quality,
+    check_look_through,
 )
 
 

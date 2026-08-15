@@ -97,6 +97,12 @@ instruments:
     is_fund: false
     # A single share is not a fund, so there is no Teilfreistellung at all.
     teilfreistellung_pct: "0.00"
+    # The same ISIN appears inside ZGEQ's and ZSEM's holdings files. That is
+    # what lets `pt look-through concentration` report one exposure instead of
+    # three, and it is the whole reason the identifier is worth carrying.
+    isin: XX0000000201
+    domicile: Germany
+    sector: Industrials
 
   GBEX:
     price_source: manual
@@ -104,6 +110,9 @@ instruments:
     asset_class: STOCK
     is_fund: false
     teilfreistellung_pct: "0.00"
+    isin: XX0000000202
+    domicile: Germany
+    sector: Consumer Discretionary
 
   ZEC/EUR:
     price_source: manual

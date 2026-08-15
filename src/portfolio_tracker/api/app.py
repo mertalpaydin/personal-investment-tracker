@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 from portfolio_tracker import __version__
 from portfolio_tracker.api.render import render_dashboard
-from portfolio_tracker.core import fx, goal, inbox, rebuild, returns, tax, valuation
+from portfolio_tracker.core import fx, goal, inbox, look_through, rebuild, returns, tax, valuation
 from portfolio_tracker.db.connection import DEFAULT_DB_PATH, connect, transaction
 from portfolio_tracker.money import ZERO
 
@@ -676,20 +676,39 @@ def position_detail(
 def allocation(
     conn: sqlite3.Connection = Depends(get_db),
     person_id: int = Query(1, alias="person"),
-    dim: str = Query("asset_class", pattern="^(asset_class|currency|account)$"),
+    dim: str = Query("asset_class", pattern="^(asset_class|currency|account|sector|country)$"),
+    basis: str = Query(
+        "quote",
+        pattern="^(quote|look_through)$",
+        description="quote: the instrument's own attribute. look_through: what its "
+        "constituents are, where a composition has been imported.",
+    ),
 ) -> dict[str, Any]:
     """Weights by one dimension.
 
-    ``dim=currency`` reports the *quote* currency, which is not the same as the
-    economic one: a EUR-quoted S&P 500 tracker carries full dollar risk and is
-    counted here as EUR. That is mechanically right and economically misleading,
-    so the response says which basis it used rather than leaving it inferred.
+    With ``basis=quote`` -- the default, and all v1 could do -- ``dim=currency``
+    reports the *quote* currency, which is not the same as the economic one: a
+    EUR-quoted S&P 500 tracker carries full dollar risk and is counted here as
+    EUR. That is mechanically right and economically misleading, so the response
+    says which basis it used rather than leaving it inferred.
+
+    With ``basis=look_through`` the fund is opened up and its market value is
+    distributed across what it actually holds. The answer is then only as
+    complete as the compositions imported, so the response carries a
+    ``coverage`` block saying how much of the portfolio each basis accounts
+    for. A breakdown that is 60% evidence and 40% wrapper is a different claim
+    from one that is 100% evidence, and the two must not look alike.
     """
+    if basis == "look_through":
+        return _look_through_allocation(conn, person_id, dim)
+
     row = _latest(conn, person_id)
     column = {
         "asset_class": "i.asset_class",
         "currency": "i.currency",
         "account": "a.name",
+        "sector": "i.sector",
+        "country": "i.domicile",
     }[dim]
 
     buckets: dict[str, Decimal] = {}
@@ -703,7 +722,11 @@ def allocation(
         """,  # `column` comes from the fixed map above, never from the request
         (row["date"], person_id),
     ):
-        buckets[r["bucket"]] = buckets.get(r["bucket"], ZERO) + r["market_value_eur"]
+        # `sector` and `domicile` are nullable, and a NULL bucket is a real
+        # answer -- "not recorded" -- rather than a row to drop. Dropping it
+        # would make the remaining weights sum to 1 over a smaller portfolio.
+        bucket = r["bucket"] or look_through.UNKNOWN
+        buckets[bucket] = buckets.get(bucket, ZERO) + r["market_value_eur"]
 
     total = sum(buckets.values(), ZERO)
     return {
@@ -726,6 +749,175 @@ def allocation(
         "note": (
             "Weights are on holdings only; deposits and cash are reported by "
             "/api/portfolio and are not allocated here."
+        ),
+    }
+
+
+def _coverage_block(coverage: look_through.Coverage) -> dict[str, Any]:
+    """How much of the portfolio each basis accounts for.
+
+    Present on every look-through response, and the reason they can be trusted:
+    the same breakdown computed over a portfolio with one composition imported
+    and over one with all of them looks identical without it.
+    """
+    return {
+        "total_eur": _decimal(coverage.total_eur),
+        "look_through_pct": _decimal(coverage.look_through_pct),
+        "by_basis": {
+            key: _decimal(coverage.by_basis.get(key, ZERO))
+            for key in look_through.BASES
+            if coverage.by_basis.get(key, ZERO) > ZERO
+        },
+        "uncovered": [
+            {
+                "instrument": entry.import_key,
+                "name": entry.name,
+                "value_eur": _decimal(entry.value_eur),
+            }
+            for entry in coverage.uncovered
+        ],
+        "compositions": [
+            {
+                "instrument": entry.import_key,
+                "as_of": entry.composition_date.isoformat() if entry.composition_date else None,
+                "age_days": entry.stale_days,
+                "stale": entry.stale_days is not None
+                and entry.stale_days > look_through.STALE_AFTER_DAYS,
+            }
+            for entry in coverage.positions
+            if entry.composition_date is not None
+        ],
+        "basis_meanings": {
+            "look_through": "distributed across a published constituent list",
+            "declared": "the owner's recorded economic_currency; an assertion, not evidence",
+            "direct": "not a fund, so the instrument is its own exposure",
+            "quote_only": "a fund with no composition; reported on its wrapper",
+        },
+    }
+
+
+def _look_through_allocation(conn: sqlite3.Connection, person_id: int, dim: str) -> dict[str, Any]:
+    if dim not in look_through.DIMENSIONS:
+        raise HTTPException(
+            400,
+            f"dim={dim} has no meaning below the fund wrapper; look-through supports "
+            f"{', '.join(look_through.DIMENSIONS)}",
+        )
+    try:
+        result = look_through.exposure(conn, person_id=person_id, dimension=dim)
+    except look_through.NoValuation as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+    return {
+        "as_of": result.as_of.isoformat(),
+        "dimension": dim,
+        "basis": "look_through",
+        "total_eur": _decimal(result.total_eur),
+        "buckets": [
+            {
+                "name": bucket.name,
+                "value_eur": _decimal(bucket.value_eur),
+                "weight": _decimal(bucket.weight),
+            }
+            for bucket in result.buckets
+        ],
+        "coverage": _coverage_block(result.coverage),
+        "caveats": result.caveats,
+        "note": (
+            "Exposure, not attribution. The local/currency split in /api/returns is "
+            "computed from the rate each position was actually valued at and is an "
+            "exact identity; this is an estimate of what the portfolio is exposed to "
+            "next. The two answer different questions and are not reconciled."
+        ),
+    }
+
+
+@app.get("/api/exposure/concentration")
+def concentration(
+    conn: sqlite3.Connection = Depends(get_db),
+    person_id: int = Query(1, alias="person"),
+    top: int = Query(25, ge=1, le=500),
+) -> dict[str, Any]:
+    """Underlying issuers, aggregated across every fund and direct holding.
+
+    The view no instrument-level report can produce: one company held through
+    three funds *and* directly is one exposure, and only the constituent lists
+    show it.
+
+    Weights are against total holdings including the part that could not be
+    resolved, so an unlooked-through fund dilutes every figure rather than
+    inflating it. Erring in the other direction would be the dangerous one.
+    """
+    try:
+        result = look_through.concentration(conn, person_id=person_id, top=top)
+    except look_through.NoValuation as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+    return {
+        "as_of": result.as_of.isoformat(),
+        "total_eur": _decimal(result.total_eur),
+        "resolved_eur": _decimal(result.resolved_eur),
+        "top": top,
+        "underlyings": [
+            {
+                "name": u.name,
+                "identifier": u.identifier,
+                "value_eur": _decimal(u.value_eur),
+                "weight": _decimal(u.weight),
+                "via": [{"instrument": key, "value_eur": _decimal(value)} for key, value in u.via],
+            }
+            for u in result.underlyings
+        ],
+        "coverage": _coverage_block(result.coverage),
+        "caveats": result.caveats,
+    }
+
+
+@app.get("/api/look-through")
+def look_through_status(
+    conn: sqlite3.Connection = Depends(get_db),
+    person_id: int = Query(1, alias="person"),
+) -> dict[str, Any]:
+    """Which held instruments have a composition, and how good it is.
+
+    The maintenance view. Every figure under ``basis=look_through`` is bounded
+    by this table, so it is served as a first-class resource rather than being
+    reconstructible from a coverage block.
+    """
+    try:
+        as_of = look_through.latest_valuation_date(conn, person_id)
+        funds = look_through.fund_coverage(conn, person_id=person_id, as_of=as_of)
+    except look_through.NoValuation as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+    held = sum((f.value_eur for f in funds), ZERO)
+    missing = [f for f in funds if f.is_fund and not f.covered]
+    return {
+        # The valuation date, which is what every composition is selected
+        # against -- not the date of any one of them.
+        "as_of": as_of.isoformat(),
+        "holdings_eur": _decimal(held),
+        "covered_eur": _decimal(sum((f.value_eur for f in funds if f.covered), ZERO)),
+        "stale_after_days": look_through.STALE_AFTER_DAYS,
+        "instruments": [
+            {
+                "instrument": f.import_key,
+                "name": f.name,
+                "value_eur": _decimal(f.value_eur),
+                "is_fund": f.is_fund,
+                "composition_as_of": f.composition_date.isoformat() if f.composition_date else None,
+                "holdings": f.holdings,
+                "weight_sum": _decimal(f.weight_sum) if f.weight_sum is not None else None,
+                "source": f.source,
+                "age_days": f.stale_days,
+                "stale": f.stale,
+            }
+            for f in funds
+        ],
+        "missing": [f.import_key for f in missing],
+        "note": (
+            "Import a composition with `pt look-through import`. A fund with none is "
+            "reported on its wrapper's own currency and sector, which is a listing fact."
         ),
     }
 

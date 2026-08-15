@@ -15,7 +15,7 @@ import html
 import sqlite3
 from decimal import Decimal
 
-from portfolio_tracker.core import goal, inbox, returns
+from portfolio_tracker.core import goal, inbox, look_through, returns
 from portfolio_tracker.money import ZERO
 
 _STYLE = """
@@ -238,6 +238,8 @@ def render_dashboard(conn: sqlite3.Connection, *, person_id: int = 1) -> str:
         )
     parts.append("</table></div>")
 
+    parts.append(_exposure_section(conn, person_id))
+
     parts.append(_review_section(conn))
 
     if summary.caveats:
@@ -330,6 +332,101 @@ def _review_section(conn: sqlite3.Connection) -> str:
             f"<button class='danger' onclick='ptDecide({entry.id}, \"reject\")'>Reject</button>"
             "</div></div>"
         )
+    return "\n".join(parts)
+
+
+def _exposure_section(conn: sqlite3.Connection, person_id: int) -> str:
+    """Currency exposure both ways, and the largest underlying issuers.
+
+    Two columns, side by side, is the only presentation that makes the point:
+    the *quoted* column is what a listing-venue breakdown says, the
+    *look-through* column is what the portfolio is actually exposed to, and the
+    gap between them is a risk that was invisible until the compositions were
+    imported. Showing only the corrected figure would hide the correction.
+
+    The coverage line is not decoration either. A 50%-covered breakdown and a
+    fully covered one render identically without it.
+    """
+    try:
+        exposure = look_through.exposure(conn, person_id=person_id, dimension="currency")
+    except look_through.NoValuation:
+        return ""
+    if not exposure.coverage.by_basis.get(look_through.LOOK_THROUGH):
+        # Nothing has been looked through, so the "corrected" column would
+        # simply restate the quoted one. Point at the command instead.
+        return (
+            "<h2>Exposure</h2><p class='note'>No fund compositions have been imported, so "
+            "currency exposure is still the quote currency: a euro-quoted global tracker "
+            "reads as euro risk. Load a constituent list with "
+            "<code>pt look-through import</code>.</p>"
+        )
+
+    quoted: dict[str, Decimal] = {}
+    for row in conn.execute(
+        "SELECT i.currency AS bucket, p.market_value_eur FROM position_daily p "
+        "JOIN instrument i ON i.id = p.instrument_id "
+        "JOIN account a ON a.id = p.account_id WHERE p.date = ? AND a.person_id = ?",
+        (exposure.as_of.isoformat(), person_id),
+    ):
+        quoted[row["bucket"]] = quoted.get(row["bucket"], ZERO) + row["market_value_eur"]
+
+    parts = [
+        "<h2>Exposure</h2>",
+        "<p class='note'>The <em>quoted</em> column is the currency each instrument is "
+        "listed in. <em>Look-through</em> is what its constituents are actually "
+        "denominated in. A euro-quoted global tracker is a dollar asset with a euro "
+        "ticker, and only the second column knows that.</p>",
+        "<div class='wrap'><table>",
+        "<tr><th>Currency</th><th>Look-through</th><th>Weight</th><th>Quoted</th>"
+        "<th>Difference</th></tr>",
+    ]
+    for bucket in exposure.buckets:
+        was = quoted.get(bucket.name, ZERO)
+        delta = bucket.value_eur - was
+        parts.append(
+            "<tr>"
+            f"<td><strong>{html.escape(bucket.name)}</strong></td>"
+            f"<td>{_eur(bucket.value_eur)}</td>"
+            f"<td>{_pct(bucket.weight)}</td>"
+            f"<td>{_eur(was)}</td>"
+            f"<td class='{_cls(delta)}'>{_eur(delta, sign=True)}</td>"
+            "</tr>"
+        )
+    parts.append("</table></div>")
+
+    covered = exposure.coverage.look_through_pct
+    parts.append(
+        f"<p class='note{'' if covered > Decimal('0.9') else ' warn'}'>"
+        f"{covered:.1%} of holdings attributed on evidence &mdash; a published "
+        "constituent list, or a holding that is its own exposure.</p>"
+    )
+
+    top = look_through.concentration(conn, person_id=person_id, top=10)
+    if top.underlyings:
+        parts.append(
+            "<p class='note'>Largest underlying issuers, aggregated across every fund "
+            "<em>and</em> direct holding. Overlap between funds is invisible at the "
+            "instrument level and is usually where the real concentration is.</p>"
+        )
+        parts.append("<div class='wrap'><table>")
+        parts.append("<tr><th>Issuer</th><th>Value (EUR)</th><th>Weight</th><th>Held via</th></tr>")
+        for u in top.underlyings:
+            via = ", ".join(f"{html.escape(key)} {value:,.0f}" for key, value in u.via)
+            parts.append(
+                "<tr>"
+                f"<td><strong>{html.escape(u.name)}</strong> "
+                f"<span class='note'>{html.escape(u.identifier or '')}</span></td>"
+                f"<td>{_eur(u.value_eur)}</td>"
+                f"<td>{_pct(u.weight)}</td>"
+                f"<td class='note'>{via}</td>"
+                "</tr>"
+            )
+        parts.append("</table></div>")
+
+    if exposure.caveats:
+        parts.append("<ul class='caveats'>")
+        parts += [f"<li>{html.escape(c)}</li>" for c in exposure.caveats]
+        parts.append("</ul>")
     return "\n".join(parts)
 
 
