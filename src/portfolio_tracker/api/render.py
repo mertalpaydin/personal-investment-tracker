@@ -15,7 +15,7 @@ import html
 import sqlite3
 from decimal import Decimal
 
-from portfolio_tracker.core import goal, returns
+from portfolio_tracker.core import goal, inbox, returns
 from portfolio_tracker.money import ZERO
 
 _STYLE = """
@@ -55,9 +55,22 @@ form.goal { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap;
 form.goal input { width: 9rem; padding: .3rem .5rem; font: inherit;
                   border-radius: .3rem; background: transparent; color: inherit;
                   border: 1px solid color-mix(in srgb, currentColor 30%, transparent); }
-form.goal button { padding: .3rem .8rem; font: inherit; border-radius: .3rem;
-                   background: transparent; color: inherit; cursor: pointer;
+form.goal button, .actions button { padding: .3rem .8rem; font: inherit;
+                   border-radius: .3rem; background: transparent; color: inherit;
+                   cursor: pointer;
                    border: 1px solid color-mix(in srgb, currentColor 30%, transparent); }
+.actions button[disabled] { opacity: .4; cursor: not-allowed; }
+.actions button.danger { color: var(--loss); }
+.proposal { border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+            border-radius: .5rem; padding: .75rem 1rem; margin-bottom: .6rem; }
+.proposal .head { display: flex; gap: .5rem; align-items: center; }
+.proposal .basis { margin: .4rem 0 .6rem; font-size: .9rem; }
+.actions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.actions label { color: var(--muted); font-size: .85rem; }
+.actions input { width: 8rem; padding: .3rem .5rem; font: inherit; border-radius: .3rem;
+                 background: transparent; color: inherit; text-align: right;
+                 border: 1px solid color-mix(in srgb, currentColor 30%, transparent); }
+.note.warn { color: var(--loss); }
 """
 
 
@@ -207,14 +220,7 @@ def render_dashboard(conn: sqlite3.Connection, *, person_id: int = 1) -> str:
         )
     parts.append("</table></div>")
 
-    pending = conn.execute(
-        "SELECT count(*) AS n FROM pending_entry WHERE status = 'PROPOSED'"
-    ).fetchone()["n"]
-    if pending:
-        parts.append(
-            f"<h2>Awaiting review</h2><p class='note'>{pending} inference(s) have not been "
-            "confirmed and are not in the ledger. Run <code>pt flows list</code>.</p>"
-        )
+    parts.append(_review_section(conn))
 
     if summary.caveats:
         parts.append("<h2>What these numbers rest on</h2><ul class='caveats'>")
@@ -226,6 +232,86 @@ def render_dashboard(conn: sqlite3.Connection, *, person_id: int = 1) -> str:
         "<p class='note' style='margin-top:2rem'>Planning figures only. The bank's "
         "Steuerbescheinigung is authoritative. Not tax or investment advice.</p>"
     )
+    return "\n".join(parts)
+
+
+_REVIEW_SCRIPT = """
+function ptPost(url, body) {
+  return fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                     body: JSON.stringify(body || {})})
+    .then(r => r.json().then(j => r.ok ? j : Promise.reject(j.detail || r.statusText)));
+}
+function ptDecide(id, action) {
+  const row = document.getElementById('p' + id);
+  const amount = row.querySelector('input[name=amount]');
+  if (action === 'reject') {
+    const reason = prompt('Why did this not happen? A rejection is a claim about reality.');
+    if (!reason) return;
+    ptPost('/api/pending/' + id + '/reject', {reason: reason})
+      .then(() => location.reload()).catch(e => alert(e));
+    return;
+  }
+  const edited = amount.value !== amount.defaultValue ? {amount_local: amount.value} : {};
+  ptPost('/api/pending/' + id + '/confirm', edited)
+    .then(() => location.reload()).catch(e => alert(e));
+}
+function ptRebuild(button) {
+  button.disabled = true; button.textContent = 'Rebuilding...';
+  ptPost('/api/admin/rebuild', {})
+    .then(r => { if (r.breaks && r.breaks.length) { alert(r.breaks.join('\\n')); }
+                 location.reload(); })
+    .catch(e => { alert(e); button.disabled = false; button.textContent = 'Rebuild now'; });
+}
+"""
+
+
+def _review_section(conn: sqlite3.Connection) -> str:
+    """Proposals awaiting a decision, each with the arithmetic behind it.
+
+    The amount is editable and the basis is printed in full beside the button.
+    That is the whole reason this is safe to expose: a confirmation is a real,
+    irreversible write, so what makes it a decision rather than a click is
+    having the guess and its derivation in front of you when you make it.
+    """
+    entries = inbox.listing(conn)
+    stale = inbox.stale_after_decision(conn)
+    if not entries and not stale:
+        return ""
+
+    parts = [f"<script>{_REVIEW_SCRIPT}</script>", "<h2>Awaiting review</h2>"]
+
+    if stale:
+        parts.append(
+            "<p class='note warn'>A decision has been made since the figures above were "
+            "computed, so they are out of date. "
+            "<button onclick='ptRebuild(this)'>Rebuild now</button></p>"
+        )
+
+    if not entries:
+        return "\n".join(parts)
+
+    parts.append(
+        f"<p class='note'>{len(entries)} inference(s) are <strong>not</strong> in the ledger "
+        "and affect nothing above. Read the basis before confirming: the amount is a "
+        "guess about money the source never recorded, and you are usually the better "
+        "authority. Correcting it here keeps both figures.</p>"
+    )
+    for entry in entries:
+        disabled = "" if entry.bookable else " disabled title='no booking rule for this kind yet'"
+        parts.append(
+            f"<div class='proposal' id='p{entry.id}'>"
+            f"<div class='head'><span class='tag'>{html.escape(entry.kind)}</span> "
+            f"<strong>{html.escape(entry.proposed_date.isoformat())}</strong> "
+            f"<span class='note'>#{entry.id}</span></div>"
+            f"<p class='basis'>{html.escape(entry.basis)}</p>"
+            "<div class='actions'>"
+            f"<label>{html.escape(entry.currency)}</label>"
+            f"<input name='amount' type='number' step='0.01' min='0.01' "
+            f"value='{entry.amount_local:f}'>"
+            f"<button onclick='ptDecide({entry.id}, \"confirm\")'{disabled}>Confirm</button>"
+            f"<button class='danger' onclick='ptDecide({entry.id}, \"reject\")'>Reject</button>"
+            "</div></div>"
+        )
     return "\n".join(parts)
 
 

@@ -82,11 +82,9 @@ which means a connection-refused page and a manual reload every time.
 
 `/` and `/debug` serve the same server-rendered page — no build step, no
 JavaScript framework, no CDN. The JSON lives under `/api/*`, with OpenAPI at
-`/docs`. The server opens the database **read-only**: every write goes through a
-CLI command where the inference behind it can be read before it is accepted, so
-there is no HTTP path to the ledger. The single exception is `PUT /api/goal`,
-which sets a display preference nothing derived depends on, and which takes its
-own connection so that reaching for write access is visible in the signature.
+`/docs`. Routes take a **read-only** connection by default; the four that write
+ask for a writable one explicitly, so write access is something a route requests
+rather than something it inherits.
 
 Three things the API does that are easy to get wrong:
 
@@ -108,8 +106,20 @@ GET  /api/accounts/deposits    deposit terms, including withholding at source
 GET  /api/tax/allowance        with a mandatory out-of-scope block
 GET  /api/tax/vorabpauschale   §18 InvStG forecast
 GET  /api/pending              inferences that have not reached the ledger
-GET  /api/goal  · PUT          progress toward the target; the only write
+GET  /api/goal  · PUT          progress toward the target
+POST /api/pending/{id}/confirm · /reject      decide an inference
+POST /api/admin/rebuild        recompute the derived layer
 ```
+
+Confirming is a real, irreversible write: it changes which lots a later sale
+consumes and every return figure downstream. So the proposal's own arithmetic
+sits next to the button, the amount is editable — you are usually the better
+authority on money the source never recorded — and both figures are kept. A
+rejection requires a reason, because it is a claim about what happened and in six
+months the *why* is the only way to re-evaluate it. Nothing is recomputed
+automatically: the response says `rebuild_required`, and rebuilding is a step you
+take. The CLI (`pt flows confirm`) and the page call the same `core.inbox`
+routing, so the two cannot come to mean different things.
 
 `uv run pt doctor` checks the derived data against the identities it must
 satisfy — market value is quantity times price, the gain split's parts sum to

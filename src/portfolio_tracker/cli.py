@@ -17,8 +17,9 @@ import typer
 
 from portfolio_tracker import __version__, cli_flows
 from portfolio_tracker import seeds as instrument_seeds
-from portfolio_tracker.core import cash, fx, lots, returns, tax, valuation
 from portfolio_tracker.core import doctor as doctor_checks
+from portfolio_tracker.core import fx, returns, tax, valuation
+from portfolio_tracker.core import rebuild as rebuild_all
 from portfolio_tracker.db import migrate as migrations
 from portfolio_tracker.db.connection import DEFAULT_DB_PATH, connect
 from portfolio_tracker.importers import overrides
@@ -304,53 +305,39 @@ def rebuild(
     as_of = date.fromisoformat(end) if end else date.today()
     conn = connect(db)
     try:
-        lot_report = lots.rebuild_lots(conn)
-        conn.commit()
-        typer.echo(
-            f"lots: {lot_report.lots_created} open, {lot_report.disposals_created} disposals"
-        )
-        for problem in lot_report.oversold:
-            typer.secho(f"  oversold: {problem}", fg=typer.colors.RED)
-        if lot_report.missing_fx:
-            typer.secho(
-                f"  {len(lot_report.missing_fx)} lot(s) with no trade-date FX rate",
-                fg=typer.colors.YELLOW,
-            )
-
         try:
-            value_report = valuation.build_position_daily(conn, end=as_of, strict=strict)
+            result = rebuild_all.run(conn, end=as_of, strict=strict)
         except valuation.StalePriceError as exc:
             typer.secho(f"valuation refused: {exc}", fg=typer.colors.RED, err=True)
             raise typer.Exit(code=1) from exc
-        conn.commit()
 
-        typer.echo(
-            f"valuation: {value_report.rows} position-days over {value_report.days} grid days"
-        )
-
-        cash_rows = cash.build_cash_daily(conn, end=as_of)
-        conn.commit()
-        typer.echo(f"cash: {cash_rows} daily balance row(s)")
-
-        for person in conn.execute("SELECT id FROM person ORDER BY id"):
-            breaks = returns.build_portfolio_daily(conn, person_id=int(person["id"]), end=as_of)
-            conn.commit()
-            for problem in breaks:
-                typer.secho(f"  {problem}", fg=typer.colors.RED)
-            if breaks:
-                raise typer.Exit(code=1)
-        typer.echo("returns: unit series rebuilt")
-        for problem in value_report.stale[:5]:
-            typer.secho(f"  stale: {problem}", fg=typer.colors.YELLOW)
-        for problem in value_report.missing[:5]:
-            typer.secho(f"  unvalued: {problem}", fg=typer.colors.YELLOW)
-        if len(value_report.missing) > 5:
+        typer.echo(f"lots: {result.lots_created} open, {result.disposals_created} disposals")
+        for problem in result.oversold:
+            typer.secho(f"  oversold: {problem}", fg=typer.colors.RED)
+        if result.missing_fx:
             typer.secho(
-                f"  ... and {len(value_report.missing) - 5} more unvalued position-days",
+                f"  {result.missing_fx} lot(s) with no trade-date FX rate",
+                fg=typer.colors.YELLOW,
+            )
+        typer.echo(
+            f"valuation: {result.position_days} position-days over {result.grid_days} grid days"
+        )
+        typer.echo(f"cash: {result.cash_rows} daily balance row(s)")
+        for problem in result.breaks:
+            typer.secho(f"  {problem}", fg=typer.colors.RED)
+        if not result.breaks:
+            typer.echo("returns: unit series rebuilt")
+        for problem in result.stale[:5]:
+            typer.secho(f"  stale: {problem}", fg=typer.colors.YELLOW)
+        for problem in result.unvalued[:5]:
+            typer.secho(f"  unvalued: {problem}", fg=typer.colors.YELLOW)
+        if len(result.unvalued) > 5:
+            typer.secho(
+                f"  ... and {len(result.unvalued) - 5} more unvalued position-days",
                 fg=typer.colors.YELLOW,
             )
 
-        if not lot_report.ok:
+        if not result.ok:
             raise typer.Exit(code=1)
     finally:
         conn.close()

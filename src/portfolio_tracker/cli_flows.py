@@ -8,12 +8,13 @@ that nobody checked is exactly how a tracker starts lying convincingly.
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
-from portfolio_tracker.core import cash
+from portfolio_tracker.core import cash, inbox
 from portfolio_tracker.db.connection import DEFAULT_DB_PATH, connect
 
 app = typer.Typer(no_args_is_help=True, help="Review inferred contributions and withdrawals.")
@@ -99,23 +100,36 @@ def confirm(
     ids: Annotated[list[int] | None, typer.Argument(help="Proposal ids.")] = None,
     db: DbPath = DEFAULT_DB_PATH,
     all_: Annotated[bool, typer.Option("--all", help="Confirm every proposal.")] = False,
+    amount: Annotated[
+        str | None,
+        typer.Option("--amount", help="Book a corrected amount; the inferred one is kept."),
+    ] = None,
 ) -> None:
-    """Turn proposals into ledger entries."""
+    """Turn proposals into ledger entries.
+
+    Routing goes through ``core.inbox`` -- the same code the web review page
+    calls -- so that confirming from a terminal and confirming from a browser
+    cannot come to mean two different things.
+    """
     conn = connect(db)
     try:
         targets = list(ids or [])
         if all_:
-            targets = [
-                int(r["id"])
-                for r in conn.execute(
-                    "SELECT id FROM pending_entry WHERE status = 'PROPOSED' ORDER BY proposed_date"
-                )
-            ]
+            targets = [entry.id for entry in inbox.listing(conn)]
         if not targets:
             typer.echo("nothing to confirm; pass ids or --all")
             return
+        if amount is not None and len(targets) != 1:
+            typer.secho("--amount applies to exactly one proposal", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1)
+
+        corrected = Decimal(amount) if amount is not None else None
         for pending_id in targets:
-            txn_id = cash.confirm(conn, pending_id)
+            try:
+                txn_id = inbox.confirm(conn, pending_id, amount_local=corrected)
+            except (LookupError, inbox.NotBookable, ValueError) as exc:
+                typer.secho(f"  proposal {pending_id}: {exc}", fg=typer.colors.RED, err=True)
+                raise typer.Exit(code=1) from exc
             typer.echo(f"  proposal {pending_id} -> transaction {txn_id}")
         conn.commit()
         typer.echo(f"\nconfirmed {len(targets)}; re-run `pt rebuild` to fold them in")
@@ -132,7 +146,11 @@ def reject(
     """Dismiss a proposal, recording why."""
     conn = connect(db)
     try:
-        cash.reject(conn, pending_id, reason)
+        try:
+            inbox.reject(conn, pending_id, reason)
+        except (LookupError, ValueError) as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from exc
         conn.commit()
         typer.echo(f"rejected {pending_id}: {reason}")
     finally:

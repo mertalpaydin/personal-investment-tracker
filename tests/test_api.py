@@ -465,3 +465,143 @@ def test_deposit_terms_include_the_withholding_rate(client: TestClient) -> None:
     """Turkish stopaj is taken at source; a model that accrues gross drifts high."""
     body = client.get("/api/accounts/deposits").json()
     assert body["accounts"] == []  # the seed has a depot, not a deposit account
+
+
+# ---------------------------------------------------------------------------
+# The write surface: confirming, rejecting, rebuilding
+# ---------------------------------------------------------------------------
+
+
+def test_a_proposal_shows_its_arithmetic_before_it_is_confirmed(client: TestClient) -> None:
+    """The reason a confirm button is safe to expose at all."""
+    body = client.get("/api/pending/1").json()
+    assert body["basis"] == "ZGEQ paid out"
+    assert body["status"] == "PROPOSED"
+    assert body["bookable"] is True
+
+
+def test_confirming_books_it_and_says_the_figures_are_now_stale(client: TestClient) -> None:
+    body = client.post("/api/pending/1/confirm").json()
+    assert body["status"] == "CONFIRMED"
+    assert body["transaction_id"] > 0
+    # Nothing is recomputed here: a rebuild is several years of daily rows and
+    # belongs to a step the owner takes, not a side effect of a click.
+    assert body["rebuild_required"] is True
+    assert client.get("/api/pending").json()["rebuild_required"] is True
+
+
+def test_a_confirmation_reaches_the_ledger(client: TestClient) -> None:
+    txn_id = client.post("/api/pending/1/confirm").json()["transaction_id"]
+    conn = next(iter(app.dependency_overrides.values()))()
+    row = conn.execute(
+        "SELECT type, flow_class FROM transaction_ WHERE id = ?", (txn_id,)
+    ).fetchone()
+    # INCOME, not a contribution: unit accounting must count it as return, or
+    # the dividend cancels the very return it represents.
+    assert row["type"] == "DIVIDEND"
+    assert row["flow_class"] == "INCOME"
+
+
+def test_confirming_twice_is_refused(client: TestClient) -> None:
+    assert client.post("/api/pending/1/confirm").status_code == 200
+    second = client.post("/api/pending/1/confirm")
+    assert second.status_code == 404
+    assert "confirmed" in second.json()["detail"]
+
+
+def test_an_edited_amount_is_booked_and_the_original_kept(client: TestClient) -> None:
+    """The owner is often the better authority. The guess is still evidence."""
+    body = client.post("/api/pending/1/confirm", json={"amount_local": "99.99"}).json()
+    assert body["amount_edited"] is True
+    detail = client.get("/api/pending/1").json()
+    assert detail["amount"] == 99.99
+    assert detail["derivation"]["amount_as_inferred"] == "12.50"
+    assert detail["derivation"]["edited_by_owner"] is True
+    assert "corrected by the owner" in detail["basis"]
+
+
+def test_a_non_positive_edited_amount_is_refused(client: TestClient) -> None:
+    assert client.post("/api/pending/1/confirm", json={"amount_local": "0"}).status_code == 422
+    assert client.get("/api/pending/1").json()["status"] == "PROPOSED"
+
+
+def test_confirming_something_that_does_not_exist_is_a_404(client: TestClient) -> None:
+    assert client.post("/api/pending/999/confirm").status_code == 404
+
+
+def test_rejecting_requires_a_reason(client: TestClient) -> None:
+    """A rejection is a claim about reality; in six months the why is all there is."""
+    assert client.post("/api/pending/1/reject", json={"reason": ""}).status_code == 422
+    assert client.post("/api/pending/1/reject", json={}).status_code == 422
+    assert client.get("/api/pending/1").json()["status"] == "PROPOSED"
+
+
+def test_rejecting_records_the_reason(client: TestClient) -> None:
+    response = client.post("/api/pending/1/reject", json={"reason": "already spent it"})
+    assert response.status_code == 200
+    detail = client.get("/api/pending/1").json()
+    assert detail["status"] == "REJECTED"
+    assert detail["note"] == "already spent it"
+    assert detail["resulting_txn_id"] is None
+
+
+def test_a_rejected_proposal_cannot_then_be_confirmed(client: TestClient) -> None:
+    client.post("/api/pending/1/reject", json={"reason": "no"})
+    assert client.post("/api/pending/1/confirm").status_code == 404
+
+
+def test_a_kind_with_no_booking_rule_is_refused_rather_than_silently_skipped(
+    client: TestClient,
+) -> None:
+    """Reporting success while recording nothing is the worst available answer."""
+    conn = next(iter(app.dependency_overrides.values()))()
+    conn.execute(
+        "INSERT INTO pending_entry (id, kind, account_id, proposed_date, currency, "
+        "amount_local, basis, status, created_at) VALUES (2, 'VORABPAUSCHALE', 1, "
+        "'2026-01-02', 'EUR', '10.00', 'forecast charge', 'PROPOSED', '2026-01-02T00:00:00Z')"
+    )
+    conn.commit()
+    assert client.get("/api/pending/2").json()["bookable"] is False
+    response = client.post("/api/pending/2/confirm")
+    assert response.status_code == 422
+    assert "cannot be booked" in response.json()["detail"]
+
+
+def test_the_page_shows_the_basis_next_to_the_button(client: TestClient) -> None:
+    page = client.get("/debug").text
+    assert "Awaiting review" in page
+    assert "ZGEQ paid out" in page  # the arithmetic, beside the control
+    assert "Confirm" in page and "Reject" in page
+
+
+def test_the_page_warns_when_the_figures_predate_a_decision(client: TestClient) -> None:
+    client.post("/api/pending/1/confirm")
+    page = client.get("/debug").text
+    assert "out of date" in page
+    assert "Rebuild now" in page
+
+
+def test_rebuild_on_an_empty_database_succeeds_with_nothing_to_do(
+    empty_client: TestClient,
+) -> None:
+    body = empty_client.post("/api/admin/rebuild").json()
+    assert body["ok"] is True
+    assert body["lots"] == 0
+    assert body["breaks"] == []
+
+
+def test_rebuild_clears_the_stale_warning(client: TestClient) -> None:
+    """The loop the owner actually walks: confirm, notice, rebuild, done."""
+    client.post("/api/pending/1/confirm")
+    assert client.get("/api/pending").json()["rebuild_required"] is True
+    assert client.post("/api/admin/rebuild", json={"end": "2026-06-01"}).json()["ok"] is True
+    assert client.get("/api/pending").json()["rebuild_required"] is False
+
+
+def test_rebuild_reports_a_reconciliation_break_rather_than_hiding_it(
+    client: TestClient,
+) -> None:
+    """`breaks` is the field to read: non-empty means a contribution vanished."""
+    body = client.post("/api/admin/rebuild", json={"end": "2026-06-01"}).json()
+    assert "breaks" in body
+    assert isinstance(body["breaks"], list)

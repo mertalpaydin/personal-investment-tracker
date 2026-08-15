@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 from portfolio_tracker import __version__
 from portfolio_tracker.api.render import render_dashboard
-from portfolio_tracker.core import goal, returns, tax
+from portfolio_tracker.core import goal, inbox, rebuild, returns, tax, valuation
 from portfolio_tracker.db.connection import DEFAULT_DB_PATH, connect, transaction
 from portfolio_tracker.money import ZERO
 
@@ -37,12 +37,32 @@ class GoalUpdate(BaseModel):
     target_eur: Decimal = Field(gt=0, description="Target portfolio value in EUR")
 
 
+class ConfirmRequest(BaseModel):
+    """An optional correction to an inferred amount.
+
+    Omitting it books the inference as computed. Supplying an amount records
+    both figures: the owner is often the better authority on money the source
+    never recorded, but a correction that erases the guess erases the evidence
+    that a guess was made.
+    """
+
+    amount_local: Decimal | None = Field(default=None, gt=0)
+
+
+class RejectRequest(BaseModel):
+    reason: str = Field(min_length=1, description="Why this did not happen")
+
+
+class RebuildRequest(BaseModel):
+    end: date | None = Field(default=None, description="Last valuation date; default today")
+
+
 def get_db() -> Any:
     """One connection per request, read-only, closed on the way out.
 
-    Read-only is a design statement as much as a safeguard: every write in this
-    system goes through the CLI, where it can be reviewed, so the HTTP surface
-    has no path to the ledger at all.
+    The default, so that a route which only reports cannot write by accident.
+    A handful of endpoints take ``get_writable_db`` instead, and that choice is
+    visible in the signature rather than buried in the body.
     """
     conn = connect(DB_PATH, read_only=True, same_thread=False)
     try:
@@ -52,10 +72,12 @@ def get_db() -> Any:
 
 
 def get_writable_db() -> Any:
-    """The one writable connection, reached by exactly one endpoint.
+    """The writable connection, taken by the four endpoints that need it.
 
-    Separate from ``get_db`` so that read-only is the default a new route gets
-    for free, and reaching for write access is a visible act in the signature.
+    Those four are the goal target, confirming a proposal, rejecting one, and
+    the rebuild. Everything else in this module reports rather than records,
+    and gets ``get_db``. Keeping the two separate means write access is
+    something a route asks for, not something it inherits.
     """
     conn = connect(DB_PATH, same_thread=False)
     try:
@@ -423,30 +445,147 @@ def vorabpauschale(
     }
 
 
+def _pending_json(entry: inbox.PendingEntry) -> dict[str, Any]:
+    return {
+        "id": entry.id,
+        "kind": entry.kind,
+        "date": entry.proposed_date.isoformat(),
+        "currency": entry.currency,
+        "amount": _decimal(entry.amount_local),
+        # The arithmetic behind the guess, verbatim. A confirmation without it
+        # is a click; with it, it is a decision.
+        "basis": entry.basis,
+        "derivation": entry.derivation,
+        "source_txn_id": entry.source_txn_id,
+        "status": entry.status,
+        "bookable": entry.bookable,
+        "resulting_txn_id": entry.resulting_txn_id,
+        "note": entry.note,
+    }
+
+
 @app.get("/api/pending")
 def pending(
     conn: sqlite3.Connection = Depends(get_db),
     status: str = Query("PROPOSED"),
 ) -> dict[str, Any]:
     """Inferences awaiting a decision. Nothing here has reached the ledger."""
-    rows = conn.execute(
-        "SELECT id, kind, proposed_date, currency, amount_local, basis, status "
-        "FROM pending_entry WHERE status = ? ORDER BY proposed_date",
-        (status,),
-    ).fetchall()
     return {
         "status": status,
-        "entries": [
-            {
-                "id": r["id"],
-                "kind": r["kind"],
-                "date": r["proposed_date"],
-                "currency": r["currency"],
-                "amount": _decimal(r["amount_local"]),
-                "basis": r["basis"],
-            }
-            for r in rows
-        ],
+        "counts": inbox.counts(conn),
+        "rebuild_required": inbox.stale_after_decision(conn),
+        "entries": [_pending_json(e) for e in inbox.listing(conn, status=status)],
+    }
+
+
+@app.get("/api/pending/{pending_id}")
+def pending_detail(
+    pending_id: int,
+    conn: sqlite3.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """One proposal in full, including how its number was arrived at."""
+    try:
+        return _pending_json(inbox.get(conn, pending_id))
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/pending/{pending_id}/confirm")
+def confirm_pending(
+    pending_id: int,
+    payload: ConfirmRequest | None = None,
+    conn: sqlite3.Connection = Depends(get_writable_db),
+) -> dict[str, Any]:
+    """Book a proposal into the ledger, optionally at a corrected amount.
+
+    This is a real write and it is not reversible from here: confirming an
+    inferred contribution changes which lots a later sale consumes and every
+    return figure downstream. The proposal's own arithmetic is on
+    ``GET /api/pending/{id}`` and on the page beside the button, because a
+    confirmation that skips reading it is the failure mode this inbox exists
+    to prevent.
+
+    The derived tables are *not* rebuilt here. A rebuild recomputes several
+    years of daily rows and belongs to an explicit step, so the response says
+    ``rebuild_required`` instead of doing it silently.
+    """
+    amount = payload.amount_local if payload else None
+    try:
+        with transaction(conn):
+            txn_id = inbox.confirm(conn, pending_id, amount_local=amount)
+    except inbox.NotBookable as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {
+        "id": pending_id,
+        "status": "CONFIRMED",
+        "transaction_id": txn_id,
+        "amount_edited": amount is not None,
+        "rebuild_required": True,
+        "next": "POST /api/admin/rebuild, or `pt rebuild`",
+    }
+
+
+@app.post("/api/pending/{pending_id}/reject")
+def reject_pending(
+    pending_id: int,
+    payload: RejectRequest,
+    conn: sqlite3.Connection = Depends(get_writable_db),
+) -> dict[str, Any]:
+    """Decline a proposal. The reason is required, not decoration.
+
+    A rejection is a claim about reality -- "no money arrived that day" -- and
+    in six months the only way to re-evaluate it is to know why it was made.
+    """
+    try:
+        with transaction(conn):
+            inbox.reject(conn, pending_id, payload.reason)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"id": pending_id, "status": "REJECTED", "reason": payload.reason}
+
+
+@app.post("/api/admin/rebuild")
+def admin_rebuild(
+    payload: RebuildRequest | None = None,
+    conn: sqlite3.Connection = Depends(get_writable_db),
+) -> dict[str, Any]:
+    """Recompute the whole derived layer from the ledger.
+
+    Always safe in the sense that matters: everything it touches is a pure
+    function of ``transaction_``, so it deletes and recomputes rather than
+    patching. It is not safe in the sense of being quick -- several years of
+    daily rows -- which is why it is a request the owner makes rather than
+    something that happens after every confirmation.
+
+    ``breaks`` is the field to read. Non-empty means the contributions in the
+    daily series no longer match the ledger, and the difference is being
+    reported as investment return.
+    """
+    as_of = payload.end if payload and payload.end else date.today()
+    try:
+        result = rebuild.run(conn, end=as_of, strict=False)
+    except valuation.StalePriceError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+    return {
+        "as_of": as_of.isoformat(),
+        "ok": result.ok,
+        "lots": result.lots_created,
+        "disposals": result.disposals_created,
+        "position_days": result.position_days,
+        "grid_days": result.grid_days,
+        "cash_rows": result.cash_rows,
+        "oversold": result.oversold,
+        "lots_without_trade_date_fx": result.missing_fx,
+        "stale_valuations": len(result.stale),
+        "unvalued_position_days": len(result.unvalued),
+        "breaks": result.breaks,
     }
 
 
