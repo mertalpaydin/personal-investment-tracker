@@ -48,3 +48,27 @@ every lot, whether the renderer abbreviated it, and the interval a reader can
 legitimately infer when it did. Tests assert against this rather than against
 hand-copied numbers, and `scripts/check_no_pii.py` uses its symbol list as the
 allowlist proving no real ticker was ever committed.
+
+## prices/ and fx/
+
+Daily series in the manual provider's own formats (`date,close` and `date,rate`),
+so the corpus can be **valued** and not merely imported. Point the fetchers at
+them and no network is involved at any step:
+
+```bash
+uv run pt fetch-fx --offline --manual-dir data/example/fx
+uv run pt fetch-prices --manual-dir data/example/prices
+```
+
+Every series passes exactly through the prices the CSVs already state -- each
+lot's open price on its open date, each disposal's close price, and the current
+price on the as-of date -- so the series can never contradict the export it
+accompanies. Between those anchors a seeded walk supplies the movement that
+makes volatility and drawdown mean anything.
+
+`fx/TRY.csv` is the interesting one. It ends at exactly 55.25 on the as-of
+date, which is the single flat rate the export applies to *every* lira position
+regardless of when it was opened -- and it gets there from 35.10 in July 2024.
+So anything computed against the flat rate reproduces the export to the cent,
+and anything computed against the series shows the lira decline the export
+structurally cannot see. That difference is the reason this project exists.

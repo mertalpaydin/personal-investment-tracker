@@ -1,23 +1,63 @@
 # Instrument metadata the positions export does not carry.
 #
 # Copy to seeds/instruments.yaml (gitignored) and fill in for your own
-# holdings. This example describes the synthetic corpus in data/example/.
+# holdings. This example describes the synthetic corpus in data/example/ and
+# covers every instrument in it, so `pt doctor` on the example run has nothing
+# left unresolved.
 #
 # Only keys present here are written, so a partial file never blanks a column
 # that was already correct. `currency` cannot be set from a seed: it is taken
 # from the export's own currency glyph at import time and is authoritative.
+#
+# Every instrument here uses `price_source: manual`. The synthetic universe is
+# fictional, so no feed can price it -- the committed series under
+# data/example/prices/ is the only source there will ever be, and pointing at
+# it is what lets a clean clone reach the dashboard with no network.
 
 version: 1
 
 instruments:
   ZGEQ:
+    price_source: manual
     price_symbol: ZGEQ.DE
     asset_class: ETF
     is_fund: true
     # Equity fund with a >=51% equity minimum in its terms.
     teilfreistellung_pct: "0.30"
 
+  ZSEM:
+    price_source: manual
+    price_symbol: ZSEM.DE
+    asset_class: ETF
+    is_fund: true
+    teilfreistellung_pct: "0.30"
+
+  ZBNK:
+    price_source: manual
+    price_symbol: ZBNK.DE
+    asset_class: ETF
+    is_fund: true
+    teilfreistellung_pct: "0.30"
+
+  ZGLD:
+    price_source: manual
+    price_symbol: ZGLD.DE
+    asset_class: ETF
+    is_fund: true
+    # Miners, not bullion: it holds equities, so the equity exemption applies.
+    # A physically-backed gold ETC would get 0.00 and is a different product.
+    teilfreistellung_pct: "0.30"
+
+  ZDIV:
+    price_source: manual
+    price_symbol: ZDIV.DE
+    asset_class: ETF
+    is_fund: true
+    distribution_policy: DIST
+    teilfreistellung_pct: "0.30"
+
   ZOVN:
+    price_source: manual
     price_symbol: ZOVN.DE
     asset_class: ETF
     is_fund: true
@@ -27,20 +67,53 @@ instruments:
     teilfreistellung_pct: "0.00"
     notes: money market; Teilfreistellung 0% confirmed from fund terms
 
-  ZTFB:
+  ZTFA:
     # A foreign fund with no reachable price feed: manual is the supported
     # path, not a contingency.
     price_source: manual
     trading_calendar: TEFAS
     asset_class: FUND
     is_fund: true
-    teilfreistellung_pct: null   # unresolved; the importer keeps warning
+    # Out of the German tax base by fact of ownership, so the exemption rate is
+    # not merely unknown -- it is inapplicable. Recorded as 0 with the reason,
+    # rather than left NULL, because NULL means "we have not found out yet".
+    teilfreistellung_pct: "0.00"
     tax_regime: OUT_OF_SCOPE
+    tax_scope_note: not held by the taxpayer; tracked for valuation only
+
+  ZTFB:
+    price_source: manual
+    trading_calendar: TEFAS
+    asset_class: FUND
+    is_fund: true
+    teilfreistellung_pct: "0.00"
+    tax_regime: OUT_OF_SCOPE
+    tax_scope_note: not held by the taxpayer; tracked for valuation only
+
+  ACRO:
+    price_source: manual
+    price_symbol: ACRO.DE
+    asset_class: STOCK
+    is_fund: false
+    # A single share is not a fund, so there is no Teilfreistellung at all.
+    teilfreistellung_pct: "0.00"
+
+  GBEX:
+    price_source: manual
+    price_symbol: GBEX.DE
+    asset_class: STOCK
+    is_fund: false
+    teilfreistellung_pct: "0.00"
 
   ZEC/EUR:
+    price_source: manual
     price_symbol: ZEC-EUR
     asset_class: CRYPTO
     trading_calendar: ALL_DAYS
+    is_fund: false
+    teilfreistellung_pct: "0.00"
     # Section 23 EStG private disposal, not section 20. Its losses may only
-    # offset other private-disposal gains.
+    # offset other private-disposal gains, so it is excluded from the section
+    # 20 engine entirely rather than netted against an ETF gain.
     tax_regime: DE_PRIVATE_SALE
+    tax_scope_note: private disposal under section 23 EStG; losses ring-fenced

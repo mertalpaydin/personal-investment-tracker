@@ -123,7 +123,10 @@ class ManualProvider:
         self.directory = directory
 
     def path_for(self, instrument: InstrumentRef) -> Path:
-        return self.directory / f"{instrument.import_key}.csv"
+        # ``ZEC/EUR`` is a legal symbol and an illegal filename on every
+        # operating system. Without this the crypto pair silently resolves to
+        # a `ZEC/` subdirectory on POSIX and raises on Windows.
+        return self.directory / f"{instrument.import_key.replace('/', '_')}.csv"
 
     def supports(self, instrument: InstrumentRef) -> bool:
         return True

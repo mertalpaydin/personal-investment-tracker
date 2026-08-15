@@ -35,10 +35,15 @@ import csv
 import io
 import json
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
+from itertools import pairwise
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from portfolio_tracker.core.calendars import grid_days
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = REPO_ROOT / "data" / "example"
@@ -497,8 +502,187 @@ def render_readme(open_rows: int, closed_rows: int) -> bytes:
         "hand-copied numbers, and `scripts/check_no_pii.py` uses its symbol list as the",
         "allowlist proving no real ticker was ever committed.",
         "",
+        "## prices/ and fx/",
+        "",
+        "Daily series in the manual provider's own formats (`date,close` and `date,rate`),",
+        "so the corpus can be **valued** and not merely imported. Point the fetchers at",
+        "them and no network is involved at any step:",
+        "",
+        "```bash",
+        "uv run pt fetch-fx --offline --manual-dir data/example/fx",
+        "uv run pt fetch-prices --manual-dir data/example/prices",
+        "```",
+        "",
+        "Every series passes exactly through the prices the CSVs already state -- each",
+        "lot's open price on its open date, each disposal's close price, and the current",
+        "price on the as-of date -- so the series can never contradict the export it",
+        "accompanies. Between those anchors a seeded walk supplies the movement that",
+        "makes volatility and drawdown mean anything.",
+        "",
+        f"`fx/TRY.csv` is the interesting one. It ends at exactly {plain(FX_TRY_PER_EUR)} on the as-of",
+        "date, which is the single flat rate the export applies to *every* lira position",
+        "regardless of when it was opened -- and it gets there from 35.10 in July 2024.",
+        "So anything computed against the flat rate reproduces the export to the cent,",
+        "and anything computed against the series shows the lira decline the export",
+        "structurally cannot see. That difference is the reason this project exists.",
+        "",
     ]
     return "\n".join(lines).encode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Price and FX series
+#
+# Without these the corpus can be imported but never valued, so a clean clone
+# reaches the ledger reconstruction and stops. They are built by interpolating
+# between the prices the CSVs already state -- each lot's open price on its open
+# date, each disposal's close price, and the current price on the as-of date --
+# so the series cannot contradict the export it accompanies. Between anchors a
+# seeded jitter supplies the wiggle that makes volatility and drawdown mean
+# something; it is exactly zero at the anchors, so the reconciliation still
+# lands on the cent.
+#
+# The FX series is the one that matters. The export translates every lira
+# position at a single flat 55.25, which is the defect this project exists to
+# expose -- so the generated rate *ends* at 55.25 on the as-of date, and gets
+# there from 35 in mid-2024. Anything computed against the flat rate reproduces
+# the export exactly; anything computed against the series shows the lira
+# decline the export cannot see.
+# ---------------------------------------------------------------------------
+
+#: First day of price and FX history. Ten TARGET2 days before the earliest
+#: trade, because a market can be shut on the day a position is opened and an
+#: unvalued opening day breaks the whole series after it.
+HISTORY_START = date(2024, 7, 1)
+
+#: Anchors for EUR/TRY, in lira per euro. The lira roughly halved over this
+#: window, which is the whole point of tracking it daily.
+FX_ANCHORS: list[tuple[date, Decimal]] = [
+    (date(2024, 7, 1), Decimal("35.10")),
+    (date(2025, 1, 2), Decimal("40.55")),
+    (date(2025, 7, 1), Decimal("45.80")),
+    (date(2026, 1, 2), Decimal("51.00")),
+    (AS_OF, FX_TRY_PER_EUR),
+]
+
+#: Jitter amplitude as a fraction of the level, per instrument class. Small
+#: enough that a reader checking `qty x price` against the export still sees
+#: the anchors line up, large enough that a flat line would look wrong.
+JITTER = {"EUR": Decimal("0.010"), "TRY": Decimal("0.006")}
+
+CALENDAR_FOR = {"ZTFA": "TEFAS", "ZTFB": "TEFAS", "ZEC/EUR": "ALL_DAYS"}
+
+
+def _lcg(seed: int) -> Iterator[Decimal]:
+    """A deterministic generator in [-1, 1], implemented rather than imported.
+
+    ``random`` is seeded globally and a future import could reseed it; this
+    corpus has to be byte-identical on every machine forever, so the sequence
+    is spelled out. Numerical Recipes' constants.
+    """
+    state = seed & 0xFFFFFFFF
+    while True:
+        state = (1664525 * state + 1013904223) & 0xFFFFFFFF
+        yield Decimal(state) / Decimal(0x7FFFFFFF) - Decimal(1)
+
+
+def _interpolate(anchors: list[tuple[date, Decimal]], days: list[date]) -> dict[date, Decimal]:
+    """Piecewise-linear between anchors, flat outside them."""
+    out: dict[date, Decimal] = {}
+    for day in days:
+        if day <= anchors[0][0]:
+            out[day] = anchors[0][1]
+            continue
+        if day >= anchors[-1][0]:
+            out[day] = anchors[-1][1]
+            continue
+        for (d0, p0), (d1, p1) in pairwise(anchors):
+            if d0 <= day <= d1:
+                span = Decimal((d1 - d0).days)
+                out[day] = p0 if span == 0 else p0 + (p1 - p0) * Decimal((day - d0).days) / span
+                break
+    return out
+
+
+def _series(
+    anchors: list[tuple[date, Decimal]],
+    days: list[date],
+    *,
+    seed: int,
+    jitter: Decimal,
+    places: Decimal,
+) -> list[tuple[date, Decimal]]:
+    """Interpolated levels plus a seeded wiggle that vanishes at the anchors."""
+    base = _interpolate(anchors, days)
+    anchor_days = {d for d, _ in anchors}
+    noise = _lcg(seed)
+    walk = Decimal(0)
+    out: list[tuple[date, Decimal]] = []
+    for day in days:
+        # A random *walk*, not independent noise: successive daily returns that
+        # are uncorrelated produce a sawtooth nobody would mistake for a price.
+        walk = walk * Decimal("0.86") + next(noise)
+        level = base[day]
+        value = level if day in anchor_days else level * (Decimal(1) + jitter * walk)
+        out.append((day, max(value, places).quantize(places, rounding=ROUND_HALF_UP)))
+    return out
+
+
+def price_anchors(symbol: str) -> list[tuple[date, Decimal]]:
+    """Every price the CSVs already commit to, in date order."""
+    instrument = INSTRUMENTS[symbol]
+    anchors: dict[date, Decimal] = {}
+    for lot in LOTS:
+        if lot.symbol != symbol:
+            continue
+        anchors[lot.open_date] = lot.open_price
+        for disposal in lot.disposals:
+            anchors[disposal.close_date] = disposal.close_price
+    # A fully closed instrument has no current price in the export, so pinning
+    # one would invent a fact. Its series simply ends at the last disposal.
+    if any(lot.symbol == symbol and lot.remaining > Decimal(0) for lot in LOTS):
+        anchors[AS_OF] = instrument.current_price
+    return sorted(anchors.items())
+
+
+def build_price_files() -> dict[str, bytes]:
+    files: dict[str, bytes] = {}
+    for index, symbol in enumerate(sorted(INSTRUMENTS)):
+        anchors = price_anchors(symbol)
+        if not anchors:
+            continue
+        calendar = CALENDAR_FOR.get(symbol, "TARGET2")
+        start = min(HISTORY_START, anchors[0][0])
+        # Always to the as-of date, even for a position that was fully sold.
+        # The asset kept trading after the disposal; only the holding ended.
+        # Truncating the series would report a price gap where there is none.
+        days = grid_days(start, AS_OF, calendar)
+        # Sub-cent instruments need four decimals or the lira funds round to
+        # zero; the euro ones are quoted to the cent like the export.
+        places = Decimal("0.0001") if anchors[-1][1] < Decimal(10) else Decimal("0.01")
+        rows = _series(
+            anchors,
+            days,
+            seed=1000 + index,
+            jitter=JITTER[INSTRUMENTS[symbol].currency],
+            places=places,
+        )
+        body = "date,close\n" + "".join(f"{d.isoformat()},{plain(p)}\n" for d, p in rows)
+        files[f"prices/{safe_filename(symbol)}.csv"] = body.encode("utf-8")
+    return files
+
+
+def build_fx_file() -> bytes:
+    days = grid_days(HISTORY_START, AS_OF, "TARGET2")
+    rows = _series(FX_ANCHORS, days, seed=77, jitter=Decimal("0.004"), places=Decimal("0.0001"))
+    return ("date,rate\n" + "".join(f"{d.isoformat()},{plain(r)}\n" for d, r in rows)).encode(
+        "utf-8"
+    )
+
+
+def safe_filename(symbol: str) -> str:
+    """``ZEC/EUR`` is a legal symbol and an illegal filename on every OS."""
+    return symbol.replace("/", "_")
 
 
 def build() -> dict[str, bytes]:
@@ -513,15 +697,20 @@ def build() -> dict[str, bytes]:
         "symbols": sorted(INSTRUMENTS),
         "open_rows": len(open_rows),
         "closed_rows": len(closed_rows),
+        "history_start": HISTORY_START.isoformat(),
+        "fx_anchors": {d.isoformat(): plain(r) for d, r in FX_ANCHORS},
         "lots": truth_lots,
     }
 
-    return {
+    artefacts = {
         "open.csv": render_csv(OPEN_HEADER, open_rows),
         "closed.csv": render_csv(CLOSED_HEADER, closed_rows),
         "truth.json": (json.dumps(truth, indent=2, ensure_ascii=False) + "\n").encode("utf-8"),
         "README.md": render_readme(len(open_rows), len(closed_rows)),
+        "fx/TRY.csv": build_fx_file(),
     }
+    artefacts.update(build_price_files())
+    return artefacts
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -558,6 +747,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args.out.mkdir(parents=True, exist_ok=True)
     for name, payload in artefacts.items():
+        (args.out / name).parent.mkdir(parents=True, exist_ok=True)
         (args.out / name).write_bytes(payload)
         print(f"wrote {(args.out / name).relative_to(REPO_ROOT)}  {len(payload)} bytes")
     return 0

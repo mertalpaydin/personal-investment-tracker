@@ -17,6 +17,15 @@
 !/data/example/closed.csv
 !/data/example/truth.json
 !/data/example/README.md
+# The generated price and FX series, without which the corpus can be imported
+# but never valued. Same rule: re-include the directory, exclude its contents,
+# then name what may be committed.
+!/data/example/prices/
+/data/example/prices/*
+!/data/example/prices/*.csv
+!/data/example/fx/
+/data/example/fx/*
+!/data/example/fx/*.csv
 
 # Any tabular/statement file anywhere else is presumed to be a real
 # export. Deliberately aggressive: you will occasionally need to
@@ -28,6 +37,8 @@
 *.qif
 *.pdf
 !/data/example/*.csv
+!/data/example/prices/*.csv
+!/data/example/fx/*.csv
 !/tests/data/**/*.csv
 
 # ---------------------------------------------------------------

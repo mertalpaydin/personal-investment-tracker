@@ -55,7 +55,7 @@ PROTECTED: frozenset[str] = frozenset({"id", "import_key", "currency", "status"}
 
 
 class SeedError(ValueError):
-    pass
+    """A seed file is malformed, or offered a value the schema refuses."""
 
 
 @dataclass
@@ -139,7 +139,13 @@ def apply(conn: sqlite3.Connection, instruments: dict[str, dict[str, Any]]) -> S
         # Values arrive already coerced by `load`; a caller passing raw values
         # directly is coerced here for symmetry.
         values = [_coerce(column, value) for column, value in fields.items()]
-        conn.execute(f"UPDATE instrument SET {assignments} WHERE id = ?", (*values, row["id"]))
+        try:
+            conn.execute(f"UPDATE instrument SET {assignments} WHERE id = ?", (*values, row["id"]))
+        except sqlite3.IntegrityError as exc:
+            # A CHECK rejection here means the seed file offered a value the
+            # schema does not allow. Which instrument and which column is the
+            # only useful thing to say; a traceback says neither.
+            raise SeedError(f"{import_key}: {exc} (fields: {', '.join(fields)})") from exc
         result.updated.append(import_key)
         result.fields_written += len(fields)
     return result

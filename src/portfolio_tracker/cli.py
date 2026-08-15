@@ -27,6 +27,7 @@ from portfolio_tracker.importers.investing_com.importer import import_positions
 from portfolio_tracker.importers.report import Severity
 from portfolio_tracker.ingest import fx as ingest_fx
 from portfolio_tracker.ingest import prices as ingest_prices
+from portfolio_tracker.ingest.providers.manual import ManualProvider
 
 app = typer.Typer(
     add_completion=False,
@@ -167,8 +168,12 @@ def fetch_fx(
         str | None, typer.Option("--quote", help="Single currency; default is all needed.")
     ] = None,
     offline: Annotated[
-        bool, typer.Option("--offline", help="Use only data/fx_manual/, no network.")
+        bool, typer.Option("--offline", help="Use only the manual directory, no network.")
     ] = False,
+    manual_dir: Annotated[
+        Path | None,
+        typer.Option("--manual-dir", help="Where to read manual rate CSVs from."),
+    ] = None,
 ) -> None:
     """Fetch daily reference rates, then report coverage against the grid."""
     start_date = date.fromisoformat(start)
@@ -180,7 +185,7 @@ def fetch_fx(
             return
 
         for code in sorted(quotes):
-            observations = ingest_fx.load_manual(code)
+            observations = ingest_fx.load_manual(code, manual_dir or ingest_fx.MANUAL_DIR)
             source = "manual"
             if not offline:
                 try:
@@ -191,7 +196,7 @@ def fetch_fx(
                     if not observations:
                         typer.secho(
                             f"{code}: no rates available; drop a CSV in "
-                            f"{ingest_fx.MANUAL_DIR}/{code}.csv",
+                            f"{manual_dir or ingest_fx.MANUAL_DIR}/{code}.csv",
                             fg=typer.colors.RED,
                             err=True,
                         )
@@ -234,7 +239,11 @@ def seed(
         if not entries:
             typer.echo(f"no seed data at {path}")
             return
-        result = instrument_seeds.apply(conn, entries)
+        try:
+            result = instrument_seeds.apply(conn, entries)
+        except instrument_seeds.SeedError as exc:
+            typer.secho(f"seed rejected: {exc}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=1) from exc
         conn.commit()
         typer.echo(f"updated {len(result.updated)} instrument(s), {result.fields_written} field(s)")
         for missing in result.unknown_instruments:
@@ -255,14 +264,29 @@ def fetch_prices(
     strict: Annotated[
         bool, typer.Option("--strict", help="Exit non-zero if any instrument is under 98%.")
     ] = False,
+    manual_dir: Annotated[
+        Path | None,
+        typer.Option("--manual-dir", help="Where to read manual price CSVs from."),
+    ] = None,
 ) -> None:
-    """Fetch prices for every held instrument, then report coverage."""
+    """Fetch prices for every held instrument, then report coverage.
+
+    A manual directory is not only a rescue: it is the one provider with no
+    external dependency, and pointing at ``data/example/prices`` is how the
+    synthetic corpus gets valued without touching the network.
+    """
+    providers = None
+    if manual_dir is not None:
+        providers = ingest_prices.default_providers()
+        providers["manual"] = ManualProvider(manual_dir)
+
     conn = connect(db)
     try:
         results = ingest_prices.fetch_all(
             conn,
             end=date.fromisoformat(end) if end else date.today(),
             start=date.fromisoformat(start) if start else None,
+            providers=providers,
         )
     finally:
         conn.close()

@@ -75,6 +75,9 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 # else and is waived only where the ambiguity is the subject under test.
 "tests/test_parse.py" = ["RUF001", "RUF002", "RUF003", "E501"]
 "tests/test_example_data.py" = ["RUF001", "RUF002", "RUF003", "E501"]
+# Strips the export's own currency glyph and its trailing U+00A0. Naming
+# the characters is the point; a transliteration would not match the file.
+"tests/test_example_pipeline.py" = ["RUF001"]
 # Plus E501: the LANDMINES table is a data structure of prose sentences, and
 # wrapping them across lines would hurt the thing it exists to communicate.
 "scripts/make_example_data.py" = ["RUF001", "RUF002", "RUF003", "E501"]
