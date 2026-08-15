@@ -14,6 +14,8 @@ import typer
 from portfolio_tracker import __version__
 from portfolio_tracker.db import migrate as migrations
 from portfolio_tracker.db.connection import DEFAULT_DB_PATH, connect
+from portfolio_tracker.importers import overrides
+from portfolio_tracker.importers.investing_com.importer import import_positions
 
 app = typer.Typer(
     add_completion=False,
@@ -85,6 +87,54 @@ def init_db(
         typer.echo(f"{db} at schema version {migrations.current_version(conn)}")
     finally:
         conn.close()
+
+
+@app.command("import")
+def import_(
+    open_csv: Annotated[Path, typer.Option("--open", help="Open-positions CSV.")],
+    closed_csv: Annotated[Path, typer.Option("--closed", help="Closed-positions CSV.")],
+    account_id: Annotated[int, typer.Option("--account", help="Target account id.")] = 1,
+    db: DbPath = DEFAULT_DB_PATH,
+    overrides_path: Annotated[
+        Path, typer.Option("--overrides", help="Authoritative values for lossy fields.")
+    ] = overrides.DEFAULT_PATH,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Report what would happen, write nothing.")
+    ] = False,
+    strict: Annotated[
+        bool, typer.Option("--strict", help="Treat any warning as a failure.")
+    ] = False,
+    json_out: Annotated[
+        Path | None, typer.Option("--json", help="Also write the report as JSON.")
+    ] = None,
+) -> None:
+    """Import an Investing.com positions export.
+
+    Idempotent: re-running against an unchanged export inserts nothing.
+    """
+    conn = connect(db)
+    try:
+        loaded = overrides.load(overrides_path)
+        report = import_positions(
+            conn,
+            open_csv,
+            closed_csv,
+            account_id=account_id,
+            overrides=loaded,
+            dry_run=dry_run,
+            strict=strict,
+        )
+    finally:
+        conn.close()
+
+    typer.echo(report.to_text())
+    if json_out is not None:
+        json_out.parent.mkdir(parents=True, exist_ok=True)
+        json_out.write_text(report.to_json(), encoding="utf-8")
+        typer.echo(f"\nreport written to {json_out}")
+
+    if report.errors or (strict and report.warnings):
+        raise typer.Exit(code=1)
 
 
 @app.command()

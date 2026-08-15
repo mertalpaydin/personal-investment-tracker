@@ -40,9 +40,19 @@ the entire reconstruction is one rule:
 buy_quantity(key) = open_remaining(key) + Σ closed_quantity(key)
 ```
 
-That single rule covers all three cases uniformly — the 30-odd ordinary lots, the
+That single rule covers all three cases uniformly — the ordinary lots, the
 both-files split, and the multi-disposal lot with no open row. Each row in
 `closed.csv` additionally yields a `SELL` event.
+
+Measured against the real export once the importer was built: **43 source rows
+become 40 purchases and 7 disposals.** The three reconstructions the rule
+recovers, none of which is printed anywhere in either file:
+
+| lot | printed in open | printed in closed | actual purchase |
+|---|---|---|---|
+| `EGV2 2025-06-13 @ 101.88` | 125.726 | 70.5778 | **196.3038** |
+| `ABECG 2025-05-27 @ 152.64` | 2.6541 | 17 | **19.6541** |
+| `IS0E 2025-05-07 @ 20.46` | — | 244 + 244.7586 | **488.7586** |
 
 The generic YAML column-mapper is abandoned. A column mapping describes one file;
 this problem is a join across two.
