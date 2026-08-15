@@ -69,6 +69,55 @@ def target2_holidays(year: int) -> frozenset[date]:
     )
 
 
+#: Turkish national holidays with fixed Gregorian dates, as (month, day).
+TURKEY_FIXED_HOLIDAYS: frozenset[tuple[int, int]] = frozenset(
+    {
+        (1, 1),  # Yılbaşı
+        (4, 23),  # Ulusal Egemenlik ve Çocuk Bayramı
+        (5, 1),  # Emek ve Dayanışma Günü
+        (5, 19),  # Atatürk'ü Anma, Gençlik ve Spor Bayramı
+        (7, 15),  # Demokrasi ve Millî Birlik Günü
+        (8, 30),  # Zafer Bayramı
+        (10, 29),  # Cumhuriyet Bayramı
+    }
+)
+
+#: Religious holidays, which follow the lunar calendar and so move against the
+#: Gregorian one by roughly eleven days a year. They cannot be computed here
+#: reliably -- Turkish observance depends on official proclamation -- so this
+#: is an explicit table.
+#:
+#: **These dates were derived from three years of observed fund NAVs**, not
+#: copied from a reference: every weekday with no published price was checked,
+#: and after removing the fixed holidays above, exactly these remained. That
+#: makes the table evidence rather than assumption.
+#:
+#: It will go stale. Extend it when a new year's dates are announced; until
+#: then the affected days appear as gaps in the coverage report, which is the
+#: correct behaviour -- a missing price is visible, whereas a wrongly assumed
+#: trading day would silently forward-fill.
+TURKEY_RELIGIOUS_HOLIDAYS: frozenset[date] = frozenset(
+    {
+        # Ramazan Bayramı 2024
+        date(2024, 4, 10), date(2024, 4, 11), date(2024, 4, 12),
+        # Kurban Bayramı 2024
+        date(2024, 6, 17), date(2024, 6, 18), date(2024, 6, 19),
+        # Ramazan Bayramı 2025
+        date(2025, 3, 31), date(2025, 4, 1),
+        # Kurban Bayramı 2025
+        date(2025, 6, 6), date(2025, 6, 9),
+        # Ramazan Bayramı 2026
+        date(2026, 3, 20),
+        # Kurban Bayramı 2026
+        date(2026, 5, 27), date(2026, 5, 28), date(2026, 5, 29),
+    }
+)  # fmt: skip
+
+#: Last year the religious-holiday table covers. Past this the TEFAS calendar
+#: silently over-reports expected trading days.
+TURKEY_HOLIDAYS_KNOWN_THROUGH = 2026
+
+
 def is_business_day(day: date, calendar: Calendar = TARGET2) -> bool:
     if calendar == ALL_DAYS:
         return True
@@ -80,11 +129,9 @@ def is_business_day(day: date, calendar: Calendar = TARGET2) -> bool:
             return False
         return day not in target2_holidays(day.year)
     if calendar == TEFAS:
-        # Turkish public and religious holidays are not modelled: the religious
-        # ones move against the Gregorian calendar and would need a table that
-        # goes stale silently. Weekday-only is honest about that, and the
-        # forward-fill machinery already reports the resulting gaps.
-        return True
+        if (day.month, day.day) in TURKEY_FIXED_HOLIDAYS:
+            return False
+        return day not in TURKEY_RELIGIOUS_HOLIDAYS
     raise ValueError(f"unknown calendar: {calendar!r}")
 
 

@@ -342,3 +342,51 @@ def test_required_quotes_ignores_euro(db: sqlite3.Connection) -> None:
         "VALUES ('Y', 'Y', 'FUND', 'TRY')"
     )
     assert fx.required_quotes(db) == {"TRY"}
+
+
+# ---------------------------------------------------------------------------
+# The Turkish trading calendar
+#
+# Derived from three years of observed fund NAVs rather than copied from a
+# reference: every weekday with no published price was checked, and after
+# removing the fixed national holidays exactly these dates remained.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "holiday",
+    [
+        date(2026, 1, 1),  # Yilbasi
+        date(2026, 4, 23),  # Ulusal Egemenlik
+        date(2026, 5, 1),  # Emek ve Dayanisma
+        date(2026, 5, 19),  # Genclik ve Spor
+        date(2026, 7, 15),  # Demokrasi
+        date(2024, 8, 30),  # Zafer -- a Friday, so the weekday check is real
+        date(2026, 10, 29),  # Cumhuriyet
+    ],
+)
+def test_turkish_fixed_holidays_are_closed(holiday: date) -> None:
+    assert not cal.is_business_day(holiday, cal.TEFAS)
+    # TARGET2 does not observe them, which is why it is the better grid spine.
+    # TARGET2 observes only 1 January and 1 May of these.
+    if (holiday.month, holiday.day) not in ((1, 1), (5, 1)):
+        assert cal.is_business_day(holiday, cal.TARGET2)
+
+
+@pytest.mark.parametrize(
+    "holiday",
+    [date(2025, 3, 31), date(2025, 6, 6), date(2026, 3, 20), date(2026, 5, 27)],
+)
+def test_turkish_religious_holidays_are_closed(holiday: date) -> None:
+    """These move by ~11 days a year, so they cannot be computed from a rule."""
+    assert not cal.is_business_day(holiday, cal.TEFAS)
+
+
+def test_an_ordinary_turkish_weekday_is_open() -> None:
+    assert cal.is_business_day(date(2026, 8, 14), cal.TEFAS)
+
+
+def test_the_religious_holiday_table_declares_how_far_it_reaches() -> None:
+    """It will go stale, so the limit is explicit rather than implied."""
+    assert cal.TURKEY_HOLIDAYS_KNOWN_THROUGH >= 2026
+    assert max(d.year for d in cal.TURKEY_RELIGIOUS_HOLIDAYS) == (cal.TURKEY_HOLIDAYS_KNOWN_THROUGH)

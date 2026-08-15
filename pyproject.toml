@@ -72,6 +72,13 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 # Plus E501: the LANDMINES table is a data structure of prose sentences, and
 # wrapping them across lines would hurt the thing it exists to communicate.
 "scripts/make_example_data.py" = ["RUF001", "RUF002", "RUF003", "E501"]
+# Documents the TEFAS export's real header lines verbatim, Turkish dotless i
+# included. Transliterating them would make the docstring not match the file
+# it describes.
+"src/portfolio_tracker/ingest/providers/manual.py" = ["RUF002"]
+# Names the Turkish holidays it encodes, in Turkish. Transliterating them
+# would make the table harder to check against an official calendar.
+"src/portfolio_tracker/core/calendars.py" = ["RUF003"]
 
 [tool.ruff.format]
 docstring-code-format = true

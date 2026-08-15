@@ -4,12 +4,28 @@ Not a fallback. This is the only provider with no external dependency, and it is
 therefore the only one guaranteed to work in five years' time. Every other
 provider's failure path points here.
 
-Format is a plain CSV with ``date`` and ``close``, plus an optional
+Two dialects are accepted, because the useful one is whatever the source
+actually produces.
+
+**Native** -- a plain CSV with ``date`` and ``close``, plus an optional
 ``total_return_close``::
 
     date,close
     2026-08-13,0.627
     2026-08-14,0.629
+
+**TEFAS export** -- what the Turkish fund platform's own download button
+produces, taken verbatim with no editing::
+
+    Dışa Aktarım Tarihi:,15.08.2026 08:15:41
+    Toplam Kayıt Sayısı:,753
+
+    Tarih,Fiyat
+    14.08.2023,"0,178578"
+
+That dialect writes dates day-first and uses a comma as the decimal
+separator. The two are never guessed between: the header row decides, so a
+``0.627`` in one dialect can never be silently read as ``0,627`` in the other.
 """
 
 from __future__ import annotations
@@ -29,35 +45,74 @@ from portfolio_tracker.ingest.providers.base import (
 MANUAL_DIR = Path("data/prices_manual")
 
 
+#: Header of the TEFAS platform's own export: "Date, Price".
+_TEFAS_HEADER = ("tarih", "fiyat")
+
+
+def _turkish_decimal(raw: str) -> Decimal:
+    """``"1,005931"`` and ``"1.234,56"`` -- comma decimal, dot thousands."""
+    return Decimal(raw.replace(".", "").replace(",", "."))
+
+
+def _turkish_date(raw: str) -> date:
+    """``14.08.2023`` is day-first, unlike the broker export's month-first form.
+
+    Both appear in this project, which is precisely why each parser is pinned
+    to one format rather than sniffing.
+    """
+    day, month, year = raw.split(".")
+    return date(int(year), int(month), int(day))
+
+
+def _find_header(text: str) -> tuple[list[str], int]:
+    """Locate the header row, skipping any preamble.
+
+    The TEFAS export opens with an export timestamp, a record count and a blank
+    line before the real header.
+    """
+    lines = text.splitlines()
+    for offset, line in enumerate(lines):
+        cells = [c.strip().strip('"').lower() for c in line.split(",")]
+        if {"date", "close"} <= set(cells) or tuple(cells[:2]) == _TEFAS_HEADER:
+            return lines[offset:], offset + 1
+    raise ProviderUnavailable(
+        "a manual price file needs either 'date,close' or the TEFAS export's "
+        "'Tarih,Fiyat' header row; found neither"
+    )
+
+
 def parse_csv(text: str, *, label: str = "<memory>") -> list[PriceObservation]:
-    reader = csv.DictReader(io.StringIO(text))
-    fields = {f.strip().lower() for f in (reader.fieldnames or [])}
-    if not {"date", "close"} <= fields:
-        raise ProviderUnavailable(
-            f"{label}: a manual price file needs at least 'date' and 'close' columns, "
-            f"got {sorted(fields) or 'nothing'}"
-        )
+    try:
+        body, header_line = _find_header(text)
+    except ProviderUnavailable as exc:
+        raise ProviderUnavailable(f"{label}: {exc}") from exc
+
+    reader = csv.DictReader(io.StringIO("\n".join(body)))
+    fields = [f.strip().lower() for f in (reader.fieldnames or [])]
+    tefas = tuple(fields[:2]) == _TEFAS_HEADER
 
     observations: list[PriceObservation] = []
-    for number, row in enumerate(reader, start=2):
+    for offset, row in enumerate(reader, start=header_line + 1):
         lowered = {k.strip().lower(): (v or "").strip() for k, v in row.items() if k}
-        raw_close = lowered.get("close", "")
-        if not raw_close:
+        raw_close = lowered.get("fiyat" if tefas else "close", "")
+        raw_date = lowered.get("tarih" if tefas else "date", "")
+        if not raw_close or not raw_date:
             continue
         try:
-            close = Decimal(raw_close)
+            close = _turkish_decimal(raw_close) if tefas else Decimal(raw_close)
+            on = _turkish_date(raw_date) if tefas else date.fromisoformat(raw_date)
             total_return = (
                 Decimal(lowered["total_return_close"])
                 if lowered.get("total_return_close")
                 else None
             )
-        except InvalidOperation as exc:
-            raise ProviderUnavailable(f"{label}:{number}: unparseable price {raw_close!r}") from exc
+        except (InvalidOperation, ValueError) as exc:
+            raise ProviderUnavailable(
+                f"{label}:{offset}: unparseable row (date={raw_date!r}, price={raw_close!r})"
+            ) from exc
         if close <= 0:
-            raise ProviderUnavailable(f"{label}:{number}: non-positive price {raw_close!r}")
-        observations.append(
-            PriceObservation(date.fromisoformat(lowered["date"]), close, total_return)
-        )
+            raise ProviderUnavailable(f"{label}:{offset}: non-positive price {raw_close!r}")
+        observations.append(PriceObservation(on, close, total_return))
     return observations
 
 

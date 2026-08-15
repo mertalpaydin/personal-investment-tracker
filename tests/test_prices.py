@@ -80,7 +80,7 @@ def test_manual_csv_accepts_an_optional_total_return_column() -> None:
 
 
 def test_manual_csv_rejects_a_missing_column() -> None:
-    with pytest.raises(ProviderUnavailable, match="needs at least"):
+    with pytest.raises(ProviderUnavailable, match="header row"):
         parse_csv("day,value\n2026-08-03,1\n")
 
 
@@ -452,3 +452,59 @@ def test_a_manual_file_supplements_a_working_feed(db: sqlite3.Connection, tmp_pa
     }
     assert results[0].source == "fintables+manual"
     assert results[0].error is None
+
+
+# ---------------------------------------------------------------------------
+# The TEFAS export dialect
+#
+# Accepted verbatim, because requiring the user to reformat a download is how
+# transcription errors get introduced into a financial record.
+# ---------------------------------------------------------------------------
+
+
+TEFAS_EXPORT = (
+    "D\u0131\u015fa Aktar\u0131m Tarihi:,15.08.2026 08:15:41\r\n"
+    "Toplam Kay\u0131t Say\u0131s\u0131:,753\r\n"
+    "\r\n"
+    "Tarih,Fiyat\r\n"
+    '14.08.2023,"0,178578"\r\n'
+    '15.08.2023,"0,179386"\r\n'
+    '14.08.2026,"0,622452"\r\n'
+)
+
+
+def test_tefas_export_preamble_is_skipped() -> None:
+    observations = parse_csv(TEFAS_EXPORT)
+    assert len(observations) == 3
+
+
+def test_tefas_export_dates_are_day_first() -> None:
+    """The broker export is month-first and this one is day-first.
+
+    Both formats appear in this project, which is exactly why each parser is
+    pinned rather than sniffing: 14.08 would be nonsense as a month.
+    """
+    assert parse_csv(TEFAS_EXPORT)[0].on == date(2023, 8, 14)
+
+
+def test_tefas_export_uses_comma_as_the_decimal_separator() -> None:
+    assert parse_csv(TEFAS_EXPORT)[0].close == Decimal("0.178578")
+    assert parse_csv(TEFAS_EXPORT)[-1].close == Decimal("0.622452")
+
+
+def test_dialects_are_chosen_by_header_never_guessed() -> None:
+    """`0.627` and `0,627` must never be confused for one another."""
+    native = parse_csv("date,close\n2026-08-14,0.627\n")
+    assert native[0].close == Decimal("0.627")
+    assert native[0].on == date(2026, 8, 14)
+
+
+def test_a_file_with_no_recognisable_header_is_rejected() -> None:
+    with pytest.raises(ProviderUnavailable, match="header row"):
+        parse_csv("some,other\n1,2\n", label="x.csv")
+
+
+def test_turkish_thousands_separator_is_handled() -> None:
+    """A dot means thousands in this dialect, not a decimal point."""
+    observations = parse_csv('Tarih,Fiyat\n14.08.2026,"1.234,56"\n')
+    assert observations[0].close == Decimal("1234.56")

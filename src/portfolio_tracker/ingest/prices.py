@@ -203,13 +203,14 @@ def fetch_all(
         provider = registry.get(instrument.price_source)
         error: str | None = None
         used: str | None = None
+        added_any = 0
 
         if provider is None:
             error = f"no provider registered for source {instrument.price_source!r}"
         else:
             try:
                 observations = provider.fetch(instrument, window_start, end)
-                store(conn, instrument, observations, provider.name)
+                added_any += store(conn, instrument, observations, provider.name)
                 used = provider.name
             except ProviderUnavailable as exc:
                 error = str(exc)
@@ -224,6 +225,7 @@ def fetch_all(
                 try:
                     supplement = manual.fetch(instrument, window_start, end)
                     added = store(conn, instrument, supplement, manual.name)
+                    added_any += added
                     if added:
                         used = f"{used}+manual" if used else "manual"
                         if error:
@@ -234,7 +236,11 @@ def fetch_all(
         conn.commit()
         report = coverage(conn, instrument, window_start, end)
         report.error = error
-        if used:
+        # `coverage` reports the source most rows actually came from. Only
+        # override it when this run contributed something, so a run that
+        # inserted one new price does not claim credit for a history someone
+        # else supplied.
+        if used and added_any:
             report.source = used
         results.append(report)
 
