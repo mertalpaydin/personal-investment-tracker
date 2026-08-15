@@ -432,3 +432,82 @@ def test_a_missing_reference_rate_refuses_rather_than_guessing(
 
 def test_the_combined_rate_is_correct() -> None:
     assert D("0.26375") == tax.COMBINED_RATE
+
+
+# ---------------------------------------------------------------------------
+# Distributions
+#
+# Added after the owner pointed out that a money-market ETF in the real
+# portfolio had paid roughly EUR 1,500 of dividends that the engine knew
+# nothing about. It was omitting EUR 2,549 of income and reporting no tax due
+# where EUR 383 was.
+# ---------------------------------------------------------------------------
+
+
+def dividend(
+    conn: sqlite3.Connection,
+    instrument_id: int,
+    *,
+    amount: str,
+    on: str = "2026-06-01",
+    account_id: int = 1,
+) -> None:
+    conn.execute(
+        "INSERT INTO transaction_ (account_id, instrument_id, type, trade_date, currency, "
+        "quantity, gross_amount_local, gross_amount_eur, fx_rate, flow_class) "
+        "VALUES (?, ?, 'DIVIDEND', ?, 'EUR', 0, ?, ?, 1, 'INCOME')",
+        (account_id, instrument_id, on, amount, amount),
+    )
+    conn.commit()
+
+
+def test_a_distribution_is_taxable_income(db: sqlite3.Connection) -> None:
+    fund = instrument(db, "DIST", tf="0.00")
+    dividend(db, fund, amount="1000")
+    state = tax.allowance_state(db, person_id=1, tax_year=2026)
+    assert state.distributions_eur == D("1000.00")
+    assert state.gross_gains_eur == D("1000.00")
+
+
+def test_teilfreistellung_applies_to_distributions_too(db: sqlite3.Connection) -> None:
+    """An equity fund's payout is exempt by the same 30% as its gain."""
+    fund = instrument(db, "EQ", tf="0.30")
+    dividend(db, fund, amount="1000")
+    assert tax.allowance_state(db, person_id=1, tax_year=2026).distributions_eur == D("700.00")
+
+
+def test_distributions_and_gains_share_one_allowance(db: sqlite3.Connection) -> None:
+    """They are not taxed separately; both consume the same Sparerpauschbetrag."""
+    fund = instrument(db, "F", tf="0.00")
+    disposal(db, fund, gain="1500")
+    dividend(db, fund, amount="1500")
+    state = tax.allowance_state(db, person_id=1, tax_year=2026)
+    assert state.gross_gains_eur == D("3000.00")
+    assert state.consumed_eur == D("1000.00")  # single person
+    assert state.taxable_after_allowance_eur == D("2000.00")
+
+
+def test_an_out_of_scope_distribution_is_excluded(db: sqlite3.Connection) -> None:
+    foreign = instrument(db, "OUT", regime="OUT_OF_SCOPE", tf="0.00")
+    dividend(db, foreign, amount="5000")
+    assert tax.allowance_state(db, person_id=1, tax_year=2026).distributions_eur == D("0.00")
+
+
+def test_distributions_reduce_the_vorabpauschale() -> None:
+    """The charge tops a fund up to a notional minimum return, so a fund that
+    already paid that much out owes nothing further."""
+    *_, gross, _taxable = tax.vorabpauschale_for(
+        jan_first_price=D("100"),
+        year_end_price=D("130"),
+        quantity=D("500"),
+        basiszins_rate=D("0.0320"),
+        teilfreistellung_pct=D("0.00"),
+        distributions_eur=D("1120"),
+    )
+    assert gross == D("0.00")
+
+
+def test_distributions_do_not_cross_between_people(db: sqlite3.Connection) -> None:
+    fund = instrument(db, "F", tf="0.00")
+    dividend(db, fund, amount="900", account_id=1)
+    assert tax.allowance_state(db, person_id=2, tax_year=2026).distributions_eur == D("0.00")

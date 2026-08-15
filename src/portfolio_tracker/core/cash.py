@@ -82,7 +82,9 @@ def _amount(row: sqlite3.Row) -> Decimal:
     gross = Decimal(str(row["gross_amount_local"] or 0))
     fees = Decimal(str(row["fees_local"] or 0))
     # A purchase costs its gross plus fees; a sale returns its gross less fees.
-    return gross + fees if row["type"] == "BUY" else gross - fees
+    if row["type"] == "BUY":
+        return gross + fees
+    return gross - fees
 
 
 def compute_flows(conn: sqlite3.Connection, *, account_id: int | None = None) -> FlowReport:
@@ -93,7 +95,7 @@ def compute_flows(conn: sqlite3.Connection, *, account_id: int | None = None) ->
     """
     report = FlowReport()
 
-    scope = "WHERE t.type IN ('BUY', 'SELL')"
+    scope = "WHERE t.type IN ('BUY', 'SELL', 'DIVIDEND', 'DEPOSIT', 'WITHDRAWAL', 'INTEREST')"
     params: list[object] = []
     if account_id is not None:
         scope += " AND t.account_id = ?"
@@ -102,10 +104,14 @@ def compute_flows(conn: sqlite3.Connection, *, account_id: int | None = None) ->
     rows = conn.execute(
         f"""
         SELECT t.id, t.account_id, t.type, t.trade_date, t.currency,
-               t.gross_amount_local, t.fees_local, t.proceeds_disposition
+               t.gross_amount_local, t.fees_local, t.quantity, t.proceeds_disposition
         FROM transaction_ t
         {scope}
-        ORDER BY t.account_id, t.currency, t.trade_date, t.type DESC, t.id
+        ORDER BY t.account_id, t.currency, t.trade_date,
+                 CASE t.type WHEN 'DEPOSIT' THEN 0 WHEN 'SELL' THEN 1
+                             WHEN 'DIVIDEND' THEN 2 WHEN 'INTEREST' THEN 3
+                             WHEN 'BUY' THEN 4 ELSE 5 END,
+                 t.id
         """,
         tuple(params),
     ).fetchall()
@@ -117,6 +123,40 @@ def compute_flows(conn: sqlite3.Connection, *, account_id: int | None = None) ->
         balance = balances.get(key, ZERO)
         when = date.fromisoformat(row["trade_date"])
         value = _amount(row)
+
+        if row["type"] in ("DEPOSIT", "WITHDRAWAL"):
+            # Money crossing the boundary, already recorded. It credits (or
+            # debits) the balance, and it is NOT re-inferred: a confirmed
+            # contribution funding a later purchase is exactly what the
+            # inference was proposing in the first place.
+            signed = value if row["type"] == "DEPOSIT" else -value
+            balance += signed
+            report.events.append(
+                FlowEvent(when, key[0], key[1], row["type"], signed, balance, int(row["id"]))
+            )
+            balances[key] = max(balance, ZERO)
+            continue
+
+        if row["type"] == "INTEREST":
+            # Only the capitalised part changes the balance; interest paid away
+            # leaves the account. `quantity` carries what was retained.
+            retained = Decimal(str(row["quantity"] or 0))
+            balance += retained
+            report.events.append(
+                FlowEvent(when, key[0], key[1], "INTEREST", retained, balance, int(row["id"]))
+            )
+            balances[key] = balance
+            continue
+
+        if row["type"] == "DIVIDEND":
+            # Income, not a contribution: it credits cash so the ex-date price
+            # fall is offset, but it is return rather than new money.
+            balance += value
+            report.events.append(
+                FlowEvent(when, key[0], key[1], "DISTRIBUTION", value, balance, int(row["id"]))
+            )
+            balances[key] = balance
+            continue
 
         if row["type"] == "SELL":
             disposition = row["proceeds_disposition"]

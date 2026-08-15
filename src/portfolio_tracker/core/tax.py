@@ -109,6 +109,7 @@ class AllowanceState:
     after_losses_eur: Decimal = ZERO
     consumed_eur: Decimal = ZERO
     remaining_eur: Decimal = ZERO
+    distributions_eur: Decimal = ZERO
     taxable_after_allowance_eur: Decimal = ZERO
     estimated_tax_eur: Decimal = ZERO
     carried_forward: LossPots = field(default_factory=LossPots)
@@ -353,6 +354,13 @@ def forecast_vorabpauschale(
 
         exemption = teilfreistellung(conn, int(lot["instrument_id"]))
         quantity = Decimal(str(lot["qty_remaining"]))
+        # The charge exists only to top a fund up to a notional minimum return,
+        # so a fund that already distributed that much owes nothing further.
+        from portfolio_tracker.ingest.dividends import distributions_for
+
+        paid_out = distributions_for(
+            conn, instrument_id=int(lot["instrument_id"]), tax_year=tax_year
+        )
         raw, cap, basisertrag, gross, taxable = vorabpauschale_for(
             jan_first_price=opening,
             year_end_price=closing,
@@ -360,6 +368,7 @@ def forecast_vorabpauschale(
             basiszins_rate=rate,
             teilfreistellung_pct=exemption,
             full_months_before=months_before,
+            distributions_eur=paid_out,
         )
 
         rows.append(
@@ -376,7 +385,7 @@ def forecast_vorabpauschale(
                 cap=cap,
                 basisertrag=basisertrag,
                 full_months_before=months_before,
-                distributions_eur=ZERO,
+                distributions_eur=paid_out,
                 vap_gross_eur=gross,
                 teilfreistellung_eur=quantize_money(gross - taxable),
                 taxable_eur=taxable,
@@ -390,6 +399,36 @@ def forecast_vorabpauschale(
 # ---------------------------------------------------------------------------
 # Allowance and loss pots
 # ---------------------------------------------------------------------------
+
+
+def distribution_income(
+    conn: sqlite3.Connection, *, tax_year: int, person_id: int | None = None
+) -> list[tuple[str, Decimal]]:
+    """Distributions received in a year, after Teilfreistellung.
+
+    In-scope instruments only, and reduced by the same partial exemption that
+    applies to a gain on the same fund.
+    """
+    query = """
+        SELECT i.id, i.import_key, t.gross_amount_eur
+        FROM transaction_ t
+        JOIN instrument i ON i.id = t.instrument_id
+        JOIN account a ON a.id = t.account_id
+        WHERE t.type = 'DIVIDEND' AND i.tax_regime = ?
+          AND t.trade_date BETWEEN ? AND ?
+    """
+    params: list[object] = [IN_SCOPE_REGIME, f"{tax_year}-01-01", f"{tax_year}-12-31"]
+    if person_id is not None:
+        query += " AND a.person_id = ?"
+        params.append(person_id)
+
+    out: list[tuple[str, Decimal]] = []
+    for row in conn.execute(query, tuple(params)):
+        if row["gross_amount_eur"] is None:
+            continue
+        rate = teilfreistellung(conn, int(row["id"]))
+        out.append((row["import_key"], quantize_money(row["gross_amount_eur"] * (1 - rate))))
+    return out
 
 
 def allowance_state(
@@ -410,6 +449,7 @@ def allowance_state(
     state = AllowanceState(person_id=person_id, tax_year=tax_year, statutory_cap_eur=cap)
 
     disposals = compute_disposal_tax(conn, tax_year=tax_year, person_id=person_id)
+    distributions = distribution_income(conn, tax_year=tax_year, person_id=person_id)
     share_gains = [d for d in disposals if d.pot == "AKTIEN"]
     other_gains = [d for d in disposals if d.pot == "SONSTIGE"]
 
@@ -423,7 +463,12 @@ def allowance_state(
     share_gain, share_used, share_left = settle(share_gains, pots.aktien)
     other_gain, other_used, other_left = settle(other_gains, pots.sonstige)
 
-    state.gross_gains_eur = quantize_money(share_gain + other_gain)
+    # A distribution is income in the year it is paid, taxed on the same
+    # footing as a realised gain and consuming the same allowance. Leaving it
+    # out understates income and overstates remaining headroom -- which then
+    # corrupts any harvesting decision made against that headroom.
+    state.distributions_eur = quantize_money(sum((d for _, d in distributions), ZERO))
+    state.gross_gains_eur = quantize_money(share_gain + other_gain + state.distributions_eur)
     state.losses_offset_eur = quantize_money(share_used + other_used)
     state.after_losses_eur = quantize_money(state.gross_gains_eur - state.losses_offset_eur)
 
