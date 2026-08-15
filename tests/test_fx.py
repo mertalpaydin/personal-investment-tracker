@@ -214,6 +214,7 @@ def test_only_modules_permitted_to_convert_contain_fx_arithmetic() -> None:
         "core/lots.py",  # freezes cost basis at the acquisition rate
         "core/valuation.py",  # daily revaluation of positions
         "core/cash.py",  # freezes a confirmed flow; revalues cash daily
+        "core/accounts.py",  # revalues a deposit's accrued interest daily
     }
     offenders = []
     for path in root.rglob("*.py"):
