@@ -387,9 +387,18 @@ def report(
             (person_id,),
         ).fetchone()
         if last is not None:
-            typer.echo(f"  positions              EUR {last['market_value_eur']:>12,.2f}")
-            typer.echo(f"  cash                   EUR {last['cash_eur']:>12,.2f}")
-            typer.echo(f"  total value            EUR {last['total_value_eur']:>12,.2f}")
+            typer.echo(f"  holdings               EUR {last['market_value_eur']:>12,.2f}")
+            typer.echo(f"  deposits               EUR {last['deposits_eur']:>12,.2f}")
+            typer.secho(
+                f"  TOTAL                  EUR {last['total_value_eur']:>12,.2f}", bold=True
+            )
+            typer.echo("")
+            # Deliberately outside the total: the tracker cannot know whether
+            # this money is still in the account or has been spent.
+            typer.echo(
+                f"  uninvested cash        EUR {last['cash_eur']:>12,.2f}"
+                "   (sale proceeds and distributions -- not counted above)"
+            )
 
         if summary.caveats:
             typer.echo("")

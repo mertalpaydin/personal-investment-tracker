@@ -227,3 +227,41 @@ def test_an_empty_series_produces_nothing() -> None:
 def test_a_drop_to_zero_value_is_a_total_loss_not_an_error() -> None:
     states = R.build_units(series(("2026-01-05", "10000", "0"), ("2026-01-06", "0", "0")))
     assert R.twr(states) == Decimal(-1)
+
+
+# ---------------------------------------------------------------------------
+# The headline total versus the valuation basis
+#
+# The owner's rule: the total is holdings plus deposit balances. Uninvested
+# cash from sales and distributions is excluded, because whether it is still
+# held cannot be known from the source data.
+#
+# Returns are computed on the complete value including that cash. Without
+# that, a sale would drop the value on the day it settles and restore it when
+# the money is spent -- a loss followed by an identical gain.
+# ---------------------------------------------------------------------------
+
+
+def test_selling_does_not_look_like_a_loss() -> None:
+    """Holdings fall by 5,000 and cash rises by 5,000: no return either way."""
+    states = R.build_units(
+        series(
+            ("2026-01-05", "100000", "0"),  # all holdings
+            ("2026-01-06", "100000", "0"),  # 95,000 holdings + 5,000 cash
+        )
+    )
+    assert R.twr(states) == Decimal(0)
+
+
+def test_a_distribution_is_not_a_loss() -> None:
+    """A fund's price falls on its ex-date by what it paid. With the payment
+    counted, the two cancel; without it, the fall is booked as a loss."""
+    with_income = R.build_units(
+        series(("2026-01-05", "100000", "0"), ("2026-01-06", "100000", "0"))
+    )
+    without_income = R.build_units(
+        series(("2026-01-05", "100000", "0"), ("2026-01-06", "98000", "0"))
+    )
+    assert R.twr(with_income) == Decimal(0)
+    assert R.twr(without_income) is not None
+    assert R.twr(without_income) < Decimal(0)

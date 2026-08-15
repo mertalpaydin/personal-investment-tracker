@@ -259,8 +259,8 @@ def max_drawdown(states: list[DayState]) -> Decimal | None:
 
 def _daily_values(
     conn: sqlite3.Connection, person_id: int, days: list[date]
-) -> dict[date, tuple[Decimal, Decimal, Decimal, Decimal, int]]:
-    """Per day: positions, cash, cost basis, realised gain, stale count."""
+) -> dict[date, tuple[Decimal, Decimal, Decimal, Decimal, int, Decimal]]:
+    """Per day: positions, brokerage cash, cost, realised gain, stale count, deposits."""
     positions: dict[date, list[Decimal]] = {}
     stale: dict[date, int] = {}
     for row in conn.execute(
@@ -279,17 +279,23 @@ def _daily_values(
         if row["valuation_status"] != "OK":
             stale[when] = stale.get(when, 0) + 1
 
+    # A deposit account's balance is money the owner knows he has, so it
+    # belongs in the headline total. Cash left in a brokerage account after a
+    # sale or a distribution does not: the tracker cannot tell whether it is
+    # still there or has been spent.
     cash: dict[date, Decimal] = {}
+    deposits: dict[date, Decimal] = {}
     for row in conn.execute(
         """
-        SELECT c.date, c.balance_eur FROM cash_daily c
+        SELECT c.date, c.balance_eur, a.kind FROM cash_daily c
         JOIN account a ON a.id = c.account_id
         WHERE a.person_id = ? AND c.balance_eur IS NOT NULL
         """,
         (person_id,),
     ):
         when = date.fromisoformat(row["date"])
-        cash[when] = cash.get(when, ZERO) + row["balance_eur"]
+        bucket = deposits if row["kind"] in ("TAGESGELD", "FESTGELD") else cash
+        bucket[when] = bucket.get(when, ZERO) + row["balance_eur"]
 
     realized: dict[date, Decimal] = {}
     running = ZERO
@@ -306,12 +312,19 @@ def _daily_values(
             running += row["gross_gain_eur"]
         realized[date.fromisoformat(row["trade_date"])] = running
 
-    out: dict[date, tuple[Decimal, Decimal, Decimal, Decimal, int]] = {}
+    out: dict[date, tuple[Decimal, Decimal, Decimal, Decimal, int, Decimal]] = {}
     carried = ZERO
     for day in days:
         market, cost = positions.get(day, [ZERO, ZERO])
         carried = realized.get(day, carried)
-        out[day] = (market, cash.get(day, ZERO), cost, carried, stale.get(day, 0))
+        out[day] = (
+            market,
+            cash.get(day, ZERO),
+            cost,
+            carried,
+            stale.get(day, 0),
+            deposits.get(day, ZERO),
+        )
     return out
 
 
@@ -390,9 +403,9 @@ def build_portfolio_daily(
     flows = _external_flows(conn, person_id, days)
 
     series = [
-        (day, values[day][0] + values[day][1], flows.get(day, ZERO))
+        (day, values[day][0] + values[day][1] + values[day][5], flows.get(day, ZERO))
         for day in days
-        if values[day][0] + values[day][1] > ZERO
+        if values[day][0] + values[day][1] + values[day][5] > ZERO
     ]
     states = build_units(series)
     breaks = check_unit_identity(states)
@@ -416,24 +429,29 @@ def build_portfolio_daily(
 
     peak = states[0].unit_price if states else ZERO
     for state in states:
-        market, cash_eur, cost, realized, stale_count = values[state.on]
+        market, cash_eur, cost, realized, stale_count, deposits_eur = values[state.on]
+        # Headline: what the owner has. Basis: what the return maths needs.
+        headline = market + deposits_eur
         peak = max(peak, state.unit_price)
         conn.execute(
             """
             INSERT INTO portfolio_daily
                 (date, person_id, market_value_eur, accrued_income_eur, total_value_eur,
-                 cost_basis_eur, cash_eur, realized_gain_eur,
+                 cost_basis_eur, cash_eur, deposits_eur, valuation_basis_eur,
+                 realized_gain_eur,
                  net_external_flow_eur, units_issued, units_outstanding, unit_price,
                  daily_return, drawdown_pct, completeness, stale_instruments)
-            VALUES (?, ?, ?, '0', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, '0', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 state.on.isoformat(),
                 person_id,
                 quantize_money(market),
-                quantize_money(state.value_eur),
+                quantize_money(headline),
                 quantize_money(cost),
                 quantize_money(cash_eur),
+                quantize_money(deposits_eur),
+                quantize_money(state.value_eur),
                 quantize_money(realized),
                 quantize_money(state.external_flow_eur),
                 state.units_issued,
@@ -530,7 +548,26 @@ def summarise(
             f"{no_fees} trade(s) have no fee data; returns are overstated by the "
             "fees actually paid."
         )
+    distributions = conn.execute(
+        "SELECT count(*) AS n FROM transaction_ t JOIN account a ON a.id = t.account_id "
+        "WHERE a.person_id = ? AND t.type = 'DIVIDEND'",
+        (person_id,),
+    ).fetchone()["n"]
+    if distributions:
+        summary.caveats.append(
+            f"{distributions} distribution(s) are included, taken from the price feed and "
+            "gross of the withholding tax the bank applies."
+        )
+    else:
+        summary.caveats.append(
+            "No distributions are recorded. If any holding pays income, its ex-date price "
+            "fall is currently being counted as a loss."
+        )
+
     summary.caveats.append(
-        "The source export contains no dividends, so distributions are missing from total return."
+        "The headline total counts holdings and deposit balances only. Uninvested cash from "
+        "sales and distributions is shown separately, because whether it is still held "
+        "cannot be known from the source. Returns are computed on the complete value "
+        "including that cash -- otherwise a sale would read as a loss."
     )
     return summary
