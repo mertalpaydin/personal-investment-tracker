@@ -1,0 +1,19 @@
+# Architecture decision records
+
+Each record states a decision, the evidence behind it, and what it costs. They
+are written when a choice is made, not reconstructed afterwards, so several
+record findings that contradict the original design brief.
+
+| # | Decision | Why it matters |
+|---|---|---|
+| [0001](0001-positions-export-not-a-ledger.md) | The source is a positions view, not a transaction ledger | One lot can span both files, or appear twice in one and never in the other. Processing them independently gives undersized FIFO lots and a silently wrong tax engine. |
+| [0002](0002-decimal-money-and-lossy-quantities.md) | Decimal money; precision graded, not hidden | Four quantities are abbreviated by the source UI. Two are exactly recoverable from market value — and doing so proves the printed values are wrong. |
+| [0003](0003-scope-cut.md) | 45 tables and 11 phases cut to 16 tables | Ship a correct core rather than a broad unfinished one. Two features are pulled *forward* because retrofitting them would mean recomputing all history. |
+| [0004](0004-daily-fx-and-return-decomposition.md) | Daily FX revaluation; local and currency return reported separately | The source export's foreign-currency profit column contains no currency effect at all. On one lot that is a €1,016 overstatement. |
+
+## Reference material
+
+`../reference/` holds the original design documents, sanitised and banner-marked.
+They are design history rather than a description of the code: the German tax
+rules survived verbatim and are implemented as written, while the data-model
+assumptions did not survive contact with the real export.
