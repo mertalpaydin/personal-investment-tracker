@@ -298,3 +298,65 @@ def test_notes_left_in_the_folder_are_not_reported_as_data(folder: Path) -> None
     (folder / "notes.md").write_text("reminders\n", encoding="utf-8")
     (folder / "real.csv").write_text(HOLDINGS_CSV, encoding="utf-8")
     assert [f.name for f in incoming.scan(folder)] == ["real.csv"]
+
+
+# ---------------------------------------------------------------------------
+# The page's own wiring
+# ---------------------------------------------------------------------------
+
+
+def _page(db: sqlite3.Connection, folder: Path) -> str:
+    from portfolio_tracker.api import app as module
+    from portfolio_tracker.api.render import render_dashboard
+
+    db.execute(
+        "INSERT INTO portfolio_daily (date, person_id, market_value_eur, total_value_eur, "
+        "cost_basis_eur, units_outstanding, unit_price, cash_eur, deposits_eur, "
+        "realized_gain_eur, valuation_basis_eur, income_cash_eur, income_received_eur, "
+        "completeness, drawdown_pct) VALUES ('2026-06-30', 1, '100', '100', '100', '1', "
+        "'100', '0', '0', '0', '100', '0', '0', 'FULL', '0')"
+    )
+    db.commit()
+    previous = module.INCOMING_DIR
+    module.INCOMING_DIR = folder
+    try:
+        return render_dashboard(db)
+    finally:
+        module.INCOMING_DIR = previous
+
+
+def test_every_button_the_page_offers_is_actually_wired_up(
+    db: sqlite3.Connection, folder: Path
+) -> None:
+    """The bug this exists to prevent, which shipped and was hit.
+
+    ``ptPost`` lived in the review section's script, and that section renders
+    nothing when the inbox is empty. So with nothing awaiting review the
+    function did not exist: Import and the Vorabpauschale button each disabled
+    themselves, said "working...", threw a ReferenceError before any promise
+    existed for a ``.catch`` to attach to, and hung.
+
+    A control that hangs is worse than one that errors, because there is
+    nothing to read and nothing to retry.
+    """
+    import re
+
+    (folder / "h.csv").write_text(HOLDINGS_CSV, encoding="utf-8")
+    page = _page(db, folder)
+
+    defined = set(re.findall(r"function\s+(pt\w+)\s*\(", page))
+    called = set(re.findall(r"(pt[A-Z]\w*)\s*\(", page))
+    assert called - defined == set(), f"called but never defined: {sorted(called - defined)}"
+
+
+def test_the_shared_helpers_survive_an_empty_review_inbox(
+    db: sqlite3.Connection, folder: Path
+) -> None:
+    """Specifically the state the owner was in when it broke."""
+    from portfolio_tracker.core import inbox
+
+    assert inbox.listing(db) == []
+    page = _page(db, folder)
+    assert "function ptPost(" in page
+    assert "function ptRun(" in page
+    assert "function ptRebuild(" in page

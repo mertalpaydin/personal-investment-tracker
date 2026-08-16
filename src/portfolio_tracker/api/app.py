@@ -1095,7 +1095,13 @@ def import_incoming(
 
 @app.post("/api/vorabpauschale/propose")
 def propose_vorabpauschale(
-    tax_year: int = Query(..., alias="year", description="The year the charge accrues FOR"),
+    tax_year: int = Query(
+        ...,
+        alias="year",
+        ge=2018,
+        le=2100,
+        description="The full year the charge accrues FOR, e.g. 2025",
+    ),
     conn: sqlite3.Connection = Depends(get_writable_db),
 ) -> dict[str, Any]:
     """Compute the January charge and queue it for review.

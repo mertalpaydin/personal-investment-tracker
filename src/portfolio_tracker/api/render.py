@@ -133,6 +133,9 @@ def render_dashboard(
         "<style>",
         _STYLE,
         "</style>",
+        # Before every section, because a handler defined in a section that
+        # happens not to render is a button that hangs.
+        f"<script>{_BASE_SCRIPT}</script>",
         "<h1>Portfolio</h1>",
         f"<p class='sub'>as of {html.escape(latest['date'])} &middot; "
         f"{summary.days} days tracked</p>",
@@ -279,12 +282,40 @@ def render_dashboard(
     return "\n".join(parts)
 
 
-_REVIEW_SCRIPT = """
+#: Emitted once, unconditionally, before anything that might call it.
+#:
+#: ``ptPost`` used to live in the review section's script, which is omitted
+#: when nothing is awaiting review. With an empty inbox the function simply did
+#: not exist, so every button that used it -- Import, and the Vorabpauschale
+#: charge -- disabled itself, said "working...", threw a ReferenceError before
+#: any promise existed for the .catch to attach to, and sat there forever.
+#:
+#: Hence also ``ptRun``: it wraps the whole handler in try/catch so a button can
+#: never be left disabled by an exception, whatever the cause. A control that
+#: hangs is worse than one that errors, because there is nothing to read.
+_BASE_SCRIPT = """
 function ptPost(url, body) {
   return fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
                      body: JSON.stringify(body || {})})
     .then(r => r.json().then(j => r.ok ? j : Promise.reject(j.detail || r.statusText)));
 }
+function ptRun(button, busyLabel, work) {
+  const was = button.textContent;
+  button.disabled = true; button.textContent = busyLabel;
+  const restore = () => { button.disabled = false; button.textContent = was; };
+  try {
+    Promise.resolve(work())
+      .then(again => { if (again !== false) location.reload(); else restore(); })
+      .catch(e => { alert(e); restore(); });
+  } catch (e) { alert(e); restore(); }
+}
+function ptRebuild(button) {
+  ptRun(button, 'Rebuilding...', () => ptPost('/api/admin/rebuild', {})
+    .then(r => { if (r.breaks && r.breaks.length) alert(r.breaks.join('\\n')); }));
+}
+"""
+
+_REVIEW_SCRIPT = """
 function ptDecide(id, action) {
   const row = document.getElementById('p' + id);
   const amount = row.querySelector('input[name=amount]');
@@ -366,19 +397,24 @@ function ptImport(name, button) {
   const when = row.querySelector('input[name=asof]').value;
   if (!fund) { alert('Choose which fund this file belongs to.'); return; }
   if (!when) { alert('Give the date the fund published it.'); return; }
-  button.disabled = true; button.textContent = 'Importing...';
-  ptPost('/api/incoming/import', {name: name, instrument: fund, as_of: when})
-    .then(() => location.reload())
-    .catch(e => { alert(e); button.disabled = false; button.textContent = 'Import'; });
+  ptRun(button, 'Importing...', () =>
+    ptPost('/api/incoming/import', {name: name, instrument: fund, as_of: when}));
 }
 function ptProposeVap(button) {
-  const year = document.getElementById('vapyear').value;
-  button.disabled = true; button.textContent = 'Computing...';
-  ptPost('/api/vorabpauschale/propose?year=' + encodeURIComponent(year), {})
-    .then(r => { alert(r.queued + ' charge(s) queued for review, EUR ' +
-                       (r.total_taxable_eur || 0).toFixed(2) + ' taxable.');
-                 location.reload(); })
-    .catch(e => { alert(e); button.disabled = false; button.textContent = 'Compute'; });
+  const box = document.getElementById('vapyear');
+  const year = parseInt(box.value, 10);
+  // Checked here as well as by the server: "26" is a plausible typo for 2026
+  // and produces a 409 about a missing Basiszins, which reads like a data
+  // problem rather than a slip.
+  if (!year || year < 2018 || year > 2100) {
+    alert('Give the full year the charge accrues for, such as 2025.');
+    box.focus();
+    return;
+  }
+  ptRun(button, 'Computing...', () =>
+    ptPost('/api/vorabpauschale/propose?year=' + year)
+      .then(r => alert(r.queued + ' charge(s) queued for review, EUR ' +
+                       (r.total_taxable_eur || 0).toFixed(2) + ' taxable.')));
 }
 """
 

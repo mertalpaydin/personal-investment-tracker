@@ -320,6 +320,27 @@ attribution.
 Imported files move to `imported/` with a timestamp rather than being deleted,
 so the folder shows what is still waiting and nothing supplied is destroyed.
 
+### The bug that shipped
+
+`ptPost` was defined inside the review section's script, and that section
+renders **nothing** when the inbox is empty. So with nothing awaiting review the
+function did not exist, and every button using it — Import, and the
+Vorabpauschale charge — disabled itself, said "working...", threw a
+ReferenceError before any promise existed for a `.catch` to attach to, and hung.
+
+A control that hangs is worse than one that errors: there is nothing to read and
+nothing to retry, and the page looks like it is doing something.
+
+Fixed three ways, because one was not enough:
+
+1. `_BASE_SCRIPT` holds the shared helpers and is emitted **unconditionally**,
+   before any section.
+2. `ptRun` wraps every handler in try/catch, so a button can never be left
+   disabled by an exception whatever its cause.
+3. `test_every_button_the_page_offers_is_actually_wired_up` parses the rendered
+   page and asserts no `pt*()` is called that is not also defined. It catches
+   the class, not the instance.
+
 ### Watch for
 
 Other file shapes — positions exports, price and FX series — are **detected and
