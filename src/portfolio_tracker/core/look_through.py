@@ -46,6 +46,7 @@ UNKNOWN bucket is more useful than a confident mistake.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import date
@@ -495,17 +496,71 @@ def concentration(
     )
 
 
-def _underlying_key(identifier: object, name: object) -> str:
-    """Group on the identifier when there is one, otherwise the name.
+#: Legal-form suffixes issuers append inconsistently. "Nordwind Technologies"
+#: and "NORDWIND TECHNOLOGIES AG" are one company, and counting them as two
+#: makes the largest single-issuer exposure read LOWER than it is -- which is
+#: the dangerous direction for a concentration figure.
+LEGAL_SUFFIXES: frozenset[str] = frozenset(
+    {
+        "ag", "nv", "n v", "sa", "s a", "se", "plc", "inc", "incorporated", "corp",
+        "corporation", "co", "company", "ltd", "limited", "llc", "lp", "spa", "s p a",
+        "asa", "ab", "publ", "oyj", "as", "a s", "bv", "b v", "gmbh", "kgaa", "sas",
+        "pte", "pcl", "tbk", "sae", "aps", "holding", "holdings", "group",
+    }
+)  # fmt: skip
 
-    Two funds holding the same company under slightly different names ("Acme
-    Robotics C" and "ACME ROBOTICS CORP") are one exposure, and only an ISIN
-    proves it. Without one the name is all there is, and the fallback is
-    upper-cased so at least the obvious case differences merge.
+#: Share-class and listing markers. The same company's A and B shares are the
+#: same *issuer*, which is what concentration measures.
+CLASS_MARKERS: frozenset[str] = frozenset(
+    {
+        "class", "cl", "ord", "ordinary", "reg", "registered", "shs", "shares", "share",
+        "com", "common", "adr", "gdr", "sponsored", "unsponsored", "npv", "sp",
+        "a", "b", "c", "i", "acc", "dist",
+    }
+)  # fmt: skip
+
+#: Removed without leaving a gap, so ``N.V.`` becomes ``nv`` and ``A/S``
+#: becomes ``as`` -- both of which the suffix list then recognises. Turning
+#: them into ``n v`` instead leaves a stray token that stops the trim.
+_ABBREVIATION_MARKS = re.compile(r"[./]")
+_NAME_NOISE = re.compile(r"[^a-z0-9 ]+")
+
+
+def normalise_issuer(name: str) -> str:
+    """Reduce an issuer name to something two files can agree on.
+
+    Strips punctuation, legal form and share-class markers, then collapses
+    whitespace. ``Nordwind Technologies AG``, ``NORDWIND TECHNOLOGIES``, and
+    ``Nordwind Technologies Corp. - Class A`` all become ``nordwind
+    technologies``.
+
+    Deliberately conservative about what it removes. Two genuinely different
+    companies merged into one would *overstate* concentration, and a
+    concentration figure that overstates gets acted on. Everything in the lists
+    above is a legal form or a share class, never a distinguishing word --
+    which is why the trailing-token loop stops at the first token it does not
+    recognise rather than filtering the whole name.
+    """
+    cleaned = _NAME_NOISE.sub(" ", _ABBREVIATION_MARKS.sub("", name.lower()))
+    tokens = cleaned.split()
+    # Only from the end: "Group Nordwind" must keep its first word, and a
+    # company genuinely called "Class Editori" must keep its name.
+    while len(tokens) > 1 and (tokens[-1] in LEGAL_SUFFIXES or tokens[-1] in CLASS_MARKERS):
+        tokens.pop()
+    return " ".join(tokens) or cleaned.strip()
+
+
+def _underlying_key(identifier: object, name: object) -> str:
+    """Group on the identifier when there is one, otherwise the normalised name.
+
+    An ISIN is proof; a name is a guess. When two files supply neither, the
+    names are normalised so that a legal-form suffix or a share-class marker
+    does not split one company into two -- which understates the exposure, and
+    understating is the direction that gets missed.
     """
     if identifier:
         return f"id:{str(identifier).upper()}"
-    return f"name:{str(name).upper()}"
+    return f"name:{normalise_issuer(str(name))}"
 
 
 # ---------------------------------------------------------------------------

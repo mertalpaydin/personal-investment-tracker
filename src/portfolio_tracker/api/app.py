@@ -347,7 +347,37 @@ def performance(
             "sale read as a loss on the day it settles."
         ),
         "attribution": _attribution(conn, person_id),
+        "attribution_by_holding": _attribution_by_holding(conn, person_id),
         "caveats": summary.caveats,
+    }
+
+
+def _attribution_by_holding(conn: sqlite3.Connection, person_id: int) -> dict[str, Any] | None:
+    """Which holdings produced the return, in percentage points of the total.
+
+    The portfolio-level split says the return was 82 points of prices and -26 of
+    currency. This says which holdings those points came from -- the level at
+    which decisions are actually made, since nobody can sell "currency".
+    """
+    state = attribution.by_holding(conn, person_id=person_id)
+    if state is None:
+        return None
+    return {
+        "total": _decimal(state.total),
+        "holdings": [
+            {
+                "instrument": h.instrument,
+                "local": _decimal(h.local),
+                "currency": _decimal(h.currency),
+                "total": _decimal(h.total),
+            }
+            for h in state.holdings
+        ],
+        "income": _decimal(state.income),
+        "unexplained": _decimal(state.unexplained),
+        "residual": _decimal(state.residual),
+        "unit": "percentage points of the portfolio return, not each holding's own return",
+        "caveats": state.caveats,
     }
 
 

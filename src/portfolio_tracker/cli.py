@@ -435,6 +435,18 @@ def report(
             typer.secho(f"    {'-' * 30}", dim=True)
             typer.echo(f"    total                {pct(split.total):>10}")
 
+            # Which holdings produced those points. Nobody can sell "currency";
+            # the per-holding view is the one decisions are made at.
+            per_holding = attribution.by_holding(conn, person_id=person_id)
+            if per_holding is not None:
+                typer.echo("")
+                typer.echo(f"  by holding:  {'prices':>10} {'currency':>10} {'total':>10}")
+                for holding in per_holding.holdings:
+                    typer.echo(
+                        f"    {holding.instrument:<18} {pct(holding.local):>8} "
+                        f"{pct(holding.currency):>10} {pct(holding.total):>10}"
+                    )
+
         typer.echo("")
         typer.echo(f"  contributions          EUR {summary.external_flows_eur:>12,.2f}")
 

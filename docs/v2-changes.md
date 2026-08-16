@@ -110,6 +110,22 @@ the unit series and the attribution compute the period return from different
 data and never consult each other, so agreement is evidence rather than
 tautology.
 
+### Per holding
+
+`attribution.by_holding` answers *which holdings* produced the points, since
+nobody can sell "currency". On the example corpus ZTFB is the whole story in one
+line: +60% from prices, -25% from the lira, netting +35 of the portfolio's 56.
+
+The figures are **percentage points of the portfolio return**, not each
+holding's own return — a holding that doubled while being 1% of the portfolio
+contributes about one point. Same Cariño factors, so they sum to the
+portfolio-level split exactly.
+
+One bug found writing it: the query filtered out the inception day, which
+silently dropped the *second* day's contribution too (it is the one paired with
+inception). The holdings then summed to 0.7 points more than the portfolio, with
+nothing to explain the gap.
+
 ### Where to extend it
 
 Attribution is portfolio-wide. Per-instrument and per-currency contributions

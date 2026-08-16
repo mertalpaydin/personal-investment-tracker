@@ -196,19 +196,69 @@ def daily_terms(
     remainder is named rather than distributed, so the sum is an identity on
     every single day before any linking happens.
     """
-    positions = _positions_by_instrument(conn, person_id)
-    balances = _balances_by_currency(conn, person_id)
     income = _income_by_day(conn, person_id)
+    per_holding = holding_terms(conn, person_id=person_id, days=days, basis=basis)
 
     out: dict[date, DayTerms] = {}
+    for today, holdings in per_holding.items():
+        if today not in actual:
+            continue
+        local = sum((legs[0] for legs in holdings.values()), ZERO)
+        currency = sum((legs[1] for legs in holdings.values()), ZERO)
+        earned = income.get(today, ZERO) / basis[_previous(days, today)]
+        observed = actual[today]
+        out[today] = DayTerms(
+            on=today,
+            local=local,
+            currency=currency,
+            income=earned,
+            unexplained=observed - local - currency - earned,
+            actual=observed,
+        )
+    return out
+
+
+def _previous(days: list[date], today: date) -> date:
+    index = days.index(today)
+    return days[index - 1] if index else today
+
+
+#: Cash and deposit balances have no instrument, and a lira balance still loses
+#: euro value when the lira falls. They get a line of their own rather than
+#: being spread across the holdings, which would attribute a currency move to
+#: assets that did not make it.
+CASH_KEY = "(cash & deposits)"
+
+
+def holding_terms(
+    conn: sqlite3.Connection,
+    *,
+    person_id: int,
+    days: list[date],
+    basis: dict[date, Decimal],
+) -> dict[date, dict[str, tuple[Decimal, Decimal]]]:
+    """Each day's local and currency contribution, **per holding**.
+
+    The same arithmetic the portfolio-level split uses, kept at the level it is
+    computed at instead of being summed away. Every figure here is a share of
+    that day's opening portfolio value, so the holdings add up to the portfolio
+    by construction rather than by coincidence.
+    """
+    positions = _positions_by_instrument(conn, person_id)
+    balances = _balances_by_currency(conn, person_id)
+    names = {
+        int(row["id"]): str(row["import_key"])
+        for row in conn.execute("SELECT id, import_key FROM instrument")
+    }
+
+    out: dict[date, dict[str, tuple[Decimal, Decimal]]] = {}
     for previous, today in pairwise(days):
         opening = basis.get(previous, ZERO)
-        if opening <= ZERO or today not in actual:
+        if opening <= ZERO:
             continue
+        legs: dict[str, tuple[Decimal, Decimal]] = {}
 
-        local_eur, fx_eur = ZERO, ZERO
-
-        for priced in positions.values():
+        for instrument_id, priced in positions.items():
             opened, closed = priced.get(previous), priced.get(today)
             # A position opened or closed today moved by a trade, not by a
             # price. Its whole effect belongs in `unexplained`, which is what
@@ -219,8 +269,11 @@ def daily_terms(
             _, price_t, rate_t = closed
             if quantity == ZERO or rate_t <= ZERO or rate_p <= ZERO:
                 continue
-            local_eur += quantity * (price_t - price_p) / rate_t
-            fx_eur += quantity * price_p * (ONE / rate_t - ONE / rate_p)
+            local = quantity * (price_t - price_p) / rate_t / opening
+            currency = quantity * price_p * (ONE / rate_t - ONE / rate_p) / opening
+            key = names.get(instrument_id, str(instrument_id))
+            before = legs.get(key, (ZERO, ZERO))
+            legs[key] = (before[0] + local, before[1] + currency)
 
         for held in balances.values():
             was, now = held.get(previous), held.get(today)
@@ -231,20 +284,11 @@ def daily_terms(
             if balance == ZERO or closing_rate <= ZERO or opening_rate <= ZERO:
                 continue
             # No local term: a euro is a euro. A lira balance still moves.
-            fx_eur += balance * (ONE / closing_rate - ONE / opening_rate)
+            currency = balance * (ONE / closing_rate - ONE / opening_rate) / opening
+            before = legs.get(CASH_KEY, (ZERO, ZERO))
+            legs[CASH_KEY] = (before[0], before[1] + currency)
 
-        local = local_eur / opening
-        currency = fx_eur / opening
-        earned = income.get(today, ZERO) / opening
-        observed = actual[today]
-        out[today] = DayTerms(
-            on=today,
-            local=local,
-            currency=currency,
-            income=earned,
-            unexplained=observed - local - currency - earned,
-            actual=observed,
-        )
+        out[today] = legs
     return out
 
 
@@ -356,6 +400,143 @@ def summarise(
         unexplained=parts["unexplained"],
     )
     report.caveats = _caveats(report, terms)
+    return report
+
+
+@dataclass(frozen=True)
+class HoldingContribution:
+    """One holding's share of the period return, in percentage points."""
+
+    instrument: str
+    local: Decimal
+    currency: Decimal
+
+    @property
+    def total(self) -> Decimal:
+        return self.local + self.currency
+
+
+@dataclass
+class HoldingAttribution:
+    """Who produced the return, rather than what kind of thing produced it."""
+
+    start: date
+    end: date
+    total: Decimal
+    holdings: list[HoldingContribution]
+    unexplained: Decimal
+    income: Decimal
+    caveats: list[str] = field(default_factory=list)
+
+    @property
+    def accounted(self) -> Decimal:
+        return sum((h.total for h in self.holdings), ZERO) + self.unexplained + self.income
+
+    @property
+    def residual(self) -> Decimal:
+        return self.total - self.accounted
+
+
+def by_holding(
+    conn: sqlite3.Connection,
+    *,
+    person_id: int = 1,
+    start: date | None = None,
+    end: date | None = None,
+) -> HoldingAttribution | None:
+    """Which holdings produced the period's return, Cariño-linked.
+
+    The portfolio-level split says the return came 82 points from prices and
+    -26 from currency. This says *which holdings* those points came from -- the
+    level at which the owner actually makes decisions, since nobody can sell
+    "currency".
+
+    The same smoothing factors are applied, so these sum to the portfolio total
+    exactly, alongside income and the unexplained remainder. Recomputed on read
+    rather than stored: the daily figures already exist in ``portfolio_daily``
+    and a second copy of a derived number is a second thing that can drift.
+    """
+    # Every row, including the inception day that has no return of its own.
+    # Filtering it out here would drop the *second* day's contribution too --
+    # it is the one paired with inception -- and the holdings would then sum to
+    # slightly more than the portfolio, for a reason nothing would explain.
+    rows = conn.execute(
+        "SELECT date, daily_return, valuation_basis_eur, ret_income_contrib, ret_residual "
+        "FROM portfolio_daily WHERE person_id = ? ORDER BY date",
+        (person_id,),
+    ).fetchall()
+    if not rows:
+        return None
+
+    days = [date.fromisoformat(r["date"]) for r in rows]
+    basis = {date.fromisoformat(r["date"]): Decimal(str(r["valuation_basis_eur"])) for r in rows}
+    actual = {
+        date.fromisoformat(r["date"]): Decimal(str(r["daily_return"]))
+        for r in rows
+        if r["daily_return"] is not None
+    }
+    extra = {
+        date.fromisoformat(r["date"]): (
+            Decimal(str(r["ret_income_contrib"] or 0)),
+            Decimal(str(r["ret_residual"] or 0)),
+        )
+        for r in rows
+    }
+
+    window = [
+        d for d in days if d in actual and (not start or d >= start) and (not end or d <= end)
+    ]
+    # One day is a period. `summarise` accepts one row and these two must agree
+    # about what is reportable, or the page shows a portfolio split with no
+    # holdings beneath it.
+    if not window:
+        return None
+
+    per_day = holding_terms(conn, person_id=person_id, days=days, basis=basis)
+
+    compounded = ONE
+    for day in window:
+        compounded *= ONE + actual[day]
+    total = compounded - ONE
+    outer = carino_factor(total)
+    if outer == ZERO:  # pragma: no cover - only if ln(1+R) is exactly 0
+        return None
+
+    legs: dict[str, tuple[Decimal, Decimal]] = {}
+    income = unexplained = ZERO
+    for day in window:
+        scale = carino_factor(actual[day]) / outer
+        for key, (local, currency) in per_day.get(day, {}).items():
+            before = legs.get(key, (ZERO, ZERO))
+            legs[key] = (before[0] + local * scale, before[1] + currency * scale)
+        earned, residual = extra.get(day, (ZERO, ZERO))
+        income += earned * scale
+        unexplained += residual * scale
+
+    holdings = sorted(
+        (
+            HoldingContribution(instrument=key, local=local, currency=currency)
+            for key, (local, currency) in legs.items()
+        ),
+        key=lambda h: -h.total,
+    )
+    report = HoldingAttribution(
+        start=window[0],
+        end=window[-1],
+        total=total,
+        holdings=holdings,
+        unexplained=unexplained,
+        income=income,
+    )
+    report.caveats = [
+        "Percentage points of the portfolio's return, not each holding's own return. "
+        "A holding that doubled while being 1% of the portfolio contributes about one "
+        "point, and that is the number that matters for the total.",
+        "Weighted by what was held on each day, so a position bought late contributes "
+        "only from the day it was bought.",
+        "A position opened or closed on a given day contributes nothing for that day: "
+        "it moved by a trade, not by a price. That lands in 'trading'.",
+    ]
     return report
 
 

@@ -480,3 +480,110 @@ def test_the_page_shows_where_the_return_came_from(summarised: sqlite3.Connectio
     assert "Where the return came from" in page
     assert "Asset prices" in page
     assert "Currency" in page
+
+
+# ---------------------------------------------------------------------------
+# Per holding
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def built(db: sqlite3.Connection) -> sqlite3.Connection:
+    """The real pipeline, not hand-written rows.
+
+    The per-holding identity only means something when the stored daily terms
+    were produced from the same positions the holdings are recomputed from.
+    A fixture with invented `ret_*` values cannot reconcile with anything, and
+    a test asserting that it does would be testing the fixture.
+    """
+    from portfolio_tracker.core import returns
+
+    _instrument(db, 2, "ZEUR", "EUR")
+    _position(db, DAY0, 2, quantity="100", price="100", rate="1", currency="EUR")
+    _position(db, DAY1, 2, quantity="100", price="110", rate="1", currency="EUR")
+    db.commit()
+    returns.build_portfolio_daily(db, person_id=1, end=DAY1)
+    db.commit()
+    return db
+
+
+def test_the_holdings_sum_to_the_portfolio_split(built: sqlite3.Connection) -> None:
+    """The identity that makes the per-holding view worth reading.
+
+    Every holding's contribution is a share of the same daily return and is
+    smoothed by the same factors, so they must add to the portfolio's own
+    figure. A per-holding table that does not reconcile is decoration.
+    """
+    whole = attribution.summarise(built, person_id=1)
+    parts = attribution.by_holding(built, person_id=1)
+    assert whole is not None and parts is not None
+    assert abs(parts.residual) < attribution.LINKING_TOLERANCE
+    assert parts.total == whole.total
+    by_source = sum((h.total for h in parts.holdings), D(0))
+    assert abs(by_source - (whole.local + whole.currency)) < attribution.LINKING_TOLERANCE
+
+
+def test_a_holding_shows_its_own_price_and_currency_legs(built: sqlite3.Connection) -> None:
+    """The lira fund's two legs, at the level a decision is made."""
+    parts = attribution.by_holding(built, person_id=1)
+    assert parts is not None
+    legs = {h.instrument: h for h in parts.holdings}
+    assert "ZTRY" in legs and "ZEUR" in legs
+    # The lira fund rose locally and lost it to the currency.
+    assert legs["ZTRY"].local > D(0)
+    assert legs["ZTRY"].currency < D(0)
+    # A euro holding has no currency leg at all, by construction.
+    assert legs["ZEUR"].currency == D(0)
+    assert legs["ZEUR"].local > D(0)
+
+
+def test_cash_is_its_own_line_rather_than_spread_across_holdings(
+    built: sqlite3.Connection,
+) -> None:
+    """A lira balance losing euro value is not something the funds did."""
+    from portfolio_tracker.core import returns
+
+    for when, rate in ((DAY0, "40"), (DAY1, "44")):
+        built.execute(
+            "INSERT INTO cash_daily (date, account_id, currency, balance_local, balance_eur, "
+            "fx_rate, idle_days, income_local, income_eur) VALUES (?, 1, 'TRY', '4400', ?, ?, "
+            "0, '0', '0')",
+            (when.isoformat(), D(4400) / D(rate), D(rate)),
+        )
+    built.commit()
+    returns.build_portfolio_daily(built, person_id=1, end=DAY1)
+    built.commit()
+    parts = attribution.by_holding(built, person_id=1)
+    assert parts is not None
+    cash_line = next(h for h in parts.holdings if h.instrument == attribution.CASH_KEY)
+    assert cash_line.currency < D(0)
+    assert cash_line.local == D(0)
+
+
+def test_the_units_are_stated_because_they_are_easy_to_misread(
+    built: sqlite3.Connection,
+) -> None:
+    """A holding that doubled while being 1% of the portfolio contributes one
+    point, not 100%. That distinction has to be said."""
+    parts = attribution.by_holding(built, person_id=1)
+    assert parts is not None
+    assert any("not each holding's own return" in c for c in parts.caveats)
+
+
+def test_no_history_reports_nothing(db: sqlite3.Connection) -> None:
+    assert attribution.by_holding(db, person_id=1) is None
+
+
+def test_the_api_reports_the_per_holding_split(built: sqlite3.Connection) -> None:
+    """Over the real pipeline, so the reconciliation means something."""
+    api_app.dependency_overrides[get_db] = lambda: built
+    api_app.dependency_overrides[get_writable_db] = lambda: built
+    try:
+        with TestClient(api_app) as client:
+            body = client.get("/api/returns").json()["attribution_by_holding"]
+    finally:
+        api_app.dependency_overrides.clear()
+
+    assert body["residual"] == pytest.approx(0.0, abs=1e-12)
+    assert "percentage points" in body["unit"]
+    assert {h["instrument"] for h in body["holdings"]} >= {"ZTRY", "ZEUR"}

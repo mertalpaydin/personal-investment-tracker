@@ -774,3 +774,86 @@ def test_concentration_names_which_holdings_a_company_is_reached_through(
     assert result.exit_code == 0, result.output
     assert "Acme Robotics C" in result.output
     assert "ACRO" in result.output and "ZGEQ" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Matching one company across files that spell it differently
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("one", "other"),
+    [
+        ("Nordwind Technologies AG", "NORDWIND TECHNOLOGIES"),
+        ("Acme Robotics Corp. - Class A", "Acme Robotics"),
+        ("Sakura Precision Co., Ltd.", "SAKURA PRECISION"),
+        ("Thornbury Retail PLC ORD", "Thornbury Retail"),
+        ("Kestrel Pharma N.V.", "Kestrel Pharma"),
+        ("Maple Ridge Mining A/S", "maple ridge mining"),
+        ("Iberia Energia S.A.", "IBERIA ENERGIA"),
+        ("Lumen Telecom Holdings", "Lumen Telecom"),
+    ],
+)
+def test_the_same_company_spelled_two_ways_is_one_issuer(one: str, other: str) -> None:
+    """Splitting one company in two makes concentration read LOWER than it is,
+    which is the direction nobody checks."""
+    assert look_through.normalise_issuer(one) == look_through.normalise_issuer(other)
+
+
+@pytest.mark.parametrize(
+    ("one", "other"),
+    [
+        ("Alderman Bank", "Alderman Insurance"),
+        ("Nordic Grid", "Nordic Grid Services"),
+        # A company genuinely called "Class Editori" keeps its first word: the
+        # trim only runs from the end, and stops at the first unknown token.
+        ("Class Editori", "Editori"),
+        ("Halcyon Semiconductor", "Halcyon Software"),
+    ],
+)
+def test_two_different_companies_are_not_merged(one: str, other: str) -> None:
+    """The dangerous direction. Merging two issuers OVERSTATES concentration,
+    and an overstated concentration figure gets acted on."""
+    assert look_through.normalise_issuer(one) != look_through.normalise_issuer(other)
+
+
+def test_a_name_that_is_only_a_legal_form_survives() -> None:
+    """The trim never empties a name; one token is always kept."""
+    assert look_through.normalise_issuer("Holdings") == "holdings"
+    assert look_through.normalise_issuer("AG") == "ag"
+
+
+def test_an_identifier_still_wins_over_the_name(db: sqlite3.Connection) -> None:
+    """An ISIN is proof; a normalised name is a good guess. Two companies that
+    happen to normalise alike must stay apart when the files identify them."""
+    assert look_through._underlying_key("XX0000000101", "Whatever Ltd") == "id:XX0000000101"
+    assert look_through._underlying_key(None, "Whatever Ltd") == "name:whatever"
+
+
+def test_concentration_merges_across_differently_spelled_files(
+    db: sqlite3.Connection,
+) -> None:
+    """End to end: the same issuer, two files, no ISIN in either."""
+    for iid, name in ((1, "Nordwind Technologies AG"), (2, "NORDWIND TECHNOLOGIES CORP")):
+        db.execute(
+            "DELETE FROM fund_holding WHERE instrument_id = ? AND as_of = ?",
+            (iid, PUBLISHED.isoformat()),
+        )
+        db.execute(
+            "UPDATE fund_holding_set SET holdings = 1, weight_sum = '1' "
+            "WHERE instrument_id = ? AND as_of = ?",
+            (iid, PUBLISHED.isoformat()),
+        )
+        db.execute(
+            "INSERT INTO fund_holding (instrument_id, as_of, line_no, name, identifier, "
+            "weight, currency) VALUES (?, ?, 1, ?, NULL, '1', 'EUR')",
+            (iid, PUBLISHED.isoformat(), name),
+        )
+    db.commit()
+
+    result = look_through.concentration(db)
+    nordwind = [u for u in result.underlyings if "NORDWIND" in u.name.upper()]
+    assert len(nordwind) == 1, "one company, not two"
+    # ZGEQ is 5,000 and ZBNK 1,000, so both funds' whole value lands on it.
+    assert nordwind[0].value_eur == D(6000)
+    assert {key for key, _ in nordwind[0].via} == {"ZGEQ", "ZBNK"}
