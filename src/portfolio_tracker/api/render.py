@@ -103,7 +103,12 @@ def _cls(value: object) -> str:
     return "gain" if value > ZERO else "loss"
 
 
-def render_dashboard(conn: sqlite3.Connection, *, person_id: int = 1) -> str:
+def render_dashboard(
+    conn: sqlite3.Connection, *, person_id: int = 1, monthly_eur: Decimal | None = None
+) -> str:
+    """Render the page. ``monthly_eur`` overrides the measured contribution
+    rate in the projection, which is the one input the owner is most likely
+    to want to change and the only one the page takes from the URL."""
     latest = conn.execute(
         "SELECT * FROM portfolio_daily WHERE person_id = ? ORDER BY date DESC LIMIT 1",
         (person_id,),
@@ -200,7 +205,7 @@ def render_dashboard(conn: sqlite3.Connection, *, person_id: int = 1) -> str:
     )
 
     parts.append(_goal_section(conn, person_id))
-    parts.append(_projection_section(conn, person_id))
+    parts.append(_projection_section(conn, person_id, monthly_eur))
 
     parts.append("<h2>Return</h2><div class='cards'>")
     parts.append(_card("Time-weighted", _pct(summary.twr)))
@@ -583,10 +588,12 @@ def _scenario_section(conn: sqlite3.Connection, person_id: int) -> str:
     )
 
 
-def _projection_section(conn: sqlite3.Connection, person_id: int) -> str:
+def _projection_section(
+    conn: sqlite3.Connection, person_id: int, monthly_eur: Decimal | None = None
+) -> str:
     """When the target is reached, across stated returns and the holdings' own history."""
     try:
-        result = projection.project(conn, person_id=person_id)
+        result = projection.project(conn, person_id=person_id, monthly_eur=monthly_eur)
     except (LookupError, projection.ProjectionError):
         return ""
     if result.already_reached:
@@ -613,13 +620,23 @@ def _projection_section(conn: sqlite3.Connection, person_id: int) -> str:
         # The contribution figure is a measurement of the owner's own behaviour
         # and is the input they are most likely to want to change.
         f"<p class='note'>{html.escape(result.contributions.sentence)}</p>",
-        "<form class='goal' onsubmit=\"event.preventDefault();"
-        "location.search='?monthly='+this.monthly.value\">"
+        # A plain GET form. The previous version was a stepped number input
+        # posting to a query parameter the page did not read -- so the browser
+        # rejected the measured value for not landing on a step boundary, and
+        # had it submitted, nothing would have changed. `step='any'` because a
+        # measured contribution is EUR 2,145.17, not a round number.
+        "<form class='goal' method='get'>"
+        f"<input type='hidden' name='person' value='{person_id}'>"
         "<label for='monthly'>Assume I save</label>"
-        f"<input id='monthly' name='monthly' type='number' step='50' min='0' "
+        f"<input id='monthly' name='monthly' type='number' step='any' min='0' "
         f"value='{result.contributions.monthly_eur:f}'>"
         "<button type='submit'>EUR a month</button>"
-        "</form>",
+        + (
+            " <a class='note' href='?'>reset to measured</a>"
+            if result.contributions.source == "supplied"
+            else ""
+        )
+        + "</form>",
     ]
 
     if result.bootstrap is not None:
@@ -814,7 +831,10 @@ def _goal_section(conn: sqlite3.Connection, person_id: int) -> str:
         "body:JSON.stringify({target_eur:this.target.value})})"
         '.then(r=>r.ok?location.reload():r.json().then(e=>alert(e.detail)))">'
         "<label for='target'>Change target</label>"
-        f"<input id='target' name='target' type='number' min='1' step='100' "
+        # `step='any'`. With min=1 and step=100 the browser only accepted
+        # 1, 101, 201... so a target of 250,000 was rejected as invalid and the
+        # form could never be saved.
+        f"<input id='target' name='target' type='number' min='0.01' step='any' "
         f"value='{state.target_eur:f}'>"
         "<button type='submit'>Save</button>"
         "</form>"

@@ -173,6 +173,11 @@ class Underlying:
     #: the whole point: "EUR 4,120 of Nordwind, via ZGEQ and ZSEM".
     via: tuple[tuple[str, Decimal], ...]
 
+    #: The distinct securities combined into this issuer -- share classes, ADRs,
+    #: differently-spelled names. More than one means a judgement was made, and
+    #: printing them is what makes a wrong judgement visible.
+    securities: tuple[str, ...] = ()
+
 
 @dataclass
 class Concentration:
@@ -454,20 +459,7 @@ def concentration(
         )
 
     total = coverage.total_eur
-    ranked = sorted(
-        (
-            Underlying(
-                key=key,
-                name=names[key],
-                identifier=identifiers[key],
-                value_eur=value,
-                weight=value / total if total > ZERO else ZERO,
-                via=tuple(sorted(via[key].items(), key=lambda kv: (-kv[1], kv[0]))),
-            )
-            for key, value in values.items()
-        ),
-        key=lambda u: (-u.value_eur, u.name),
-    )
+    ranked = _merge_by_issuer(values, names, identifiers, via, total)
 
     caveats = []
     if coverage.quote_only_eur > ZERO and total > ZERO:
@@ -481,6 +473,14 @@ def concentration(
         "Weights are against total holdings, so an unresolved fund dilutes every figure "
         "rather than inflating it."
     )
+    combined = [u for u in ranked if len(u.securities) > 1]
+    if combined:
+        caveats.append(
+            "Share classes and differently-spelled names are combined into one issuer -- "
+            f"{', '.join(u.name for u in combined[:4])}"
+            + (f" and {len(combined) - 4} more" if len(combined) > 4 else "")
+            + ". Each line lists the securities it merged, so a wrong merge is visible."
+        )
     for entry in coverage.stale:
         caveats.append(
             f"{entry.import_key}'s composition is {entry.stale_days} days old at this valuation"
@@ -548,6 +548,67 @@ def normalise_issuer(name: str) -> str:
     while len(tokens) > 1 and (tokens[-1] in LEGAL_SUFFIXES or tokens[-1] in CLASS_MARKERS):
         tokens.pop()
     return " ".join(tokens) or cleaned.strip()
+
+
+def _merge_by_issuer(
+    values: dict[str, Decimal],
+    names: dict[str, str],
+    identifiers: dict[str, str | None],
+    via: dict[str, dict[str, Decimal]],
+    total: Decimal,
+) -> list[Underlying]:
+    """Combine securities into issuers, then rank them.
+
+    Two passes, and the second one is the point. Grouping on the identifier is
+    right for matching *securities* across files and wrong for the question
+    concentration answers, because **an ISIN identifies a security, not a
+    company**. Alphabet's A and C shares have different ISINs; so does any
+    company held both directly and as an ADR inside a fund.
+
+    Left at one pass, a portfolio holding Alphabet directly and through two
+    funds reported it on three separate lines -- the largest showing 31.8% where
+    the true exposure was 36.2%. Under-reporting concentration is the direction
+    nobody checks, because the number looks reassuring.
+
+    So groups whose names normalise alike are merged, and every merged line
+    carries the securities that went into it. That visibility is the safeguard:
+    the merge is a judgement about names, and a judgement nobody can inspect is
+    one that gets trusted further than it should be.
+    """
+    canonical: dict[str, str] = {}
+    by_issuer: dict[str, str] = {}
+    # Largest first, so the surviving line takes the biggest holding's name and
+    # the result does not depend on which file happened to be read first.
+    for key in sorted(values, key=lambda k: (-values[k], k)):
+        issuer = normalise_issuer(names[key])
+        canonical[key] = by_issuer.setdefault(issuer, key)
+
+    merged_value: dict[str, Decimal] = {}
+    merged_via: dict[str, dict[str, Decimal]] = {}
+    merged_ids: dict[str, list[str]] = {}
+    for key, value in values.items():
+        target = canonical[key]
+        merged_value[target] = merged_value.get(target, ZERO) + value
+        holders = merged_via.setdefault(target, {})
+        for holder, amount in via[key].items():
+            holders[holder] = holders.get(holder, ZERO) + amount
+        merged_ids.setdefault(target, []).append(identifiers[key] or names[key])
+
+    return sorted(
+        (
+            Underlying(
+                key=key,
+                name=names[key],
+                identifier=identifiers[key],
+                value_eur=value,
+                weight=value / total if total > ZERO else ZERO,
+                via=tuple(sorted(merged_via[key].items(), key=lambda kv: (-kv[1], kv[0]))),
+                securities=tuple(sorted(set(merged_ids[key]))),
+            )
+            for key, value in merged_value.items()
+        ),
+        key=lambda u: (-u.value_eur, u.name),
+    )
 
 
 def _underlying_key(identifier: object, name: object) -> str:

@@ -857,3 +857,81 @@ def test_concentration_merges_across_differently_spelled_files(
     # ZGEQ is 5,000 and ZBNK 1,000, so both funds' whole value lands on it.
     assert nordwind[0].value_eur == D(6000)
     assert {key for key, _ in nordwind[0].via} == {"ZGEQ", "ZBNK"}
+
+
+# ---------------------------------------------------------------------------
+# One company, several securities
+# ---------------------------------------------------------------------------
+
+
+def test_share_classes_of_one_company_are_one_exposure(db: sqlite3.Connection) -> None:
+    """An ISIN identifies a SECURITY, not a company.
+
+    Found on the owner's real portfolio: Alphabet held directly as both A and C
+    shares, and again inside two funds. Grouping on the identifier alone put it
+    on three lines, the largest reading 31.8% where the true exposure was 36.2%.
+    Under-reporting concentration is the direction nobody checks, because the
+    number looks reassuring.
+    """
+    # A holding with no ISIN of its own, named as the export names it.
+    db.execute("UPDATE instrument SET name = 'Alphabet A', isin = NULL WHERE import_key = 'ACRO'")
+    for iid, line, name, isin in (
+        (1, 1, "ALPHABET INC CLASS A", "US02079K3059"),
+        (2, 1, "ALPHABET INC CLASS C", "US02079K1079"),
+    ):
+        db.execute(
+            "DELETE FROM fund_holding WHERE instrument_id = ? AND as_of = ?",
+            (iid, PUBLISHED.isoformat()),
+        )
+        db.execute(
+            "UPDATE fund_holding_set SET holdings = 1, weight_sum = '1' "
+            "WHERE instrument_id = ? AND as_of = ?",
+            (iid, PUBLISHED.isoformat()),
+        )
+        db.execute(
+            "INSERT INTO fund_holding (instrument_id, as_of, line_no, name, identifier, "
+            "weight, currency) VALUES (?, ?, ?, ?, ?, '1', 'USD')",
+            (iid, PUBLISHED.isoformat(), line, name, isin),
+        )
+    db.commit()
+
+    result = look_through.concentration(db)
+    alphabet = [u for u in result.underlyings if "ALPHABET" in u.name.upper()]
+    assert len(alphabet) == 1, "one company, however many share classes"
+
+    # ZGEQ 5,000 + ZBNK 1,000 through the funds, plus the 1,000 direct holding.
+    assert alphabet[0].value_eur == D(7000)
+    assert {key for key, _ in alphabet[0].via} == {"ZGEQ", "ZBNK", "ACRO"}
+
+
+def test_a_merged_line_lists_what_it_merged(db: sqlite3.Connection) -> None:
+    """The merge is a judgement about names, and a judgement nobody can inspect
+    is one that gets trusted further than it should be."""
+    db.execute(
+        "UPDATE fund_holding SET name = 'Nordwind Technologies AG', identifier = 'XX1' "
+        "WHERE instrument_id = 1 AND line_no = 1"
+    )
+    db.execute(
+        "UPDATE fund_holding SET name = 'NORDWIND TECHNOLOGIES', identifier = 'XX2' "
+        "WHERE instrument_id = 2 AND line_no = 1"
+    )
+    db.commit()
+
+    result = look_through.concentration(db)
+    nordwind = next(u for u in result.underlyings if "NORDWIND" in u.name.upper())
+    assert nordwind.securities == ("XX1", "XX2")
+    assert any("securities it merged" in c for c in result.caveats)
+
+
+def test_a_single_security_issuer_reports_just_itself(db: sqlite3.Connection) -> None:
+    """No merge happened, so nothing is claimed about one."""
+    result = look_through.concentration(db)
+    solo = next(u for u in result.underlyings if len(u.securities) == 1)
+    assert solo.securities[0]
+
+
+def test_two_different_companies_still_stay_apart(db: sqlite3.Connection) -> None:
+    """Merging two issuers OVERSTATES concentration, which does get acted on."""
+    result = look_through.concentration(db)
+    names = {look_through.normalise_issuer(u.name) for u in result.underlyings}
+    assert len(names) == len(result.underlyings), "no two lines share a normalised name"

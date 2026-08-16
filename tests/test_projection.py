@@ -532,3 +532,57 @@ def test_show_still_offers_the_zero_return_answer(db_file) -> None:  # type: ign
 def test_set_rejects_a_nonsense_target(db_file) -> None:  # type: ignore[no-untyped-def]
     assert runner.invoke(cli_app, ["goal", "set", "lots", "--db", str(db_file)]).exit_code == 1
     assert runner.invoke(cli_app, ["goal", "set", "0", "--db", str(db_file)]).exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# The page controls, which were broken
+# ---------------------------------------------------------------------------
+
+
+def test_the_contribution_box_can_actually_be_saved(client: TestClient) -> None:
+    """It could not.
+
+    The input carried ``step='50'`` while the measured figure is EUR 2,145.17,
+    so the browser rejected the value already in the box; and the form posted to
+    a query parameter the page did not read, so submitting would have changed
+    nothing anyway.
+    """
+    import re
+
+    page = client.get("/").text
+    box = re.search(r"id='monthly'[^>]*", page).group(0)  # type: ignore[union-attr]
+    assert "step='any'" in box, "a measured contribution is not a round number"
+
+    changed = client.get("/", params={"monthly": "3000"}).text
+    assert re.search(r"id='monthly'[^>]*value='3000", changed)
+    assert "as you specified" in changed
+    assert "reset to measured" in changed
+
+
+def test_overriding_the_contribution_moves_the_dates(client: TestClient) -> None:
+    """The control has to change the answer, not just the box."""
+    import re
+
+    def zero_rate_date(text: str) -> str | None:
+        found = re.search(r"<tr><td>0% a year</td><td>([\d-]+)</td>", text)
+        return found.group(1) if found else None
+
+    measured = zero_rate_date(client.get("/").text)
+    saving_more = zero_rate_date(client.get("/", params={"monthly": "99999"}).text)
+    assert measured and saving_more
+    assert saving_more < measured
+
+
+def test_the_target_box_accepts_a_round_number(client: TestClient) -> None:
+    """It did not.
+
+    ``min='1' step='100'`` makes the valid values 1, 101, 201... so a target of
+    250,000 was rejected by the browser with "closest valid values are 249,901
+    or 250,001" and the form could never be submitted.
+    """
+    import re
+
+    box = re.search(r"id='target'[^>]*", client.get("/").text).group(0)  # type: ignore[union-attr]
+    assert "step='any'" in box
+    assert "step='100'" not in box
+    assert client.put("/api/goal", json={"target_eur": "250000"}).status_code == 200

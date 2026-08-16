@@ -1506,10 +1506,18 @@ def write_goal(
 def dashboard(
     conn: sqlite3.Connection = Depends(get_db),
     person_id: int = Query(1, alias="person"),
+    monthly: Decimal | None = Query(
+        None, ge=0, description="Override the contribution the projection assumes"
+    ),
 ) -> HTMLResponse:
-    """A server-rendered page. No build step, no JavaScript framework."""
+    """A server-rendered page. No build step, no JavaScript framework.
+
+    ``monthly`` is the one figure the page takes from the URL: a measured
+    savings rate is a suggestion, and the owner is the authority on what they
+    actually plan to keep doing.
+    """
     try:
-        return HTMLResponse(render_dashboard(conn, person_id=person_id))
+        return HTMLResponse(render_dashboard(conn, person_id=person_id, monthly_eur=monthly))
     except HTTPException:
         raise
     except LookupError as exc:
