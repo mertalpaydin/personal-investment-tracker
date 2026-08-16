@@ -141,6 +141,9 @@ def test_non_positions_csv_is_ignored_by_rule_2() -> None:
         ("call +49 170 1234567", "PHONE_DE"),
         ("Steuer-ID: 12345678901", "STEUER_ID"),
         ("contact someone.else@gmail.com for details", "EMAIL"),
+        # The package-spec exemption must not become a hole: a right-hand side
+        # that is a domain is still an address, whatever precedes the @.
+        ("maintainer is someone@company.com", "EMAIL"),
     ],
 )
 def test_content_patterns_are_caught(text: str, expected: str) -> None:
@@ -152,6 +155,12 @@ def test_content_patterns_are_caught(text: str, expected: str) -> None:
     [
         "the owner's address is mertalpaydin.91@gmail.com",  # allowlisted
         "write to someone@example.com for the docs",  # documentation placeholder
+        # A package at a version, not an address. npm writes dependencies this
+        # way and the shape is identical to an email until you read the
+        # right-hand side.
+        "https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/",
+        "pinned to react@18.2.0",
+        "pkg@1.2.3-rc1 is the release candidate",
         "Teilfreistellung is 30% for equity funds",
         "the Sparerpauschbetrag is EUR 1,000 per person",
         "EGV2 holds 196.3038 units",

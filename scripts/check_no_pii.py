@@ -179,6 +179,13 @@ CONTENT_DENY: tuple[tuple[re.Pattern[str], str, str], ...] = (
 
 EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.]{2,}\b")
 
+# `uplot@1.6.32` is a package at a version, not somebody's address. npm writes
+# dependencies that way and the pattern is indistinguishable from an email
+# without looking at the right-hand side, so the exemption is written as
+# narrowly as it can be: a bare dotted number, nothing else. `name@1.2.3-rc1`
+# still matches, `name@company.com` does not.
+PACKAGE_SPEC_RE = re.compile(r"^[\w.+-]+@\d+\.\d+(?:\.\d+)?(?:[-.][\w.]+)?$")
+
 # Substrings that only appear in genuine German broker paperwork.
 FINGERPRINTS = (
     "Steuerbescheinigung",
@@ -209,6 +216,8 @@ def check_content(path: str, text: str) -> Iterator[Finding]:
                 yield Finding(path, lineno, code, message)
         for match in EMAIL_RE.finditer(line):
             address = match.group(0)
+            if PACKAGE_SPEC_RE.match(address):
+                continue
             if address.lower() not in ALLOWED_EMAILS and not address.endswith("@example.com"):
                 yield Finding(
                     path,
