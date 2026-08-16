@@ -559,10 +559,12 @@ def serve(
     host: Annotated[str, typer.Option("--host")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port")] = 8000,
 ) -> None:
-    """Serve the JSON API and the debug page.
+    """Serve the app: the page, the JSON API, and the debug page at /debug.
 
-    Read-only. Every write in this system goes through a reviewed CLI command,
-    so there is deliberately no HTTP path to the ledger.
+    The HTTP surface writes. Every write either records a decision the person
+    made on the page, or recomputes something derived -- and each one names the
+    change it would make before making it. This reverses an earlier decision
+    that all writes go through a reviewed CLI command; see ADR 0010.
     """
     if not Path(db).exists():
         # Better here than as a 503 on the first request: the person who typed
@@ -574,6 +576,7 @@ def serve(
         import uvicorn
 
         from portfolio_tracker.api import app as api
+        from portfolio_tracker.api import deps
     except ImportError as exc:
         typer.secho(
             "the API extras are not installed; run `uv sync --extra api`",
@@ -582,13 +585,11 @@ def serve(
         )
         raise typer.Exit(code=1) from exc
 
-    api.DB_PATH = Path(db)
     # The page's drop folder sits beside the database, so a second database in
     # another directory does not quietly share the first one's incoming files.
-    api.INCOMING_DIR = Path(db).parent / "incoming"
-    api.INCOMING_DIR.mkdir(parents=True, exist_ok=True)
-    typer.echo(f"serving {db} at http://{host}:{port}/  (debug page at /)")
-    typer.echo(f"drop holdings files in {api.INCOMING_DIR}")
+    api.configure(db_path=Path(db))
+    typer.echo(f"serving {db} at http://{host}:{port}/  (debug page at /debug)")
+    typer.echo(f"drop holdings files in {deps.INCOMING_DIR}")
     uvicorn.run(api.app, host=host, port=port, log_level="warning")
 
 

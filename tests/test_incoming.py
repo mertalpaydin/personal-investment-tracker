@@ -24,6 +24,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from portfolio_tracker.api import app as api_module
+from portfolio_tracker.api import deps as api_deps
 from portfolio_tracker.api.app import app as api_app
 from portfolio_tracker.api.app import get_db, get_writable_db
 from portfolio_tracker.core import incoming
@@ -220,11 +221,11 @@ def test_two_imports_in_the_same_second_do_not_clobber_each_other(
 def client(db: sqlite3.Connection, folder: Path) -> Iterator[TestClient]:
     api_app.dependency_overrides[get_db] = lambda: db
     api_app.dependency_overrides[get_writable_db] = lambda: db
-    previous = api_module.INCOMING_DIR
-    api_module.INCOMING_DIR = folder
+    previous = api_deps.INCOMING_DIR
+    api_deps.INCOMING_DIR = folder
     with TestClient(api_app) as test_client:
         yield test_client
-    api_module.INCOMING_DIR = previous
+    api_deps.INCOMING_DIR = previous
     api_app.dependency_overrides.clear()
 
 
@@ -306,7 +307,7 @@ def test_notes_left_in_the_folder_are_not_reported_as_data(folder: Path) -> None
 
 
 def _page(db: sqlite3.Connection, folder: Path) -> str:
-    from portfolio_tracker.api import app as module
+    from portfolio_tracker.api import deps as module
     from portfolio_tracker.api.render import render_dashboard
 
     db.execute(

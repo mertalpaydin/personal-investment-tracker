@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Portfolio Tracker</title>
+<!--
+  Everything this page loads is served from this origin. No CDN, no font
+  host, no analytics. The app is expected to work on a laptop with the
+  wifi off, because the database it reads is already on that laptop.
+-->
+<link rel="stylesheet" href="/static/vendor/uPlot.min.css">
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#128200;</text></svg>">
+<script src="/static/vendor/uPlot.iife.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="#/">Portfolio</a>
+  <nav id="nav"></nav>
+  <div class="topbar-right">
+    <span id="asof" class="asof"></span>
+  </div>
+</header>
+
+<!--
+  The alert strip. This is how somebody who never opens a terminal finds out
+  that something needs doing: prices behind, proposals waiting, figures stale.
+  Each alert links to the screen that fixes it. Populated by js/alerts.js.
+-->
+<div id="alerts" class="alerts" hidden></div>
+
+<main id="view" class="view">
+  <p class="loading">Loading&hellip;</p>
+</main>
+
+<footer class="footer">
+  <p>
+    Planning figures only. Your bank&rsquo;s annual tax certificate
+    (<span lang="de">Steuerbescheinigung</span>) is the authoritative document.
+  </p>
+  <p>
+    <a href="/debug">Server-rendered debug page</a> &middot;
+    <a href="/docs">API reference</a>
+  </p>
+</footer>
+
+<script type="module" src="/static/js/main.js"></script>
+
+<noscript>
+  <p class="noscript">
+    This page needs JavaScript for its charts.
+    The <a href="/debug">server-rendered debug page</a> shows the same figures
+    as plain HTML.
+  </p>
+</noscript>
+
+</body>
+</html>

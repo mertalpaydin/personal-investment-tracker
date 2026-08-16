@@ -148,9 +148,7 @@ def main() -> int:
         print(problem, file=sys.stderr)
         return 1
 
-    api.DB_PATH = DB_PATH
-    api.INCOMING_DIR = INCOMING_DIR
-    INCOMING_DIR.mkdir(parents=True, exist_ok=True)
+    api.configure(db_path=DB_PATH, incoming_dir=INCOMING_DIR)
     port = _free_port(PREFERRED_PORT)
     url = f"http://{HOST}:{port}/"
     if port != PREFERRED_PORT:

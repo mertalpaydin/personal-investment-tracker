@@ -260,7 +260,6 @@ def test_out_of_scope_holdings_carry_their_reason(client: TestClient) -> None:
         "/api/positions",
         "/api/returns/series",
         "/api/pending",
-        "/",
         "/debug",
     ],
 )
@@ -291,9 +290,23 @@ def test_an_unbuilt_database_is_a_404_not_a_crash(empty_client: TestClient, path
 def test_the_debug_page_explains_itself_when_there_is_nothing_to_show(
     empty_client: TestClient,
 ) -> None:
-    response = empty_client.get("/")
+    response = empty_client.get("/debug")
     assert response.status_code == 404
     assert "rebuild" in response.text
+
+
+def test_the_app_shell_is_served_without_touching_the_database(
+    empty_client: TestClient,
+) -> None:
+    """`/` is a file, so an unbuilt database still gets a usable page.
+
+    The debug page above 404s here, correctly -- it has nothing to render. The
+    shell must not, because explaining *why* there is nothing is its job.
+    """
+    response = empty_client.get("/")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "Portfolio" in response.text
 
 
 # ---------------------------------------------------------------------------

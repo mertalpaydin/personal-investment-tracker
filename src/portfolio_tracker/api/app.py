@@ -19,10 +19,13 @@ from pathlib import Path
 from typing import Any, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from portfolio_tracker import __version__
+from portfolio_tracker.api import deps
+from portfolio_tracker.api.deps import configure, get_db, get_writable_db
 from portfolio_tracker.api.render import render_dashboard
 from portfolio_tracker.core import (
     attribution,
@@ -39,14 +42,20 @@ from portfolio_tracker.core import (
     valuation,
     vorabpauschale,
 )
-from portfolio_tracker.db.connection import DEFAULT_DB_PATH, connect, transaction
+from portfolio_tracker.db.connection import transaction
 from portfolio_tracker.money import ZERO
 
-DB_PATH = Path(DEFAULT_DB_PATH)
+#: Re-exported so `from portfolio_tracker.api.app import get_db` keeps working
+#: -- and, more importantly, keeps returning the *same function object* the
+#: routers depend on. `dependency_overrides` is keyed on identity.
+__all__ = ["app", "configure", "get_db", "get_writable_db"]
 
-#: The drop folder. Set alongside DB_PATH by `run.py` and `pt serve`, so the
-#: page and the database always describe the same installation.
-INCOMING_DIR = Path(incoming.DEFAULT_INCOMING)
+#: The installation these routes read. Owned by `deps` rather than declared
+#: here, because the routers in sibling modules need the same value and two
+#: module-level copies would drift the moment `configure()` moved one of them.
+#: Read as `deps.DB_PATH` / `deps.INCOMING_DIR` at call time, never bound into
+#: a local at import time.
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 class GoalUpdate(BaseModel):
@@ -73,35 +82,6 @@ class RejectRequest(BaseModel):
 
 class RebuildRequest(BaseModel):
     end: date | None = Field(default=None, description="Last valuation date; default today")
-
-
-def get_db() -> Any:
-    """One connection per request, read-only, closed on the way out.
-
-    The default, so that a route which only reports cannot write by accident.
-    A handful of endpoints take ``get_writable_db`` instead, and that choice is
-    visible in the signature rather than buried in the body.
-    """
-    conn = connect(DB_PATH, read_only=True, same_thread=False)
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-
-def get_writable_db() -> Any:
-    """The writable connection, taken by the four endpoints that need it.
-
-    Those four are the goal target, confirming a proposal, rejecting one, and
-    the rebuild. Everything else in this module reports rather than records,
-    and gets ``get_db``. Keeping the two separate means write access is
-    something a route asks for, not something it inherits.
-    """
-    conn = connect(DB_PATH, same_thread=False)
-    try:
-        yield conn
-    finally:
-        conn.close()
 
 
 app = FastAPI(
@@ -1193,7 +1173,7 @@ def incoming_files(conn: sqlite3.Connection = Depends(get_db)) -> dict[str, Any]
     attach one issuer's constituents to another fund without erroring anywhere.
     The person chooses, with the evidence in front of them.
     """
-    found = incoming.scan(INCOMING_DIR)
+    found = incoming.scan(deps.INCOMING_DIR)
     funds = [
         {"instrument": r["import_key"], "name": r["name"]}
         for r in conn.execute(
@@ -1201,7 +1181,7 @@ def incoming_files(conn: sqlite3.Connection = Depends(get_db)) -> dict[str, Any]
         )
     ]
     return {
-        "folder": str(INCOMING_DIR),
+        "folder": str(deps.INCOMING_DIR),
         "files": [
             {
                 "name": f.name,
@@ -1252,7 +1232,7 @@ def import_incoming(
                 name=request.name,
                 instrument=request.instrument,
                 as_of=request.as_of,
-                directory=INCOMING_DIR,
+                directory=deps.INCOMING_DIR,
             )
     except (ValueError, FileNotFoundError) as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -1684,7 +1664,6 @@ def write_goal(
     return {"target_eur": _decimal(stored)}
 
 
-@app.get("/", response_class=HTMLResponse)
 @app.get("/debug", response_class=HTMLResponse)
 def dashboard(
     conn: sqlite3.Connection = Depends(get_db),
@@ -1693,9 +1672,13 @@ def dashboard(
         None, ge=0, description="Override the contribution the projection assumes"
     ),
 ) -> HTMLResponse:
-    """A server-rendered page. No build step, no JavaScript framework.
+    """The server-rendered page, kept as the ground truth behind the app.
 
-    ``monthly`` is the one figure the page takes from the URL: a measured
+    It answers without JavaScript, without charts and without a router, which
+    makes it the thing to open when the app itself looks wrong: if a figure
+    differs between here and the main page, the bug is in the front end.
+
+    ``monthly`` is the one figure this page takes from the URL: a measured
     savings rate is a suggestion, and the owner is the authority on what they
     actually plan to keep doing.
     """
@@ -1705,6 +1688,39 @@ def dashboard(
         raise
     except LookupError as exc:
         return HTMLResponse(f"<p>{exc}</p>", status_code=404)
+
+
+# The app itself. Mounted last so nothing here can shadow an /api route, and
+# deliberately not `html=True` on a root mount: that would make StaticFiles
+# answer every unmatched path, turning a typo in an endpoint name into a
+# silent 200 with an HTML body.
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/", include_in_schema=False)
+def index() -> FileResponse:
+    """The application shell.
+
+    Serves a file and touches no database, which is the point: a database that
+    has not been built yet should produce a page that explains that, not a 503
+    from a dependency that ran before any code could catch it.
+
+    ``no-store`` because the shell is small and a stale one silently pins the
+    user to an old version of the front end after an update. The CSP is
+    belt-and-braces alongside the vendoring rule -- if a remote script ever
+    creeps into the page, it fails loudly here rather than working on a
+    developer's machine and failing on the owner's.
+    """
+    return FileResponse(
+        STATIC_DIR / "index.html",
+        media_type="text/html",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Security-Policy": (
+                "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
+            ),
+        },
+    )
 
 
 @app.exception_handler(sqlite3.OperationalError)

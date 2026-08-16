@@ -549,11 +549,11 @@ def test_the_contribution_box_can_actually_be_saved(client: TestClient) -> None:
     """
     import re
 
-    page = client.get("/").text
+    page = client.get("/debug").text
     box = re.search(r"id='monthly'[^>]*", page).group(0)  # type: ignore[union-attr]
     assert "step='any'" in box, "a measured contribution is not a round number"
 
-    changed = client.get("/", params={"monthly": "3000"}).text
+    changed = client.get("/debug", params={"monthly": "3000"}).text
     assert re.search(r"id='monthly'[^>]*value='3000", changed)
     assert "as you specified" in changed
     assert "reset to measured" in changed
@@ -567,8 +567,8 @@ def test_overriding_the_contribution_moves_the_dates(client: TestClient) -> None
         found = re.search(r"<tr><td>0% a year</td><td>([\d-]+)</td>", text)
         return found.group(1) if found else None
 
-    measured = zero_rate_date(client.get("/").text)
-    saving_more = zero_rate_date(client.get("/", params={"monthly": "99999"}).text)
+    measured = zero_rate_date(client.get("/debug").text)
+    saving_more = zero_rate_date(client.get("/debug", params={"monthly": "99999"}).text)
     assert measured and saving_more
     assert saving_more < measured
 
@@ -582,7 +582,7 @@ def test_the_target_box_accepts_a_round_number(client: TestClient) -> None:
     """
     import re
 
-    box = re.search(r"id='target'[^>]*", client.get("/").text).group(0)  # type: ignore[union-attr]
+    box = re.search(r"id='target'[^>]*", client.get("/debug").text).group(0)  # type: ignore[union-attr]
     assert "step='any'" in box
     assert "step='100'" not in box
     assert client.put("/api/goal", json={"target_eur": "250000"}).status_code == 200

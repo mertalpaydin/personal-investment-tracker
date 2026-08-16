@@ -690,10 +690,15 @@ def _projection_section(
 
 
 def _incoming_dir() -> Path:
-    """Read from the app module so `run.py` and the tests can point it elsewhere."""
-    from portfolio_tracker.api import app as api
+    """Read at call time so `run.py` and the tests can point it elsewhere.
 
-    return Path(api.INCOMING_DIR)
+    Imported inside the function rather than at module scope because `deps`
+    is what the app is configured through, and binding the value into a global
+    here would freeze whichever installation happened to be current at import.
+    """
+    from portfolio_tracker.api import deps
+
+    return Path(deps.INCOMING_DIR)
 
 
 def _attribution_section(conn: sqlite3.Connection, person_id: int) -> str:
