@@ -30,6 +30,7 @@ from portfolio_tracker.core import (
     goal,
     inbox,
     look_through,
+    projection,
     rebuild,
     returns,
     scenario,
@@ -967,6 +968,84 @@ def look_through_status(
             "Import a composition with `pt look-through import`. A fund with none is "
             "reported on its wrapper's own currency and sector, which is a listing fact."
         ),
+    }
+
+
+@app.get("/api/goal/projection")
+def goal_projection(
+    conn: sqlite3.Connection = Depends(get_db),
+    person_id: int = Query(1, alias="person"),
+    target: Decimal | None = Query(None, gt=0, description="Override the stored target"),
+    monthly: Decimal | None = Query(None, ge=0, description="Override the measured rate"),
+    years: int = Query(projection.HORIZON_YEARS, ge=1, le=50),
+    paths: int = Query(projection.DEFAULT_PATHS, ge=100, le=20000),
+) -> dict[str, Any]:
+    """When the target is reached, and what that answer depends on.
+
+    Two answers, neither a forecast. ``scenarios`` is a **sensitivity table**:
+    the reach date at each of several stated returns, so the spread shows how
+    much the answer rests on the assumption. ``bootstrap`` resamples this
+    portfolio's own daily returns, and carries its sample window in every
+    response because that window is the entire content of the claim.
+
+    The tool never picks a rate. A single projected date would be a number
+    nobody chose, presented as one somebody did.
+    """
+    try:
+        result = projection.project(
+            conn,
+            person_id=person_id,
+            target_eur=target,
+            monthly_eur=monthly,
+            horizon_years=years,
+            paths=paths,
+        )
+        observed = projection.observed_annual_return(conn, person_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except projection.ProjectionError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    bootstrap = None
+    if result.bootstrap is not None:
+        b = result.bootstrap
+        bootstrap = {
+            "paths": b.paths,
+            "block_days": b.block_days,
+            "sample": {
+                "days": b.sample_days,
+                "from": b.sample_start.isoformat(),
+                "to": b.sample_end.isoformat(),
+            },
+            "earliest_decile": b.earliest_decile.isoformat() if b.earliest_decile else None,
+            "median": b.median.isoformat() if b.median else None,
+            "latest_decile": b.latest_decile.isoformat() if b.latest_decile else None,
+            "never_reached_pct": _decimal(b.never_reached_pct),
+            "caveats": b.caveats,
+        }
+
+    return {
+        "as_of": result.as_of.isoformat(),
+        "target_eur": _decimal(result.target_eur),
+        "current_eur": _decimal(result.current_eur),
+        "monthly_contribution_eur": _decimal(result.monthly_contribution_eur),
+        "horizon_years": result.horizon_years,
+        "already_reached": result.already_reached,
+        "basis": "a sensitivity table over stated returns; the tool chooses none of them",
+        "scenarios": [
+            {
+                "annual_return": _decimal(s.annual_return),
+                "reached_on": s.reached_on.isoformat() if s.reached_on else None,
+                "months": s.months,
+                "value_at_horizon_eur": _decimal(s.value_at_horizon_eur),
+            }
+            for s in result.scenarios
+        ],
+        # Context, deliberately not one of the scenarios: what this portfolio
+        # has done is history, not a rate anybody should plan on.
+        "observed_annual_return": _decimal(observed),
+        "bootstrap": bootstrap,
+        "caveats": result.caveats,
     }
 
 

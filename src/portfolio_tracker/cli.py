@@ -19,6 +19,7 @@ from portfolio_tracker import (
     __version__,
     cli_accounts,
     cli_flows,
+    cli_goal,
     cli_look_through,
     cli_scenario,
     cli_vorabpauschale,
@@ -69,6 +70,7 @@ app.add_typer(cli_accounts.app, name="accounts")
 app.add_typer(cli_look_through.app, name="look-through")
 app.add_typer(cli_vorabpauschale.app, name="vorabpauschale")
 app.add_typer(cli_scenario.app, name="scenario")
+app.add_typer(cli_goal.app, name="goal")
 
 DbPath = Annotated[Path, typer.Option("--db", help="Database file.")]
 

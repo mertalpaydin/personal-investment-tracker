@@ -128,7 +128,7 @@ def progress(conn: sqlite3.Connection, *, person_id: int = 1) -> GoalProgress:
                 raw = remaining / monthly
                 if raw <= Decimal(MAX_PROJECTION_YEARS * 12):
                     months = int(raw.to_integral_value(rounding="ROUND_CEILING"))
-                    projected = _add_months(as_of, months)
+                    projected = add_months(as_of, months)
                     caveats.append(
                         "The projected date assumes contributions continue at that rate "
                         "and counts no investment return at all. It is an extrapolation "
@@ -159,7 +159,7 @@ def progress(conn: sqlite3.Connection, *, person_id: int = 1) -> GoalProgress:
     )
 
 
-def _add_months(start: date, months: int) -> date:
+def add_months(start: date, months: int) -> date:
     """Calendar-correct month addition, clamping to the end of a short month."""
     total = start.month - 1 + months
     year = start.year + total // 12

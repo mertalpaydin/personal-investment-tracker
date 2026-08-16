@@ -1,8 +1,8 @@
-# v1 → v2 handover
+# Handover
 
-**Status: v2 complete.** 675 tests, `ruff` + `mypy --strict` + PII guard
-clean, `pt doctor` reporting 0 errors on both the real data and the synthetic
-corpus.
+**Status: v2 complete** (`0.2.0`, schema 10). 705 tests, `ruff` +
+`mypy --strict` + PII guard clean, `pt doctor` reporting 0 errors on both the
+real data and the synthetic corpus.
 
 **Every item on the v1 v2-list is closed**, four built and one declined:
 
@@ -19,14 +19,21 @@ corpus.
 4. **Tax scenarios** (item 5), scoped to today's prices and refusing the
    market forecast the original design specified.
    [ADR 0008](adr/0008-tax-scenarios-without-forecasting.md).
+5. **Goal projection**, added afterwards at the owner's request. ADR 0008's
+   refusal to forecast turned out to be over-generalised: *"when do I reach the
+   target?"* is inherently about the future, and assuming zero return is not
+   neutral, it is wrong in a known direction.
+   [ADR 0009](adr/0009-goal-projection-without-a-forecast.md).
 
 Item 2 (broker cash-flow import) was **declined by the owner**, not dropped for
 technical reasons. It remains the highest-value item on §6 if a source is ever
 found; the machinery is built and would simply stop guessing.
 
-Schema version 10. Items 4 and 5 needed no migration at all — every column they
-fill was declared in `0001_core` and never written. §8 to §11 below have what
-each one changed.
+Items 4, 5 and the goal projection needed no migration at all — every column they
+fill was declared in `0001_core` and never written.
+
+Per-feature notes are in [`v2-changes.md`](v2-changes.md); this document is the
+durable part — the invariants, the traps and how to work here.
 
 This document is for whoever builds the rest. It says what exists, what it rests
 on, what is deliberately absent, and which mistakes have already been made here
@@ -39,8 +46,9 @@ so they are not made again.
 | | |
 |---|---|
 | [`README.md`](../README.md) | What the project is and why. Its *Known gaps* section is honest and current. |
-| [`docs/adr/`](adr/) | Six decisions, each written from measurements against the real export. **0001 matters most; 0006 is the one to read on how a decision record can go wrong.** |
+| [`docs/adr/`](adr/) | Nine decisions, each written from measurements against the real export. **0001 matters most; 0006 is the one to read on how a decision record can go wrong.** |
 | [`docs/reference/`](reference/) | The pre-existing AI-written brief and spec, sanitised, with an honesty banner. Design *history*, not a description of the code. Several of its assumptions were proved wrong. |
+| [`docs/v2-changes.md`](v2-changes.md) | Per-feature notes for what v2 built, and the traps found building it. |
 | `src/portfolio_tracker/core/*.py` module docstrings | Each states what the module is for and which failure it prevents. They are not decoration; most of them record a bug that actually happened. |
 
 The three files at the repo root before v1 (`IMPLEMENTATION.md`,
@@ -86,6 +94,7 @@ CSV positions export
 | `core/vorabpauschale.py` | The January charge: proposed, booked, and relieved against the eventual gain. |
 | `core/look_through.py` | Economic exposure and concentration, on four labelled bases. Touches no return figure. |
 | `core/scenario.py` | Prices a sale before it is made. Read-only, today's prices, never a forecast. |
+| `core/projection.py` | When the goal is reached, across stated returns and the portfolio's own history. |
 | `ingest/look_through.py` | Issuer holdings files. Refuses an ambiguous weight unit rather than guessing. |
 | `core/inbox.py` | What confirming an inference *means*, for every front end. |
 | `core/rebuild.py` | Recompute the derived layer. Called by CLI and API alike. |
@@ -110,7 +119,8 @@ one.
 `report` · `tax` · `doctor` · `serve` · `flows {list,propose,confirm,reject,sale}` ·
 `accounts {list,add,set,import,accrue,propose-interest}` ·
 `look-through {import,list,show,exposure,concentration}` ·
-`vorabpauschale {forecast,propose,list,check}` · `scenario {sell,harvest}`
+`vorabpauschale {forecast,propose,list,check}` · `scenario {sell,harvest}` ·
+`goal {show,set,project}`
 
 Plus [`run.py`](../run.py): one file, runnable from an IDE, that starts the
 server and opens a browser once it answers.
@@ -216,9 +226,14 @@ Written down because each cost real debugging time and none announced itself.
 
 ### Deferred from the original 45-table design (ADR 0003)
 
-~~ETF look-through~~ (built, ADR 0005, two tables) · Cariño attribution · Monte
-Carlo projection · LLM narration · what-if scenarios · peer scanning · news
-sentiment.
+**Built since:** ETF look-through (ADR 0005) · Cariño attribution (ADR 0006) ·
+what-if scenarios, scoped to tax (ADR 0008) · goal projection, scoped to stated
+assumptions and the portfolio's own history (ADR 0009).
+
+**Still absent, and deliberately:** LLM narration · peer scanning · news
+sentiment · Monte Carlo over *assumed market parameters* — as distinct from the
+resampling of observed returns that ADR 0009 does build. The difference is
+where the numbers come from, and it is the whole argument.
 
 ---
 
@@ -265,6 +280,12 @@ uv run python scripts/check_no_pii.py --all
 uv run python scripts/make_example_data.py --check
 ```
 
+**Versioning.** `pyproject.toml` and `__init__.py` carry the package version;
+git tags mark the milestones (`v1`, `v2`). The schema version is separate and
+lives in `schema_version` — the two move independently and the schema one is
+what `pt doctor` and `/api/health/data` report. Bump the package version when
+you close a milestone, and tag it, or `pt --version` stops meaning anything.
+
 **Privacy is the hard constraint.** No trade data and no personal information
 beyond the author's name and email may reach GitHub. Never `git add .` or
 `git add -A` without checking what it caught. `scripts/check_no_pii.py` runs as
@@ -282,205 +303,7 @@ against clean data.
 
 ---
 
-## 8. What v2 added: look-through
-
-Schema 9, two tables, one new CLI group, three API changes. ADR 0005 has the
-reasoning; this is what a maintainer needs to know.
-
-### The shape
-
-`fund_holding_set` is one row per (fund, publication date): source, raw weight
-sum, the unit the file used, a SHA-256 of the bytes. `fund_holding` is the
-lines, weights stored as **fractions of fund NAV**, converted exactly once at
-parse time. A composite FK with `ON DELETE CASCADE` means a set and its lines
-cannot come apart.
-
-Exposure is computed **on read**. There is no derived table, nothing to rebuild,
-and `pt look-through import` says so. Adding a composition changes what the API
-reports on the next request.
-
-### Four bases, and why the fourth exists
-
-`look_through` → `declared` → `direct` → `quote_only`. The last one is the v1
-answer, kept and named rather than hidden, because a fund reported on its
-wrapper's currency and a fund reported on its constituents' currencies are
-different claims and must not render alike. Every response carries `coverage`.
-
-`declared` is the old `economic_currency` column, which was dead metadata in v1.
-It applies to the currency dimension only — an assertion about currency says
-nothing about sector, and inventing one would be indistinguishable from evidence
-a week later.
-
-### Traps this added
-
-| Trap | What it does |
-|---|---|
-| **The weight unit** | `7.24` and `0.0724` are the same weight in two issuers' files. `auto` commits only when the sum is unmistakably near 1 or near 100, and otherwise refuses with both readings printed. This is the `41.5 → 0.00415` trap in a new place. |
-| **Normalising at import** | A file summing to 0.62 scaled silently to 1.0 destroys the evidence that it was ever partial. Raw weights and the raw sum are stored; the division happens on read and is reported. |
-| **Rows lost after import** | Delete lines from `fund_holding` and the remaining percentages still add to 100% of the *stored divisor*. Nothing downstream notices. `LOOK_THROUGH_ROWS_MISSING` and `LOOK_THROUGH_SUM_MISMATCH` compare the rows against what the file said it contained. |
-| **A composition dated after the valuation** | Would back-date today's holdings onto last year's exposure. `composition_date()` is bounded by the valuation date, not by today. |
-
-### Where to extend it
-
-Concentration groups on the identifier when a file supplies one and on the
-upper-cased name otherwise — an issuer-mapping table would improve it, and would
-be the first place to look if the figures seem low. Nothing yet uses constituent
-data for anything but exposure and concentration; overlap-adjusted risk,
-issuer-level limits and look-through Teilfreistellung checks are all now
-possible and none is built.
-
----
-
-## 9. What v2 added: return attribution
-
-Schema 10, one column, one module, two doctor checks. ADR 0006 has the
-reasoning and the correction it rests on; this is the operational summary.
-
-### Read the correction first
-
-The v1 handover — this document — said item 3 was "purely additive; the
-residual is already stored, so the test is that it goes to zero". It was not
-stored. `ret_local_contrib`, `ret_fx_contrib` and `ret_residual` had been
-columns since 0001 and were NULL on every row of every built database. ADR 0004
-said the API returned `linking_method`; it never did.
-
-The lesson is not about attribution. It is that **an ADR written at decision
-time can record an intention as an outcome, and a handover repeating it turns a
-plan into a fact.** If §5 or §6 of this document claims something exists, query
-for it before you plan around it. It took one `SELECT count(...)` to find this.
-
-### The shape
-
-`core/attribution.py` splits each day's portfolio return four ways and stores
-the parts as fractions of that day's opening basis. `build_portfolio_daily`
-writes them; nothing else does. The period figures are computed on read.
-
-| Term | What it is |
-|---|---|
-| `local` | Asset prices, in the currency each is quoted in |
-| `currency` | The opening capital, re-translated as rates moved |
-| `income` | Distributions and credited interest |
-| `unexplained` | The remainder: fills away from the close, fees, quantities that changed within a day |
-
-The convention matches the position-level split in ADR 0004 — local gain at
-today's rate, currency effect on the original capital — which is why there is
-**no cross term** to distribute.
-
-### The two things that would break quietly
-
-| Trap | What it does |
-|---|---|
-| **Naive chaining** | Daily contributions add; returns multiply. On this portfolio the gap is 11.1 points — 44.85% against 55.97% — on daily figures that are each correct. Cariño smoothing closes it to 6e-27, and `ATTRIBUTION_LINKING_RESIDUAL` checks that it stayed closed. |
-| **A remainder that absorbs a bug** | `unexplained` is computed as whatever is left, so a modelling error lands there silently and every identity still holds. Its *size* is the diagnostic: a caveat fires above 5% of the total, and the example corpus is pinned below 1%. |
-
-`ATTRIBUTION_TOTAL_DISAGREES_WITH_TWR` is the strongest check in the module:
-the unit series and the attribution compute the period return from different
-data and never consult each other, so agreement is evidence rather than
-tautology.
-
-### Where to extend it
-
-Attribution is portfolio-wide. Per-instrument and per-currency contributions
-are the obvious next cut and need no new storage — the daily terms are already
-computed per position and summed before being written, so the change is where
-the aggregation happens. Sector attribution needs look-through weights and is
-where the two v2 features would finally meet.
-
----
-
-## 10. What v2 added: the Vorabpauschale chain
-
-No migration. Every column this fills was declared in `0001_core` and written by
-nothing: `lot.vap_accumulated_eur`, `lot_disposal.vap_offset_eur`, and the whole
-`vorabpauschale` table. ADR 0007 has the reasoning.
-
-### What was actually missing
-
-v1 computed the charge (`tax.forecast_vorabpauschale`) and applied the relief
-(`tax.compute_disposal_tax`). Both ends were real and tested. Nothing connected
-them, so the charge reached no tax figure at all.
-
-### The half that is invisible when wrong
-
-A Vorabpauschale is taxed when charged. If it is not deducted from the gain when
-the fund is sold, **the same euros are taxed twice** — and both figures are
-individually correct, so nothing looks wrong until years later.
-
-`lots.py` gained a third transaction category, `ADJUSTING`, which changes a
-lot's basis without changing its quantity. Processed in the same chronological
-pass, so a January charge reaches only the lots open in January.
-
-| Trap | What it does |
-|---|---|
-| **Booking it as a DIVIDEND** | Tempting — both are income — and it credits cash that does not exist and reports a return the portfolio never earned. `type = 'VORABPAUSCHALE'` is ignored by the cash engine, the unit series and the attribution, and that silence is tested. |
-| **Storing the taxable figure** | The relief deducts the *gross* from the gain before Teilfreistellung, so storing the net silently halves it. The gross is stored and `tax.py` applies the exemption, exactly as for a real distribution. |
-| **Relief with nowhere to attach** | A charge booked when nothing is held is lost. Reported as `RebuildReport.orphan_vap` rather than carried onto a later purchase, which would invent relief the statute does not give. |
-| **`VAP_RELIEF_LOST`** | The doctor check for the above: every booked euro must sit on an open lot or have been claimed against a disposal. An error, not a warning. |
-
-### The stated convention
-
-The charge is stored per `(account, instrument, tax_year)`; the relief attaches
-to *lots*, which are derived. A ledger row cannot name a lot without pointing a
-fact at a derivation (invariant 8), so the charge is split **pro rata by
-quantity held**. It changes which future sale collects the relief, never how
-much exists. Selling part of a lot takes the same fraction of its relief.
-
-### Where to extend it
-
-Nothing schedules `pt vorabpauschale propose`; it is run by a person in January.
-A reminder — "the 2025 charge has not been proposed and it is February" — would
-be the obvious next step and needs no new data. The per-lot month pro-ration is
-lost in the aggregation, which is the one place the arithmetic is coarser than
-`forecast_vorabpauschale` can compute.
-
----
-
-## 11. What v2 added: tax scenarios
-
-No migration. `core/scenario.py` composes what already exists and writes
-nothing. ADR 0008 has the reasoning.
-
-### The scoping was the decision
-
-"What-if" is unbounded. The version the original 45-table design specified --
-Monte Carlo projection via block bootstrap -- would have undone four ADRs of
-refusing to invent data, and ADR 0003 had already cut it once.
-
-So: **the tax question, which has an exact answer, and not the market question,
-which does not.** Every figure is conditional on the last observed close, and a
-stale price is named rather than used as though it were today's. There is no
-assumed-return parameter anywhere, and adding one would be the single easiest
-way to make this tool dishonest.
-
-### Two properties hold it together
-
-| Property | Why it matters |
-|---|---|
-| **It agrees with the sale it models** | A scenario that mispredicts the disposal it describes is a wrong number with the authority of a computed one. `test_the_scenario_matches_what_actually_booking_the_sale_produces` books the sale for real, rebuilds, and compares to the cent. |
-| **The marginal figure is the answer** | The same gain costs nothing or 26.375% depending only on what the year's allowance absorbed. `sell()` computes the year with and without the sale and reports the difference -- deliberately a difference of two rounded yearly bills, not a standalone product, because that is what the owner is actually charged. |
-
-### Watch for
-
-- `harvest()` calls `sell()` once per holding. Fine at ten, wrong shape at a
-  thousand.
-- Every harvest figure sells the **whole** holding. Partial sales realise the
-  oldest lots first and carry a different gain per unit; `pt scenario sell
-  --qty` is the exact answer.
-- `core/scenario.py` is the **seventh** entry in `test_fx.py`'s conversion
-  allowlist, and the test now asserts that count. Before adding an eighth, ask
-  why that module knows about currency at all -- `returns.py`, `tax.py` and the
-  entire API manage without.
-
-### The one place two v2 features check each other
-
-`doctor.check_teilfreistellung_against_holdings` uses look-through constituents
-to notice a fund claiming the 30% equity exemption while holding mostly bonds.
-A **warning, never an error**: the rate follows the fund's Anlagebedingungen,
-not its holdings, so the tool can prompt but cannot correct.
-
----
-
-## 12. If you are picking this up next
+## 8. If you are picking this up next
 
 v2 closed every item v1 named. There is no queue. What follows is what the work
 itself surfaced, in no particular order:

@@ -148,7 +148,7 @@ def test_the_projected_date_is_the_month_count_applied_to_the_calendar(
     state = goal.progress(db)
     assert state.months_at_current_rate is not None
     assert state.projected_date is not None
-    expected = goal._add_months(state.as_of, state.months_at_current_rate)
+    expected = goal.add_months(state.as_of, state.months_at_current_rate)
     assert state.projected_date == expected
 
 
@@ -163,7 +163,7 @@ def test_the_projected_date_is_the_month_count_applied_to_the_calendar(
     ],
 )
 def test_month_arithmetic_stays_on_the_calendar(start: date, months: int, expected: date) -> None:
-    assert goal._add_months(start, months) == expected
+    assert goal.add_months(start, months) == expected
 
 
 def test_no_history_is_a_lookup_error_not_a_zero(db: sqlite3.Connection) -> None:

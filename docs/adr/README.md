@@ -16,6 +16,8 @@ record findings that contradict the original design brief.
 
 | [0008](0008-tax-scenarios-without-forecasting.md) | Price a sale before making it; refuse the market forecast | The question worth answering — "what would this cost me in tax?" — has an exact answer. The one the original design specified, a Monte Carlo cone, does not. |
 
+| [0009](0009-goal-projection-without-a-forecast.md) | A goal projection with growth in it, still not a forecast | 0008's refusal was over-generalised. "When do I reach the target?" is inherently about the future, and assuming zero return is not neutral — it is wrong in a known direction. |
+
 ## Reference material
 
 `../reference/` holds the original design documents, sanitised and banner-marked.

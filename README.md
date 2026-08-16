@@ -53,7 +53,8 @@ both be true and visible at once.
   attributed to prices, currency, income and trading — Cariño-linked, so the
   parts sum to the whole exactly
 - **JSON API** at `/api/*` plus a minimal server-rendered debug UI
-- **A goal target you set**, with a projection that assumes no investment return
+- **A goal target you set**, projected across stated returns and against the
+  portfolio's own resampled history — never a single blessed date
 
 Not a trading system. Nothing places orders. Output is a planning worksheet, not
 tax advice — the bank's *Steuerbescheinigung* is authoritative.
@@ -125,6 +126,7 @@ GET  /api/pending              inferences that have not reached the ledger
 GET  /api/scenario/sell        what selling a holding today would cost in tax
 GET  /api/scenario/harvest     what could be sold to use up this year's allowance
 GET  /api/goal  · PUT          progress toward the target
+GET  /api/goal/projection      when it is reached, across stated returns
 POST /api/pending/{id}/confirm · /reject      decide an inference
 POST /api/admin/rebuild        recompute the derived layer
 ```
@@ -202,6 +204,44 @@ by type. And it does not book itself — the Basiszins is published once a year 
 the Bundesfinanzministerium and the Teilfreistellung follows each fund's
 *Anlagebedingungen* rather than its holdings, so this is the one inference whose
 output goes on a tax return and a person confirms it.
+
+## When you reach the target
+
+The goal projection assumed **no investment return at all** — falsifiable, but
+wrong in a known direction for a portfolio that compounds. It now answers two
+ways, and neither is a forecast:
+
+```bash
+uv run pt goal show                          # contributions only, no return assumed
+uv run pt goal project --target 250000       # with growth in it
+```
+
+```text
+  IF the portfolio returns...      then the target is reached
+       0% a year                  2028-02-14
+       4% a year                  2027-12-14
+       8% a year                  2027-11-14
+
+  For scale: this portfolio has actually returned 23.7% a year so far.
+  That is history, not a rate to plan on.
+```
+
+**The tool never picks a row.** There is no single projected date in the output,
+because that would be a number nobody chose presented as one somebody did — the
+spread between the rows *is* the answer. Here it happens to be narrow, which
+tells you contributions dominate and the return assumption is not the thing to
+worry about.
+
+Below the table, a block bootstrap resamples the portfolio's *own* daily returns
+in month-long blocks. That one is a model, labelled as one, and its sample
+window is printed beside every figure it produces — because resampling a past
+assumes the future is drawn from the same distribution, and that assumption is
+the entire content of the answer.
+
+This is deliberately **not** the Monte Carlo cone the original design specified
+and [ADR 0003](docs/adr/0003-scope-cut.md) cut. The difference is where the
+numbers come from: an assumption you state outright, or a return this portfolio
+actually made. Nothing is invented. See [ADR 0009](docs/adr/0009-goal-projection-without-a-forecast.md).
 
 ## What a sale would cost, before you make it
 
@@ -383,6 +423,7 @@ core/returns.py            unit accounting, TWR/XIRR, local-vs-FX decomposition
 core/attribution.py        return split by source; Cariño-linked, residual zero
 core/vorabpauschale.py     the January charge: proposed, booked, and relieved on sale
 core/scenario.py           price a sale before making it; today's prices, never a forecast
+core/projection.py         when the goal is reached, and what that answer depends on
 core/look_through.py       economic exposure and concentration; four labelled bases
 core/cash.py               running bank balance; infers the contributions nobody recorded
 core/accounts.py           deposit accrual; interest reads as return, never as savings
