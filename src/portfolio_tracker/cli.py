@@ -15,7 +15,13 @@ from typing import Annotated
 
 import typer
 
-from portfolio_tracker import __version__, cli_accounts, cli_flows, cli_look_through
+from portfolio_tracker import (
+    __version__,
+    cli_accounts,
+    cli_flows,
+    cli_look_through,
+    cli_vorabpauschale,
+)
 from portfolio_tracker import seeds as instrument_seeds
 from portfolio_tracker.core import attribution, fx, returns, tax, valuation
 from portfolio_tracker.core import doctor as doctor_checks
@@ -60,6 +66,7 @@ def main(
 app.add_typer(cli_flows.app, name="flows")
 app.add_typer(cli_accounts.app, name="accounts")
 app.add_typer(cli_look_through.app, name="look-through")
+app.add_typer(cli_vorabpauschale.app, name="vorabpauschale")
 
 DbPath = Annotated[Path, typer.Option("--db", help="Database file.")]
 
@@ -476,6 +483,15 @@ def tax_report(
         typer.echo(f"tax year {year}, person {person_id}")
         typer.echo("")
         typer.echo(f"  gains in scope             EUR {state.gross_gains_eur:>10,.2f}")
+        if state.distributions_eur:
+            typer.echo(f"    of which distributions   EUR {state.distributions_eur:>10,.2f}")
+        if state.vorabpauschale_eur:
+            # Called out separately because it is the one line where money was
+            # taxed without arriving, and the one a reader will not expect.
+            typer.echo(
+                f"    of which Vorabpauschale  EUR {state.vorabpauschale_eur:>10,.2f}"
+                "   (no cash received)"
+            )
         typer.echo(f"  losses offset              EUR {state.losses_offset_eur:>10,.2f}")
         typer.echo(f"  after losses               EUR {state.after_losses_eur:>10,.2f}")
         cap = f"{state.statutory_cap_eur:,.0f}"

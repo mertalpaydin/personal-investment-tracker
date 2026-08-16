@@ -25,6 +25,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from portfolio_tracker.api.app import app, get_db, get_writable_db
+from portfolio_tracker.core import inbox
 from portfolio_tracker.db import migrate as M
 from portfolio_tracker.db.connection import connect
 
@@ -551,9 +552,16 @@ def test_a_rejected_proposal_cannot_then_be_confirmed(client: TestClient) -> Non
 
 
 def test_a_kind_with_no_booking_rule_is_refused_rather_than_silently_skipped(
-    client: TestClient,
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Reporting success while recording nothing is the worst available answer."""
+    """Reporting success while recording nothing is the worst available answer.
+
+    Every kind the schema allows now has a booking rule -- VORABPAUSCHALE was
+    the last one without, and it drove this test until it gained one. The guard
+    still has to work for the next kind added, so the rule is removed here
+    rather than the test being deleted along with the gap it described.
+    """
+    monkeypatch.delitem(inbox.BOOKABLE, "VORABPAUSCHALE")
     conn = next(iter(app.dependency_overrides.values()))()
     conn.execute(
         "INSERT INTO pending_entry (id, kind, account_id, proposed_date, currency, "
@@ -565,6 +573,12 @@ def test_a_kind_with_no_booking_rule_is_refused_rather_than_silently_skipped(
     response = client.post("/api/pending/2/confirm")
     assert response.status_code == 422
     assert "cannot be booked" in response.json()["detail"]
+
+
+def test_every_kind_the_schema_allows_now_has_a_booking_rule(client: TestClient) -> None:
+    """The gap the previous test was built around is closed; this pins it shut."""
+    allowed = {"EXTERNAL_IN", "EXTERNAL_OUT", "DIVIDEND", "INTEREST", "VORABPAUSCHALE"}
+    assert allowed == set(inbox.BOOKABLE)
 
 
 def test_the_page_shows_the_basis_next_to_the_button(client: TestClient) -> None:

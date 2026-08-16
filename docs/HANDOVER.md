@@ -1,6 +1,6 @@
 # v1 → v2 handover
 
-**Status: v2 in progress.** 617 tests, `ruff` + `mypy --strict` + PII guard
+**Status: v2 in progress.** 646 tests, `ruff` + `mypy --strict` + PII guard
 clean, `pt doctor` reporting 0 errors on both the real data and the synthetic
 corpus.
 
@@ -13,8 +13,13 @@ corpus.
    the owner. [ADR 0006](adr/0006-return-attribution-and-carino-linking.md) —
    **read its Context section before trusting §5 of this document**, because
    item 3's premise here was wrong and that is instructive.
+3. **Vorabpauschale booking and the basis relief** (item 4).
+   [ADR 0007](adr/0007-vorabpauschale-booking-and-basis-relief.md). Premise
+   verified first this time, and it held.
 
-Schema version 10. §8 and §9 below have what each changed.
+Schema version 10 — item 4 needed no migration; every column it fills was
+declared in 0001 and never written. §8, §9 and §10 below have what each
+changed.
 
 This document is for whoever builds the rest. It says what exists, what it rests
 on, what is deliberately absent, and which mistakes have already been made here
@@ -71,6 +76,7 @@ CSV positions export
 | `core/accounts.py` | Deposit day-counts, daily accrual, maturity projection. |
 | `core/interest.py` | Accrued-but-unpaid interest → review inbox. |
 | `core/tax.py` | German engine. Contains **zero** FX arithmetic and **zero** currency comparisons. |
+| `core/vorabpauschale.py` | The January charge: proposed, booked, and relieved against the eventual gain. |
 | `core/look_through.py` | Economic exposure and concentration, on four labelled bases. Touches no return figure. |
 | `ingest/look_through.py` | Issuer holdings files. Refuses an ambiguous weight unit rather than guessing. |
 | `core/inbox.py` | What confirming an inference *means*, for every front end. |
@@ -95,7 +101,8 @@ one.
 `init-db` · `import` · `seed` · `fetch-fx` · `fetch-prices` · `rebuild` ·
 `report` · `tax` · `doctor` · `serve` · `flows {list,propose,confirm,reject,sale}` ·
 `accounts {list,add,set,import,accrue,propose-interest}` ·
-`look-through {import,list,show,exposure,concentration}`
+`look-through {import,list,show,exposure,concentration}` ·
+`vorabpauschale {forecast,propose,list,check}`
 
 Plus [`run.py`](../run.py): one file, runnable from an IDE, that starts the
 server and opens a browser once it answers.
@@ -223,10 +230,10 @@ Ordered by value per unit of risk, not by appeal.
    **Done, and the premise was wrong** — there was nothing stored to remove.
    See §9 and ADR 0006. Not purely additive either: the whole period-level
    decomposition had to be built first.
-4. **Vorabpauschale automation for the January charge** — `pending_entry`
-   already has the `VORABPAUSCHALE` kind, and `core/inbox.py` will refuse to
-   book it until a rule exists. That refusal is deliberate: `NotBookable` is
-   better than reporting success and recording nothing.
+4. ~~**Vorabpauschale automation for the January charge.**~~ **Done**, and
+   this entry's premise was accurate. See §10 and ADR 0007. The `NotBookable`
+   refusal it describes was correct and is retained for the next kind that
+   lacks a rule; `test_api.py` removes a rule to exercise it.
 5. **Scenario / what-if**, last. It is the most fun and the least load-bearing.
 
 ### If you add a front end
@@ -368,3 +375,50 @@ are the obvious next cut and need no new storage — the daily terms are already
 computed per position and summed before being written, so the change is where
 the aggregation happens. Sector attribution needs look-through weights and is
 where the two v2 features would finally meet.
+
+---
+
+## 10. What v2 added: the Vorabpauschale chain
+
+No migration. Every column this fills was declared in `0001_core` and written by
+nothing: `lot.vap_accumulated_eur`, `lot_disposal.vap_offset_eur`, and the whole
+`vorabpauschale` table. ADR 0007 has the reasoning.
+
+### What was actually missing
+
+v1 computed the charge (`tax.forecast_vorabpauschale`) and applied the relief
+(`tax.compute_disposal_tax`). Both ends were real and tested. Nothing connected
+them, so the charge reached no tax figure at all.
+
+### The half that is invisible when wrong
+
+A Vorabpauschale is taxed when charged. If it is not deducted from the gain when
+the fund is sold, **the same euros are taxed twice** — and both figures are
+individually correct, so nothing looks wrong until years later.
+
+`lots.py` gained a third transaction category, `ADJUSTING`, which changes a
+lot's basis without changing its quantity. Processed in the same chronological
+pass, so a January charge reaches only the lots open in January.
+
+| Trap | What it does |
+|---|---|
+| **Booking it as a DIVIDEND** | Tempting — both are income — and it credits cash that does not exist and reports a return the portfolio never earned. `type = 'VORABPAUSCHALE'` is ignored by the cash engine, the unit series and the attribution, and that silence is tested. |
+| **Storing the taxable figure** | The relief deducts the *gross* from the gain before Teilfreistellung, so storing the net silently halves it. The gross is stored and `tax.py` applies the exemption, exactly as for a real distribution. |
+| **Relief with nowhere to attach** | A charge booked when nothing is held is lost. Reported as `RebuildReport.orphan_vap` rather than carried onto a later purchase, which would invent relief the statute does not give. |
+| **`VAP_RELIEF_LOST`** | The doctor check for the above: every booked euro must sit on an open lot or have been claimed against a disposal. An error, not a warning. |
+
+### The stated convention
+
+The charge is stored per `(account, instrument, tax_year)`; the relief attaches
+to *lots*, which are derived. A ledger row cannot name a lot without pointing a
+fact at a derivation (invariant 8), so the charge is split **pro rata by
+quantity held**. It changes which future sale collects the relief, never how
+much exists. Selling part of a lot takes the same fraction of its relief.
+
+### Where to extend it
+
+Nothing schedules `pt vorabpauschale propose`; it is run by a person in January.
+A reminder — "the 2025 charge has not been proposed and it is February" — would
+be the obvious next step and needs no new data. The per-lot month pro-ration is
+lost in the aggregation, which is the one place the arithmetic is coarser than
+`forecast_vorabpauschale` can compute.

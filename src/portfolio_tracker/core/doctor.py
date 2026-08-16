@@ -392,6 +392,62 @@ def check_data_quality(conn: sqlite3.Connection, report: DoctorReport) -> None:
         )
 
 
+def check_vorabpauschale(conn: sqlite3.Connection, report: DoctorReport) -> None:
+    """Whether the relief that stops double taxation is actually attached.
+
+    Every euro of booked Vorabpauschale must be sitting on an open lot or have
+    been claimed against a disposal. A euro that is in neither place has been
+    taxed as a deemed distribution and will be taxed again as a capital gain,
+    and nothing else in the system would notice: both figures are individually
+    correct and the loss only appears years later, in a number nobody can
+    reconcile.
+    """
+    for row in conn.execute(
+        """
+        SELECT t.account_id, t.instrument_id, i.import_key,
+               total(t.gross_amount_eur) AS booked,
+               (SELECT total(l.vap_accumulated_eur) FROM lot l
+                  WHERE l.account_id = t.account_id AND l.instrument_id = t.instrument_id)
+                 AS carried,
+               (SELECT total(d.vap_offset_eur) FROM lot_disposal d
+                  JOIN lot l2 ON l2.id = d.lot_id
+                  WHERE l2.account_id = t.account_id AND l2.instrument_id = t.instrument_id)
+                 AS claimed
+        FROM transaction_ t JOIN instrument i ON i.id = t.instrument_id
+        WHERE t.type = 'VORABPAUSCHALE'
+        GROUP BY t.account_id, t.instrument_id
+        """
+    ):
+        report.rows_examined += 1
+        booked = Decimal(str(row["booked"] or 0))
+        accounted = Decimal(str(row["carried"] or 0)) + Decimal(str(row["claimed"] or 0))
+        if _off_by(booked, accounted, CENT):
+            report.add(
+                "VAP_RELIEF_LOST",
+                Severity.ERROR,
+                f"{row['import_key']}: EUR {booked} of Vorabpauschale booked but only "
+                f"EUR {accounted} is carried on open lots or claimed against a disposal. "
+                f"EUR {booked - accounted} will be taxed a second time on sale",
+                instrument_id=row["instrument_id"],
+            )
+
+    # A forecast that was never proposed is not an error -- it is a decision
+    # nobody has been asked to make yet -- but it is a tax charge the owner does
+    # not know about, which is worth saying out loud.
+    unbooked = conn.execute(
+        "SELECT count(*) AS n, total(taxable_eur) AS eur FROM vorabpauschale "
+        "WHERE status = 'FORECAST' AND taxable_eur > 0"
+    ).fetchone()
+    if unbooked and unbooked["n"]:
+        report.add(
+            "VAP_FORECAST_UNBOOKED",
+            Severity.WARNING,
+            f"{unbooked['n']} Vorabpauschale forecast(s) worth EUR "
+            f"{Decimal(str(unbooked['eur'] or 0)):,.2f} of taxable income are not in the "
+            "ledger; the tax figures do not include them",
+        )
+
+
 def check_attribution(conn: sqlite3.Connection, report: DoctorReport) -> None:
     """Whether the return's parts still add up to the return.
 
@@ -559,6 +615,7 @@ CHECKS = (
     check_data_quality,
     check_attribution,
     check_look_through,
+    check_vorabpauschale,
 )
 
 

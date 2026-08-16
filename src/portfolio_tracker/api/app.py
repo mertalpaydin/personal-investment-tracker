@@ -432,6 +432,9 @@ def allowance(
         "statutory_cap_eur": _decimal(state.statutory_cap_eur),
         "gross_gains_eur": _decimal(state.gross_gains_eur),
         "distributions_eur": _decimal(state.distributions_eur),
+        # Inside gross_gains_eur, and broken out because it is the one component
+        # on which tax is due without any money having arrived.
+        "vorabpauschale_eur": _decimal(state.vorabpauschale_eur),
         "losses_offset_eur": _decimal(state.losses_offset_eur),
         "after_losses_eur": _decimal(state.after_losses_eur),
         "allowance_used_eur": _decimal(state.consumed_eur),

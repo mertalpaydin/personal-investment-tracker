@@ -110,6 +110,10 @@ class AllowanceState:
     consumed_eur: Decimal = ZERO
     remaining_eur: Decimal = ZERO
     distributions_eur: Decimal = ZERO
+    #: Booked Vorabpauschale charged in this year, after Teilfreistellung. A
+    #: deemed distribution is income on the same footing as a real one; the
+    #: only difference is that no money arrived.
+    vorabpauschale_eur: Decimal = ZERO
     taxable_after_allowance_eur: Decimal = ZERO
     estimated_tax_eur: Decimal = ZERO
     carried_forward: LossPots = field(default_factory=LossPots)
@@ -468,7 +472,20 @@ def allowance_state(
     # out understates income and overstates remaining headroom -- which then
     # corrupts any harvesting decision made against that headroom.
     state.distributions_eur = quantize_money(sum((d for _, d in distributions), ZERO))
-    state.gross_gains_eur = quantize_money(share_gain + other_gain + state.distributions_eur)
+
+    # A Vorabpauschale is a deemed distribution, taxed in the January after the
+    # year it accrued for. It consumes the same allowance as a real one, and
+    # omitting it here would understate the year's income by exactly the amount
+    # the bank is about to withhold tax on. Imported lazily: `vorabpauschale`
+    # builds on this module, so a module-level import would be circular.
+    from portfolio_tracker.core import vorabpauschale
+
+    deemed = vorabpauschale.taxable_income(conn, tax_year=tax_year, person_id=person_id)
+    state.vorabpauschale_eur = quantize_money(sum((d for _, d in deemed), ZERO))
+
+    state.gross_gains_eur = quantize_money(
+        share_gain + other_gain + state.distributions_eur + state.vorabpauschale_eur
+    )
     state.losses_offset_eur = quantize_money(share_used + other_used)
     state.after_losses_eur = quantize_money(state.gross_gains_eur - state.losses_offset_eur)
 

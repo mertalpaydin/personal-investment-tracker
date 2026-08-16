@@ -26,7 +26,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
-from portfolio_tracker.core import cash, interest
+from portfolio_tracker.core import cash, interest, vorabpauschale
 from portfolio_tracker.ingest import dividends
 from portfolio_tracker.money import ZERO, quantize_money
 
@@ -38,6 +38,11 @@ BOOKABLE = {
     "EXTERNAL_OUT": cash.confirm,
     "DIVIDEND": dividends.confirm,
     "INTEREST": interest.confirm,
+    # Added last, and the odd one out: it books income that moves no money.
+    # Confirming it also raises the cost basis of the lots it applies to, so
+    # the same euros are not taxed again on sale -- which is why it needed a
+    # rule of its own rather than being routed through the dividend path.
+    "VORABPAUSCHALE": vorabpauschale.confirm,
 }
 
 

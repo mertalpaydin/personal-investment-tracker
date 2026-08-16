@@ -27,6 +27,13 @@ from portfolio_tracker.money import ZERO, plain, quantize_money
 OPENING = ("BUY", "TRANSFER_IN")
 CLOSING = ("SELL", "TRANSFER_OUT")
 
+#: Changes a lot's basis without changing its quantity. A Vorabpauschale is
+#: taxed when it is charged and deducted from the gain when the lot is sold; a
+#: lot that does not carry it has its owner taxed on the same euros twice.
+#: Processed in the same chronological pass as everything else, so a charge
+#: applies only to lots open on the day it was raised.
+ADJUSTING = ("VORABPAUSCHALE",)
+
 #: Quantities can be fractional to eight places; below this a residual is
 #: rounding noise rather than a real holding.
 DUST = Decimal("0.00000001")
@@ -55,6 +62,11 @@ class Lot:
     basis_quality: str = "EXACT"
     lot_id: int | None = None
 
+    #: Vorabpauschale already taxed on the units still held. Carried to the
+    #: disposal when they are sold, where the tax engine deducts it from the
+    #: gain -- the relief that stops the same euros being taxed twice.
+    vap_accumulated_eur: Decimal = ZERO
+
 
 @dataclass
 class Disposal:
@@ -76,6 +88,10 @@ class RebuildReport:
     disposals_created: int = 0
     oversold: list[str] = field(default_factory=list)
     missing_fx: list[str] = field(default_factory=list)
+    #: Vorabpauschale booked against a holding with no open lot on that date.
+    #: The relief has nowhere to attach and is lost, which is a reportable
+    #: overpayment rather than a crash.
+    orphan_vap: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -161,7 +177,7 @@ def rebuild_lots(
                gross_amount_eur, fees_eur, basis_quality,
                orig_acquire_date, orig_cost_local, orig_cost_eur
         FROM transaction_
-        {scope} AND type IN {OPENING + CLOSING}
+        {scope} AND type IN {OPENING + CLOSING + ADJUSTING}
         ORDER BY account_id, instrument_id, trade_date, id
         """,
         tuple(params),
@@ -176,7 +192,9 @@ def rebuild_lots(
         quantity = Decimal(str(row["quantity"]))
         currency = row["currency"]
 
-        if row["type"] in OPENING:
+        if row["type"] in ADJUSTING:
+            _apply_vorabpauschale(row, bucket, report)
+        elif row["type"] in OPENING:
             lot = _open_lot(conn, row, key, trade_date, quantity, currency, report)
             # Inserted immediately: lot_disposal.lot_id is NOT NULL, so a
             # disposal cannot be written before the lot it consumes exists.
@@ -239,6 +257,39 @@ def _open_lot(
     )
 
 
+def _apply_vorabpauschale(row: sqlite3.Row, bucket: list[Lot], report: RebuildReport) -> None:
+    """Spread a booked charge across the lots open on the day it was raised.
+
+    The charge is stored per (account, instrument, year) because that is what
+    the ``vorabpauschale`` table's uniqueness says, while the relief attaches to
+    lots -- which are derived, and so cannot be referenced from a ledger row
+    without pointing a fact at a derivation.
+
+    Pro rata by quantity still held is therefore a **stated convention**, not an
+    observation, and it is the conservative one: it changes which future sale
+    collects the relief, never how much relief exists. A charge raised when
+    nothing is held is dropped rather than carried forward, because there is no
+    basis for it to attach to and inventing one would create relief against a
+    lot bought later.
+    """
+    amount = Decimal(str(row["gross_amount_eur"] or 0))
+    if amount <= ZERO:
+        return
+
+    held = sum((lot.qty_remaining for lot in bucket if lot.qty_remaining > ZERO), ZERO)
+    if held <= DUST:
+        report.orphan_vap.append(
+            f"txn {row['id']} on {row['trade_date']}: EUR {amount} of Vorabpauschale with "
+            "no open lot to attach to; the relief is lost"
+        )
+        return
+
+    for lot in bucket:
+        if lot.qty_remaining <= ZERO:
+            continue
+        lot.vap_accumulated_eur += amount * lot.qty_remaining / held
+
+
 def _close_against(
     conn: sqlite3.Connection,
     row: sqlite3.Row,
@@ -278,6 +329,15 @@ def _close_against(
                 cost_at_sale_rate = quantize_money(fx.to_eur(cost_local, rate_at_sale))
                 fx_gain = cost_at_sale_rate - cost_eur
 
+        # The relief travels with the units. Selling half a lot takes half its
+        # accumulated Vorabpauschale and leaves the rest on what is still held;
+        # taking all of it would give the first partial sale relief for units it
+        # did not dispose of, and leave the remainder with none.
+        vap_share = ZERO
+        if lot.qty_remaining > ZERO and lot.vap_accumulated_eur > ZERO:
+            vap_share = quantize_money(lot.vap_accumulated_eur * used / lot.qty_remaining)
+            lot.vap_accumulated_eur -= vap_share
+
         lot.qty_remaining -= used
         report.disposals_created += 1
         conn.execute(
@@ -285,8 +345,8 @@ def _close_against(
             INSERT INTO lot_disposal
                 (sell_txn_id, lot_id, qty, currency, proceeds_local, cost_basis_local,
                  proceeds_eur, cost_basis_eur, gross_gain_eur, fx_gain_eur,
-                 taxable_gain_eur, holding_days, basis_quality)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                 taxable_gain_eur, vap_offset_eur, holding_days, basis_quality)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
             """,
             (
                 int(row["id"]),
@@ -299,6 +359,7 @@ def _close_against(
                 cost_eur,
                 gain_eur,
                 fx_gain,
+                vap_share,
                 (trade_date - lot.open_date).days,
                 lot.basis_quality,
             ),
@@ -336,12 +397,21 @@ def _insert_lot(conn: sqlite3.Connection, lot: Lot) -> None:
 def _update_remaining(
     conn: sqlite3.Connection, open_lots: dict[tuple[int, int], list[Lot]]
 ) -> None:
-    """Write back what each lot has left after every disposal has been applied."""
+    """Write back what each lot has left after every disposal has been applied.
+
+    Also the Vorabpauschale still attached to it: charges raised and relief
+    consumed both happen during the chronological pass, so the figure is only
+    final once that pass has finished.
+    """
     for bucket in open_lots.values():
         for lot in bucket:
             conn.execute(
-                "UPDATE lot SET qty_remaining = ? WHERE id = ?",
-                (max(lot.qty_remaining, ZERO), lot.lot_id),
+                "UPDATE lot SET qty_remaining = ?, vap_accumulated_eur = ? WHERE id = ?",
+                (
+                    max(lot.qty_remaining, ZERO),
+                    quantize_money(max(lot.vap_accumulated_eur, ZERO)),
+                    lot.lot_id,
+                ),
             )
 
 

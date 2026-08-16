@@ -41,7 +41,8 @@ both be true and visible at once.
 
 - **Reconstructs a transaction ledger** from a positions export that isn't one
 - **FIFO tax lots** with German capital-gains treatment: Teilfreistellung,
-  Vorabpauschale (§18 InvStG), loss pots (§20 VI EStG), Sparerpauschbetrag
+  Vorabpauschale (§18 InvStG) including the cost-basis relief that stops it
+  being taxed twice, loss pots (§20 VI EStG), Sparerpauschbetrag
 - **Daily FX revaluation** of every non-EUR position, with local/currency return
   split out
 - **ETF look-through**: economic exposure from published constituent lists, and
@@ -169,6 +170,36 @@ and folding it into `asset prices` would report execution as stock selection
 while every total still reconciled. `pt doctor` checks both identities: the
 daily parts against the day's return, and the linked parts against a period
 return computed independently by the unit series.
+
+## The tax charge nobody sends you a bill for
+
+German investors owe tax each January on a *deemed* distribution from every
+accumulating fund that rose — the **Vorabpauschale**, §18 InvStG. No money
+arrives. The bank withholds anyway.
+
+```bash
+uv run pt vorabpauschale forecast --year 2025    # compute and print
+uv run pt vorabpauschale propose  --year 2025    # store it, queue it for review
+uv run pt vorabpauschale check                   # relief carried on open lots
+```
+
+The half that matters is what happens **years later**. A Vorabpauschale is taxed
+when charged; if it is not then deducted from the gain when the fund is sold,
+the same euros are taxed twice. Both figures look correct in isolation, nothing
+reconciles them, and the overpayment surfaces in a number nobody can trace.
+
+So confirming a charge raises the cost basis of the lots it applies to
+(`§ 20 Abs. 1 Nr. 3 Satz 5 EStG`), the relief travels with the units into each
+disposal, and `pt doctor` checks that every booked euro is either sitting on an
+open lot or has been claimed — `VAP_RELIEF_LOST` is the finding, and it is an
+error rather than a warning.
+
+Two things it deliberately does not do. It does not credit cash: the ledger row
+moves no money, and the cash engine, unit series and attribution all ignore it
+by type. And it does not book itself — the Basiszins is published once a year by
+the Bundesfinanzministerium and the Teilfreistellung follows each fund's
+*Anlagebedingungen* rather than its holdings, so this is the one inference whose
+output goes on a tax return and a person confirms it.
 
 ## What a fund is quoted in is not what it holds
 
@@ -309,6 +340,7 @@ core/lots.py               FIFO; freezes EUR cost basis at acquisition-date FX
 core/valuation.py          daily revaluation on the TARGET2 grid
 core/returns.py            unit accounting, TWR/XIRR, local-vs-FX decomposition
 core/attribution.py        return split by source; Cariño-linked, residual zero
+core/vorabpauschale.py     the January charge: proposed, booked, and relieved on sale
 core/look_through.py       economic exposure and concentration; four labelled bases
 core/cash.py               running bank balance; infers the contributions nobody recorded
 core/accounts.py           deposit accrual; interest reads as return, never as savings
