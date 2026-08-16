@@ -122,6 +122,8 @@ GET  /api/accounts/deposits    deposit terms, including withholding at source
 GET  /api/tax/allowance        with a mandatory out-of-scope block
 GET  /api/tax/vorabpauschale   §18 InvStG forecast
 GET  /api/pending              inferences that have not reached the ledger
+GET  /api/scenario/sell        what selling a holding today would cost in tax
+GET  /api/scenario/harvest     what could be sold to use up this year's allowance
 GET  /api/goal  · PUT          progress toward the target
 POST /api/pending/{id}/confirm · /reject      decide an inference
 POST /api/admin/rebuild        recompute the derived layer
@@ -200,6 +202,45 @@ by type. And it does not book itself — the Basiszins is published once a year 
 the Bundesfinanzministerium and the Teilfreistellung follows each fund's
 *Anlagebedingungen* rather than its holdings, so this is the one inference whose
 output goes on a tax return and a person confirms it.
+
+## What a sale would cost, before you make it
+
+Every other view reports what happened. This one answers the question you ask
+*before* acting:
+
+```bash
+uv run pt scenario harvest              # how much allowance is left, and what could fill it
+uv run pt scenario sell -i ZGEQ         # what selling this would realise, and cost
+```
+
+```text
+Selling 391.7074 of ZGEQ (the whole holding) at 17.4800 EUR as of 2026-08-14
+
+  gross gain               EUR       977.48
+  less Vorabpauschale      EUR        23.18   (already taxed)
+  less Teilfreistellung    EUR       286.29
+  taxable gain             EUR       668.01
+
+  allowance left before    EUR       803.28
+  allowance left after     EUR       135.27
+  TAX THIS SALE ADDS       EUR         0.00
+```
+
+The **marginal** figure is the point: the same gain costs nothing or 26.375%
+depending only on what the year's allowance has already absorbed, so a per-sale
+tax number without the year around it isn't an answer. It also shows which lots
+FIFO would consume — selling "half" a position realises the *oldest* half, which
+on a holding built up over two years is a very different gain.
+
+Two rules it holds to. **Today's prices only** — there is no assumed-return
+slider and no Monte Carlo cone, because a number with the shape of a forecast
+and none of the substance is worse than no number ([ADR 0008](docs/adr/0008-tax-scenarios-without-forecasting.md)).
+And **nothing is written**: the routes take the read-only connection and a test
+asserts it, because a scenario that left rows behind would be indistinguishable
+from a decision afterwards.
+
+`pt scenario harvest` lists; it does not recommend. Which holding to sell
+depends on what you want to keep owning, which the tool knows nothing about.
 
 ## What a fund is quoted in is not what it holds
 
@@ -341,6 +382,7 @@ core/valuation.py          daily revaluation on the TARGET2 grid
 core/returns.py            unit accounting, TWR/XIRR, local-vs-FX decomposition
 core/attribution.py        return split by source; Cariño-linked, residual zero
 core/vorabpauschale.py     the January charge: proposed, booked, and relieved on sale
+core/scenario.py           price a sale before making it; today's prices, never a forecast
 core/look_through.py       economic exposure and concentration; four labelled bases
 core/cash.py               running bank balance; infers the contributions nobody recorded
 core/accounts.py           deposit accrual; interest reads as return, never as savings

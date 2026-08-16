@@ -14,6 +14,8 @@ record findings that contradict the original design brief.
 | [0006](0006-return-attribution-and-carino-linking.md) | Portfolio return attributed to prices, currency, income and trading; Cariño-linked | 0004 said it exposed a residual; it had never built the decomposition at all. Chaining daily contributions naively understates this portfolio by 11 points, so the linking is the feature. |
 | [0007](0007-vorabpauschale-booking-and-basis-relief.md) | The January charge reaches the ledger, and raises the cost basis so it is not taxed twice | v1 could compute the charge and could apply the relief. The middle was missing, so it reached no tax figure. The relief is the half that is invisible when wrong. |
 
+| [0008](0008-tax-scenarios-without-forecasting.md) | Price a sale before making it; refuse the market forecast | The question worth answering — "what would this cost me in tax?" — has an exact answer. The one the original design specified, a Monte Carlo cone, does not. |
+
 ## Reference material
 
 `../reference/` holds the original design documents, sanitised and banner-marked.

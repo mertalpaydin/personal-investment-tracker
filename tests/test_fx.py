@@ -215,7 +215,16 @@ def test_only_modules_permitted_to_convert_contain_fx_arithmetic() -> None:
         "core/valuation.py",  # daily revaluation of positions
         "core/cash.py",  # freezes a confirmed flow; revalues cash daily
         "core/accounts.py",  # revalues a deposit's accrued interest daily
+        # Prices a hypothetical sale at the rate observed on a stated date --
+        # the same operation valuation.py performs, for a quantity that has not
+        # been sold. Admitted deliberately rather than by reflex: the rule is
+        # "a rate pinned to a date", and `as_of` is that date.
+        "core/scenario.py",
     }
+    # The list is short because it is meant to be. If it needs a seventh entry,
+    # the question to answer first is why that module knows about currency at
+    # all -- returns.py, tax.py and the whole API manage without.
+    assert len(allowed) == 7
     offenders = []
     for path in root.rglob("*.py"):
         rel = path.relative_to(root).as_posix()

@@ -32,6 +32,7 @@ from portfolio_tracker.core import (
     look_through,
     rebuild,
     returns,
+    scenario,
     tax,
     valuation,
 )
@@ -966,6 +967,125 @@ def look_through_status(
             "Import a composition with `pt look-through import`. A fund with none is "
             "reported on its wrapper's own currency and sector, which is a listing fact."
         ),
+    }
+
+
+@app.get("/api/scenario/sell")
+def scenario_sell(
+    conn: sqlite3.Connection = Depends(get_db),
+    instrument: str = Query(..., description="Import key, ISIN or symbol"),
+    qty: Decimal | None = Query(None, gt=0, description="Units; default is the whole holding"),
+    person_id: int = Query(1, alias="person"),
+    year: int | None = Query(None, description="Tax year; default is the current one"),
+) -> dict[str, Any]:
+    """What selling a holding today would realise, and what it would cost.
+
+    Read-only, and takes the read-only connection to prove it: a scenario that
+    left rows behind would be indistinguishable from a decision afterwards.
+
+    Priced at the last observed close. No future return is assumed anywhere —
+    the same rule ``/api/goal`` follows when it projects on contributions alone.
+    """
+    try:
+        result = scenario.sell(
+            conn, instrument=instrument, quantity=qty, person_id=person_id, tax_year=year
+        )
+    except scenario.ScenarioError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except tax.TaxDataMissing as exc:
+        # Same rule as /api/tax/*: a missing statutory input is a refusal.
+        raise HTTPException(409, str(exc)) from exc
+    except fx.FxUnavailable as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+    return {
+        "as_of": result.as_of.isoformat(),
+        "instrument": result.instrument,
+        "quantity": _decimal(result.quantity),
+        "quantity_held": _decimal(result.quantity_held),
+        "price": {
+            "local": _decimal(result.price_local),
+            "currency": result.currency,
+            "as_of": result.price_asof.isoformat(),
+            "stale_days": result.price_stale_days,
+            "fx_rate": _decimal(result.fx_rate),
+        },
+        "proceeds_eur": _decimal(result.proceeds_eur),
+        "cost_basis_eur": _decimal(result.cost_basis_eur),
+        "gross_gain_eur": _decimal(result.gross_gain_eur),
+        "vap_offset_eur": _decimal(result.vap_offset_eur),
+        "teilfreistellung_eur": _decimal(result.teilfreistellung_eur),
+        "taxable_gain_eur": _decimal(result.taxable_gain_eur),
+        "pot": result.pot,
+        "in_tax_scope": result.in_tax_scope,
+        # The figure being asked for. The same gain costs nothing or 26.375%
+        # depending only on what the allowance has already absorbed, so a
+        # per-sale tax number means nothing without the year around it.
+        "marginal_tax_eur": _decimal(result.marginal_tax_eur),
+        "net_proceeds_eur": _decimal(result.net_proceeds_eur),
+        "allowance": {
+            "remaining_before_eur": _decimal(result.allowance_remaining_before_eur),
+            "remaining_after_eur": _decimal(result.allowance_remaining_after_eur),
+        },
+        "fifo_consumes": [
+            {
+                "lot_id": lot.lot_id,
+                "opened": lot.open_date.isoformat(),
+                "quantity": _decimal(lot.quantity),
+                "cost_basis_eur": _decimal(lot.cost_basis_eur),
+                "proceeds_eur": _decimal(lot.proceeds_eur),
+                "gross_gain_eur": _decimal(lot.gross_gain_eur),
+                "vap_offset_eur": _decimal(lot.vap_offset_eur),
+                "holding_days": lot.holding_days,
+            }
+            for lot in result.consumed
+        ],
+        "caveats": result.caveats,
+        "wrote_nothing": True,
+    }
+
+
+@app.get("/api/scenario/harvest")
+def scenario_harvest(
+    conn: sqlite3.Connection = Depends(get_db),
+    person_id: int = Query(1, alias="person"),
+    year: int | None = Query(None),
+) -> dict[str, Any]:
+    """What could be sold to use up the year's tax-free allowance.
+
+    The Sparerpauschbetrag does not carry forward, so unused headroom expires
+    on 31 December. Deliberately a list rather than a recommendation: which
+    holding to sell depends on what the owner wants to keep owning, and this
+    endpoint knows the tax and nothing else.
+    """
+    try:
+        result = scenario.harvest(conn, person_id=person_id, tax_year=year)
+    except tax.TaxDataMissing as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+    def entry(candidate: scenario.Candidate) -> dict[str, Any]:
+        return {
+            "instrument": candidate.instrument,
+            "quantity": _decimal(candidate.quantity),
+            "market_value_eur": _decimal(candidate.market_value_eur),
+            "gross_gain_eur": _decimal(candidate.gross_gain_eur),
+            "taxable_gain_eur": _decimal(candidate.taxable_gain_eur),
+            "pot": candidate.pot,
+        }
+
+    return {
+        "tax_year": result.tax_year,
+        "as_of": result.as_of.isoformat(),
+        "allowance": {
+            "cap_eur": _decimal(result.allowance_cap_eur),
+            "used_eur": _decimal(result.allowance_used_eur),
+            "remaining_eur": _decimal(result.allowance_remaining_eur),
+        },
+        "realisable_tax_free_eur": _decimal(result.realisable_free_eur),
+        "gains": [entry(c) for c in result.gains],
+        "losses": [entry(c) for c in result.losses],
+        "caveats": result.caveats,
+        "wrote_nothing": True,
     }
 
 

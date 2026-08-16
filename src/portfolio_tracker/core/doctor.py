@@ -392,6 +392,74 @@ def check_data_quality(conn: sqlite3.Connection, report: DoctorReport) -> None:
         )
 
 
+#: A fund claiming the equity exemption asserts its terms require at least this
+#: much equity. The rate follows the Anlagebedingungen, not the holdings -- but
+#: a fund claiming 30% while holding 20% shares is worth a second look.
+EQUITY_EXEMPTION = Decimal("0.30")
+EQUITY_MINIMUM = Decimal("0.51")
+
+#: Constituent asset-class labels that count as equity. Issuers are not
+#: consistent, so this matches loosely and the check stays a warning.
+EQUITY_LABELS = ("equity", "share", "stock", "aktie")
+
+
+def check_teilfreistellung_against_holdings(conn: sqlite3.Connection, report: DoctorReport) -> None:
+    """Whether a fund's claimed exemption is consistent with what it holds.
+
+    Only possible now that both look-through and the tax engine exist, and it is
+    the one place they touch. A 30% Teilfreistellung is a claim that the fund's
+    *Anlagebedingungen* require a 51% equity minimum -- so this is **not**
+    authoritative and never an error: the rate follows the terms, not the
+    portfolio, and a compliant equity fund can dip below 51% temporarily.
+
+    But 30% versus 0% is 30% of the tax on the position, the classification is
+    one a person entered by hand, and a fund claiming the equity exemption while
+    holding mostly bonds is worth looking at before the figure reaches an
+    *Anlage KAP*.
+    """
+    for row in conn.execute(
+        "SELECT i.id, i.import_key, i.teilfreistellung_pct FROM instrument i "
+        "WHERE i.is_fund = 1 AND i.teilfreistellung_pct IS NOT NULL"
+    ):
+        claimed = _d(row["teilfreistellung_pct"])
+        if claimed < EQUITY_EXEMPTION:
+            continue
+        composition = look_through.composition_date(conn, int(row["id"]), date.today())
+        if composition is None:
+            continue
+
+        published, weight_sum = composition
+        if weight_sum <= ZERO:
+            continue
+        report.rows_examined += 1
+
+        equity = ZERO
+        for line in conn.execute(
+            "SELECT weight, asset_class FROM fund_holding WHERE instrument_id = ? AND as_of = ?",
+            (row["id"], published.isoformat()),
+        ):
+            label = str(line["asset_class"] or "").lower()
+            if any(word in label for word in EQUITY_LABELS):
+                equity += _d(line["weight"])
+
+        # No asset-class column at all is a gap in the file, not a finding
+        # about the fund. Reporting it as one would punish the wrong dialect.
+        if equity <= ZERO:
+            continue
+        share = equity / weight_sum
+        if share < EQUITY_MINIMUM:
+            report.add(
+                "TEILFREISTELLUNG_LOOKS_WRONG",
+                Severity.WARNING,
+                f"{row['import_key']} claims a {claimed:.0%} Teilfreistellung, which asserts "
+                f"a {EQUITY_MINIMUM:.0%} equity minimum in its terms, but its published "
+                f"composition of {published} is {share:.0%} equity. Check the KID or the "
+                "Grundlagenbescheid -- the rate follows the fund's terms, not its holdings, "
+                "so this is a prompt rather than a correction",
+                instrument_id=row["id"],
+            )
+
+
 def check_vorabpauschale(conn: sqlite3.Connection, report: DoctorReport) -> None:
     """Whether the relief that stops double taxation is actually attached.
 
@@ -616,6 +684,7 @@ CHECKS = (
     check_attribution,
     check_look_through,
     check_vorabpauschale,
+    check_teilfreistellung_against_holdings,
 )
 
 

@@ -20,6 +20,7 @@ from portfolio_tracker import (
     cli_accounts,
     cli_flows,
     cli_look_through,
+    cli_scenario,
     cli_vorabpauschale,
 )
 from portfolio_tracker import seeds as instrument_seeds
@@ -67,6 +68,7 @@ app.add_typer(cli_flows.app, name="flows")
 app.add_typer(cli_accounts.app, name="accounts")
 app.add_typer(cli_look_through.app, name="look-through")
 app.add_typer(cli_vorabpauschale.app, name="vorabpauschale")
+app.add_typer(cli_scenario.app, name="scenario")
 
 DbPath = Annotated[Path, typer.Option("--db", help="Database file.")]
 

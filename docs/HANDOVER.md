@@ -1,10 +1,10 @@
 # v1 → v2 handover
 
-**Status: v2 in progress.** 646 tests, `ruff` + `mypy --strict` + PII guard
+**Status: v2 complete.** 675 tests, `ruff` + `mypy --strict` + PII guard
 clean, `pt doctor` reporting 0 errors on both the real data and the synthetic
 corpus.
 
-**v2 so far**, against the list in §6:
+**Every item on the v1 v2-list is closed**, four built and one declined:
 
 1. **ETF look-through** (item 1). Constituent lists imported from issuer files;
    exposure and concentration derived from them; every figure says which of
@@ -16,10 +16,17 @@ corpus.
 3. **Vorabpauschale booking and the basis relief** (item 4).
    [ADR 0007](adr/0007-vorabpauschale-booking-and-basis-relief.md). Premise
    verified first this time, and it held.
+4. **Tax scenarios** (item 5), scoped to today's prices and refusing the
+   market forecast the original design specified.
+   [ADR 0008](adr/0008-tax-scenarios-without-forecasting.md).
 
-Schema version 10 — item 4 needed no migration; every column it fills was
-declared in 0001 and never written. §8, §9 and §10 below have what each
-changed.
+Item 2 (broker cash-flow import) was **declined by the owner**, not dropped for
+technical reasons. It remains the highest-value item on §6 if a source is ever
+found; the machinery is built and would simply stop guessing.
+
+Schema version 10. Items 4 and 5 needed no migration at all — every column they
+fill was declared in `0001_core` and never written. §8 to §11 below have what
+each one changed.
 
 This document is for whoever builds the rest. It says what exists, what it rests
 on, what is deliberately absent, and which mistakes have already been made here
@@ -78,6 +85,7 @@ CSV positions export
 | `core/tax.py` | German engine. Contains **zero** FX arithmetic and **zero** currency comparisons. |
 | `core/vorabpauschale.py` | The January charge: proposed, booked, and relieved against the eventual gain. |
 | `core/look_through.py` | Economic exposure and concentration, on four labelled bases. Touches no return figure. |
+| `core/scenario.py` | Prices a sale before it is made. Read-only, today's prices, never a forecast. |
 | `ingest/look_through.py` | Issuer holdings files. Refuses an ambiguous weight unit rather than guessing. |
 | `core/inbox.py` | What confirming an inference *means*, for every front end. |
 | `core/rebuild.py` | Recompute the derived layer. Called by CLI and API alike. |
@@ -102,7 +110,7 @@ one.
 `report` · `tax` · `doctor` · `serve` · `flows {list,propose,confirm,reject,sale}` ·
 `accounts {list,add,set,import,accrue,propose-interest}` ·
 `look-through {import,list,show,exposure,concentration}` ·
-`vorabpauschale {forecast,propose,list,check}`
+`vorabpauschale {forecast,propose,list,check}` · `scenario {sell,harvest}`
 
 Plus [`run.py`](../run.py): one file, runnable from an IDE, that starts the
 server and opens a browser once it answers.
@@ -234,7 +242,9 @@ Ordered by value per unit of risk, not by appeal.
    this entry's premise was accurate. See §10 and ADR 0007. The `NotBookable`
    refusal it describes was correct and is retained for the next kind that
    lacks a rule; `test_api.py` removes a rule to exercise it.
-5. **Scenario / what-if**, last. It is the most fun and the least load-bearing.
+5. ~~**Scenario / what-if**, last.~~ **Done**, and the scoping was the whole
+   decision: the *tax* question has an exact answer and the *market* question
+   does not. See §11 and ADR 0008.
 
 ### If you add a front end
 
@@ -422,3 +432,74 @@ A reminder — "the 2025 charge has not been proposed and it is February" — wo
 be the obvious next step and needs no new data. The per-lot month pro-ration is
 lost in the aggregation, which is the one place the arithmetic is coarser than
 `forecast_vorabpauschale` can compute.
+
+---
+
+## 11. What v2 added: tax scenarios
+
+No migration. `core/scenario.py` composes what already exists and writes
+nothing. ADR 0008 has the reasoning.
+
+### The scoping was the decision
+
+"What-if" is unbounded. The version the original 45-table design specified --
+Monte Carlo projection via block bootstrap -- would have undone four ADRs of
+refusing to invent data, and ADR 0003 had already cut it once.
+
+So: **the tax question, which has an exact answer, and not the market question,
+which does not.** Every figure is conditional on the last observed close, and a
+stale price is named rather than used as though it were today's. There is no
+assumed-return parameter anywhere, and adding one would be the single easiest
+way to make this tool dishonest.
+
+### Two properties hold it together
+
+| Property | Why it matters |
+|---|---|
+| **It agrees with the sale it models** | A scenario that mispredicts the disposal it describes is a wrong number with the authority of a computed one. `test_the_scenario_matches_what_actually_booking_the_sale_produces` books the sale for real, rebuilds, and compares to the cent. |
+| **The marginal figure is the answer** | The same gain costs nothing or 26.375% depending only on what the year's allowance absorbed. `sell()` computes the year with and without the sale and reports the difference -- deliberately a difference of two rounded yearly bills, not a standalone product, because that is what the owner is actually charged. |
+
+### Watch for
+
+- `harvest()` calls `sell()` once per holding. Fine at ten, wrong shape at a
+  thousand.
+- Every harvest figure sells the **whole** holding. Partial sales realise the
+  oldest lots first and carry a different gain per unit; `pt scenario sell
+  --qty` is the exact answer.
+- `core/scenario.py` is the **seventh** entry in `test_fx.py`'s conversion
+  allowlist, and the test now asserts that count. Before adding an eighth, ask
+  why that module knows about currency at all -- `returns.py`, `tax.py` and the
+  entire API manage without.
+
+### The one place two v2 features check each other
+
+`doctor.check_teilfreistellung_against_holdings` uses look-through constituents
+to notice a fund claiming the 30% equity exemption while holding mostly bonds.
+A **warning, never an error**: the rate follows the fund's Anlagebedingungen,
+not its holdings, so the tool can prompt but cannot correct.
+
+---
+
+## 12. If you are picking this up next
+
+v2 closed every item v1 named. There is no queue. What follows is what the work
+itself surfaced, in no particular order:
+
+- **Broker cash-flow import** (v1's item 2, declined rather than dropped). Still
+  the highest value per line of code if a statement source exists. See §6.
+- **Attribution per instrument and per currency.** The daily terms are already
+  computed per position in `attribution.daily_terms` and summed before being
+  stored; the change is where the aggregation happens, not the arithmetic.
+- **A Vorabpauschale reminder.** Nothing schedules `pt vorabpauschale propose`.
+  "The 2026 charge has not been proposed and it is February" needs no new data.
+- **Issuer mapping for concentration.** Currently groups on identifier where
+  files supply one and on the upper-cased name otherwise, so it understates.
+  Wait until a real holdings file shows the problem -- nothing in the example
+  corpus does.
+
+**And the habit worth keeping.** ADR 0006's Context section exists because a
+decision record claimed a feature shipped when it never had, this document
+repeated the claim, and it cost a planning cycle. One `SELECT count(...)`
+disproved it. Before planning around anything §2 to §11 asserts, query for it.
+The two items built after that lesson both started with a verification step,
+and one of the two premises was wrong again.
