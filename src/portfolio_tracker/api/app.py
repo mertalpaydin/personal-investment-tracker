@@ -30,6 +30,7 @@ from portfolio_tracker.api.render import render_dashboard
 from portfolio_tracker.core import (
     attribution,
     fx,
+    glossary,
     goal,
     inbox,
     incoming,
@@ -492,8 +493,30 @@ def allowance(
             if not excluded.is_empty
             else None,
         },
-        "disclaimer": ("Planning worksheet. The bank's Steuerbescheinigung is authoritative."),
+        "disclaimer": glossary.PLANNING_ONLY,
+        # Additive. Existing keys are untouched; these carry the plain-English
+        # name and a sentence of explanation for each statutory term above, so
+        # a reader who does not speak German is not left decoding field names.
+        "labels": glossary.labels_for(_ALLOWANCE_TERMS),
+        "glossary": glossary.glossary_for(_ALLOWANCE_TERMS),
     }
+
+
+#: The statutory concepts the allowance response uses, in reading order.
+_ALLOWANCE_TERMS = (
+    "statutory_cap_eur",
+    "vorabpauschale_eur",
+    "teilfreistellung_eur",
+    "allowance_used_eur",
+    "allowance_remaining_eur",
+    "AKTIEN",
+    "SONSTIGE",
+    "estimated_tax_eur",
+    "freistellungsauftrag_eur",
+    "steuerbescheinigung",
+)
+
+_VAP_TERMS = ("vorabpauschale", "basisertrag_eur", "basiszins", "teilfreistellung_pct")
 
 
 @app.get("/api/tax/vorabpauschale")
@@ -525,6 +548,88 @@ def vorabpauschale_forecast(
             for r in rows
             if r.taxable_eur > ZERO
         ],
+        "labels": glossary.labels_for(_VAP_TERMS),
+        "glossary": glossary.glossary_for(_VAP_TERMS),
+        "disclaimer": glossary.PLANNING_ONLY,
+    }
+
+
+class TaxConstantUpdate(BaseModel):
+    """The published rates for one tax year.
+
+    ``basiszins`` may be zero: the ministry has published 0.00% before, and it
+    is a real answer meaning "no advance charge this year". Only a negative
+    figure is refused.
+    """
+
+    tax_year: int = Field(ge=2000, le=2100)
+    basiszins: Decimal = Field(ge=0, le=1, description="e.g. 0.032 for 3.20%")
+    kest_rate: Decimal = Field(default=Decimal("0.25"), ge=0, le=1)
+    soli_rate: Decimal = Field(default=Decimal("0.055"), ge=0, le=1)
+
+
+@app.get("/api/tax/constants")
+def tax_constants(conn: sqlite3.Connection = Depends(get_db)) -> dict[str, Any]:
+    """The published rates this tool has been told about, and which are missing.
+
+    Without the base rate for a year, the advance charge for that year cannot
+    be computed and every tax endpoint correctly refuses rather than returning
+    zero. Until now the only way to supply it was to write to the database by
+    hand, which left the refusal permanent for anyone who does not. It is a
+    number off a government publication, so the page can take it.
+    """
+    rows = conn.execute(
+        "SELECT tax_year, basiszins, kest_rate, soli_rate FROM tax_constant ORDER BY tax_year"
+    ).fetchall()
+    known = {r["tax_year"] for r in rows}
+    this_year = date.today().year
+    return {
+        "years": [
+            {
+                "tax_year": r["tax_year"],
+                "basiszins": _decimal(r["basiszins"]),
+                "kest_rate": _decimal(r["kest_rate"]),
+                "soli_rate": _decimal(r["soli_rate"]),
+            }
+            for r in rows
+        ],
+        # Named explicitly so the page can offer the missing year rather than
+        # making the reader work out which one it is short of.
+        "missing_years": [y for y in range(this_year - 3, this_year + 1) if y not in known],
+        "source": (
+            "The government base rate (Basiszins) is published each January by "
+            "the Bundesfinanzministerium and applies to the year just started."
+        ),
+        "glossary": glossary.glossary_for(("basiszins", "kapitalertragsteuer")),
+    }
+
+
+@app.put("/api/tax/constants")
+def write_tax_constant(
+    payload: TaxConstantUpdate,
+    conn: sqlite3.Connection = Depends(get_writable_db),
+) -> dict[str, Any]:
+    """Record the published rates for a year. Overwrites if already present."""
+    with transaction(conn):
+        conn.execute(
+            "INSERT INTO tax_constant (tax_year, basiszins, kest_rate, soli_rate) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT (tax_year) DO UPDATE SET "
+            "basiszins = excluded.basiszins, kest_rate = excluded.kest_rate, "
+            "soli_rate = excluded.soli_rate",
+            (
+                payload.tax_year,
+                str(payload.basiszins),
+                str(payload.kest_rate),
+                str(payload.soli_rate),
+            ),
+        )
+    return {
+        "tax_year": payload.tax_year,
+        "basiszins": _decimal(payload.basiszins),
+        "note": (
+            "Stored. Tax figures for this year can now be computed; nothing was "
+            "recalculated, because they are derived on read."
+        ),
     }
 
 
