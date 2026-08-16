@@ -13,6 +13,14 @@
 /data/example/holdings/*.csv   -text -diff
 /tests/data/**/*.csv           -text -diff
 
+# ---------------------------------------------------------------
+# Vendored third-party assets. Byte-exact so the SHA-256 recorded in
+# static/vendor/PROVENANCE.md stays verifiable on every checkout,
+# whatever the local core.autocrlf happens to be. `-diff` keeps a
+# 150 KB library out of every review.
+# ---------------------------------------------------------------
+/src/portfolio_tracker/api/static/vendor/**  -text -diff linguist-vendored
+
 *.sql   text
 *.md    text
 *.py    text

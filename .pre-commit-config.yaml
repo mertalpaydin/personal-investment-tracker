@@ -4,7 +4,11 @@
 # that terminates every Name cell in the example corpus, and `end-of-file-fixer`
 # appends a newline to files whose byte layout is the thing under test. Either
 # would leave the parser tests green while they test nothing.
-exclude: '^(data/example/|tests/data/).*\.csv$'
+#
+# `static/vendor/` is excluded for the same reason one layer along: those files
+# are committed with a recorded SHA-256, and a hook that reformats them makes
+# the recorded hash a lie.
+exclude: '^(data/example/|tests/data/).*\.csv$|^src/portfolio_tracker/api/static/vendor/'
 
 default_install_hook_types: [pre-commit, pre-push]
 
