@@ -29,6 +29,7 @@ from portfolio_tracker.core import (
     fx,
     goal,
     inbox,
+    incoming,
     look_through,
     projection,
     rebuild,
@@ -36,11 +37,16 @@ from portfolio_tracker.core import (
     scenario,
     tax,
     valuation,
+    vorabpauschale,
 )
 from portfolio_tracker.db.connection import DEFAULT_DB_PATH, connect, transaction
 from portfolio_tracker.money import ZERO
 
 DB_PATH = Path(DEFAULT_DB_PATH)
+
+#: The drop folder. Set alongside DB_PATH by `run.py` and `pt serve`, so the
+#: page and the database always describe the same installation.
+INCOMING_DIR = Path(incoming.DEFAULT_INCOMING)
 
 
 class GoalUpdate(BaseModel):
@@ -493,7 +499,7 @@ def allowance(
 
 
 @app.get("/api/tax/vorabpauschale")
-def vorabpauschale(
+def vorabpauschale_forecast(
     conn: sqlite3.Connection = Depends(get_db),
     tax_year: int = Query(..., alias="year"),
 ) -> dict[str, Any]:
@@ -997,6 +1003,133 @@ def look_through_status(
         "note": (
             "Import a composition with `pt look-through import`. A fund with none is "
             "reported on its wrapper's own currency and sector, which is a listing fact."
+        ),
+    }
+
+
+@app.get("/api/incoming")
+def incoming_files(conn: sqlite3.Connection = Depends(get_db)) -> dict[str, Any]:
+    """What is sitting in the drop folder, and what each file appears to be.
+
+    Read-only and safe to call on every page load. The detection is a proposal:
+    a holdings file does not say which fund it belongs to, and guessing would
+    attach one issuer's constituents to another fund without erroring anywhere.
+    The person chooses, with the evidence in front of them.
+    """
+    found = incoming.scan(INCOMING_DIR)
+    funds = [
+        {"instrument": r["import_key"], "name": r["name"]}
+        for r in conn.execute(
+            "SELECT import_key, name FROM instrument WHERE is_fund = 1 ORDER BY import_key"
+        )
+    ]
+    return {
+        "folder": str(INCOMING_DIR),
+        "files": [
+            {
+                "name": f.name,
+                "size_bytes": f.size_bytes,
+                "kind": f.kind,
+                "summary": f.summary,
+                "problem": f.problem,
+                "importable": f.importable,
+                "holdings": f.lines or None,
+                "weight_sum": _decimal(f.weight_sum),
+                "unit": f.unit,
+                "columns": f.columns,
+                "suggested_as_of": (f.suggested_as_of.isoformat() if f.suggested_as_of else None),
+            }
+            for f in found
+        ],
+        "funds": funds,
+        "note": (
+            "Drop issuer holdings files here. Nothing is imported until you choose "
+            "which fund a file belongs to and confirm it."
+        ),
+    }
+
+
+class ImportRequest(BaseModel):
+    """Which dropped file, against which fund, published when.
+
+    All three are required and none is inferred. The file names the issuer's
+    own product code at best, and attaching constituents to the wrong fund
+    corrupts every exposure figure silently.
+    """
+
+    name: str = Field(min_length=1, description="Filename in the incoming folder")
+    instrument: str = Field(min_length=1, description="Import key or ISIN of the fund")
+    as_of: date = Field(description="The date the FUND published this composition")
+
+
+@app.post("/api/incoming/import")
+def import_incoming(
+    request: ImportRequest,
+    conn: sqlite3.Connection = Depends(get_writable_db),
+) -> dict[str, Any]:
+    """Import one dropped holdings file. A real write, so it asks for one."""
+    try:
+        with transaction(conn):
+            result = incoming.import_holdings(
+                conn,
+                name=request.name,
+                instrument=request.instrument,
+                as_of=request.as_of,
+                directory=INCOMING_DIR,
+            )
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+    return {
+        "instrument": result.instrument,
+        "as_of": result.as_of.isoformat(),
+        "holdings": result.holdings,
+        "replaced": result.replaced,
+        "archived_to": result.archived_to,
+        "rebuild_required": False,
+        "note": "Exposure is derived on read, so this takes effect immediately.",
+    }
+
+
+@app.post("/api/vorabpauschale/propose")
+def propose_vorabpauschale(
+    tax_year: int = Query(..., alias="year", description="The year the charge accrues FOR"),
+    conn: sqlite3.Connection = Depends(get_writable_db),
+) -> dict[str, Any]:
+    """Compute the January charge and queue it for review.
+
+    Proposing is not booking. The figures land in the same review inbox as
+    every other inference, and reach the ledger only when a person confirms
+    them -- which matters more here than anywhere else, because this is the one
+    number that ends up on an *Anlage KAP*.
+    """
+    try:
+        with transaction(conn):
+            result = vorabpauschale.propose(conn, tax_year=tax_year)
+    except tax.TaxDataMissing as exc:
+        # A refusal, not a zero. Same rule as /api/tax/*.
+        raise HTTPException(409, str(exc)) from exc
+
+    return {
+        "tax_year": tax_year,
+        "queued": result.created,
+        "already_pending": result.already_pending,
+        "owing_nothing": result.skipped_zero,
+        "total_taxable_eur": _decimal(result.total_taxable_eur),
+        "charges": [
+            {
+                "instrument": c.import_key,
+                "gross_eur": _decimal(c.gross_eur),
+                "taxable_eur": _decimal(c.taxable_eur),
+                "basis": c.basis,
+            }
+            for c in result.charges
+        ],
+        "note": (
+            "Check the Basiszins and each fund's Teilfreistellung before confirming. "
+            "The rate follows the fund's Anlagebedingungen, not what it holds."
         ),
     }
 

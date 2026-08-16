@@ -583,7 +583,12 @@ def serve(
         raise typer.Exit(code=1) from exc
 
     api.DB_PATH = Path(db)
+    # The page's drop folder sits beside the database, so a second database in
+    # another directory does not quietly share the first one's incoming files.
+    api.INCOMING_DIR = Path(db).parent / "incoming"
+    api.INCOMING_DIR.mkdir(parents=True, exist_ok=True)
     typer.echo(f"serving {db} at http://{host}:{port}/  (debug page at /)")
+    typer.echo(f"drop holdings files in {api.INCOMING_DIR}")
     uvicorn.run(api.app, host=host, port=port, log_level="warning")
 
 

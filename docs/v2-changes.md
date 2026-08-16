@@ -286,3 +286,44 @@ one unusual run. The bootstrap therefore reports dates *earlier* than the 8%
 row of the sensitivity table, which is arithmetically correct and exactly why
 the sample window is printed next to every decile. If that number ever starts
 being treated as a rate to plan on, the feature has failed.
+
+---
+
+## The page, and the drop folder
+
+The owner does not use a command line. Five CLI groups had been built for
+someone who told me that, which was the mistake; `run.py` is the interface.
+
+### What changed
+
+`run.py` migrates and rebuilds on startup instead of printing instructions.
+Both are safe unasked — a migration adds structure, a rebuild recomputes pure
+functions of the ledger — and neither can touch a trade, a price or a confirmed
+decision. A migration that *fails* still stops everything: that means the
+database and the checkout disagree about history.
+
+`core/incoming.py` watches `data/incoming/`. Files dropped there are detected
+and summarised on the page; nothing is imported until a person picks the fund
+and the publication date.
+
+The page gained: the drop folder, a Vorabpauschale compute button, a sale
+pricer, the projection table with an editable contribution, and the per-holding
+attribution.
+
+### The two properties that matter
+
+| Property | Why |
+|---|---|
+| **`resolve()` takes a name, never a path** | A web surface that accepts a path reads whatever it is pointed at, localhost or not. Anything resolving outside the folder is rejected rather than sanitised — a sanitised path behaves however clever the sanitiser was, which is not checkable. |
+| **Detection proposes; a person decides** | A holdings file names the issuer's product code at best. Guessing which fund it belongs to would attach one issuer's constituents to another and corrupt every exposure figure with no error anywhere. The scan reports what it *read* — columns matched, line count, weight sum — and the fund is a dropdown. |
+
+Imported files move to `imported/` with a timestamp rather than being deleted,
+so the folder shows what is still waiting and nothing supplied is destroyed.
+
+### Watch for
+
+Other file shapes — positions exports, price and FX series — are **detected and
+named but not importable from the page**. A positions export establishes the
+whole ledger and its report needs reading before anything is written, so it
+stays a command-line act. If that becomes routine it needs the same
+propose-then-confirm treatment rather than a quiet import button.

@@ -89,10 +89,19 @@ uv run pt serve                     # http://127.0.0.1:8000/
 ```
 
 Or just run [`run.py`](run.py) — from an IDE's run button or `python run.py`. It
-checks the database is present and migrated, picks a free port if 8000 is taken,
-waits for the server to actually answer, and only then opens the browser. That
-last step is the point: opening it immediately races a cold start and loses,
-which means a connection-refused page and a manual reload every time.
+applies any pending schema updates, rebuilds the derived figures if that left
+them stale, picks a free port if 8000 is taken, waits for the server to actually
+answer, and only then opens the browser.
+
+The first two matter more than they look. A program that knows what needs doing
+and prints instructions instead has just moved its own work onto you. Both are
+safe unasked — a migration adds structure, a rebuild recomputes tables that are
+pure functions of the ledger — and neither can touch a trade, a price, or
+anything you confirmed. **Everything that could stays on the page.**
+
+The last step is the point too: opening the browser immediately races a cold
+start and loses, which means a connection-refused page and a manual reload
+every time.
 
 `/` and `/debug` serve the same server-rendered page — no build step, no
 JavaScript framework, no CDN. The JSON lives under `/api/*`, with OpenAPI at
@@ -123,6 +132,9 @@ GET  /api/accounts/deposits    deposit terms, including withholding at source
 GET  /api/tax/allowance        with a mandatory out-of-scope block
 GET  /api/tax/vorabpauschale   §18 InvStG forecast
 GET  /api/pending              inferences that have not reached the ledger
+GET  /api/incoming             what is in the drop folder, and what each file is
+POST /api/incoming/import      import one dropped holdings file, against a fund you pick
+POST /api/vorabpauschale/propose   compute the January charge and queue it
 GET  /api/scenario/sell        what selling a holding today would cost in tax
 GET  /api/scenario/harvest     what could be sold to use up this year's allowance
 GET  /api/goal  · PUT          progress toward the target
@@ -204,6 +216,24 @@ by type. And it does not book itself — the Basiszins is published once a year 
 the Bundesfinanzministerium and the Teilfreistellung follows each fund's
 *Anlagebedingungen* rather than its holdings, so this is the one inference whose
 output goes on a tax return and a person confirms it.
+
+## Everything routine lives on the page
+
+The command line is for the initial bulk load. After that, `run.py` is the whole
+interface — it migrates and rebuilds itself, and the page carries the controls:
+
+| On the page | What it does |
+| --- | --- |
+| **Drop folder** | Put issuer holdings files in `data/incoming/`. The page says what it found in each — how many holdings, what the weights sum to, which columns it matched — and you pick the fund and publication date. Imported files move to `imported/` rather than being deleted. |
+| **Vorabpauschale** | Compute the January charge for a year; it queues into the review inbox like every other inference. |
+| **Awaiting review** | Confirm or reject inferred contributions, distributions, interest and tax charges, with the arithmetic beside the button. |
+| **What would selling cost?** | Price any holding, whole or partial, against today's close. |
+| **Goal** | Set the target; override the monthly contribution the projection assumes. |
+
+Nothing is imported or booked without you choosing it. The detection in the drop
+folder is a *proposal* — a holdings file does not reliably say which fund it
+belongs to, and attaching one issuer's constituents to the wrong fund would
+corrupt every exposure figure without erroring anywhere.
 
 ## When you reach the target
 

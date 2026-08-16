@@ -42,6 +42,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
 DB_PATH = REPO_ROOT / "data" / "portfolio.db"
+#: Drop issuer holdings files here and they appear on the page. Created on
+#: startup, because a folder you are told about but have to make yourself is
+#: a folder nobody uses.
+INCOMING_DIR = REPO_ROOT / "data" / "incoming"
 HOST = "127.0.0.1"
 PREFERRED_PORT = 8000
 
@@ -145,6 +149,8 @@ def main() -> int:
         return 1
 
     api.DB_PATH = DB_PATH
+    api.INCOMING_DIR = INCOMING_DIR
+    INCOMING_DIR.mkdir(parents=True, exist_ok=True)
     port = _free_port(PREFERRED_PORT)
     url = f"http://{HOST}:{port}/"
     if port != PREFERRED_PORT:
@@ -158,7 +164,8 @@ def main() -> int:
         daemon=True,
     ).start()
 
-    print(f"Portfolio Tracker: {url}   (Ctrl-C to stop)", flush=True)
+    print(f"Portfolio Tracker: {url}   (Ctrl-C to stop)")
+    print(f"Drop holdings files in: {INCOMING_DIR}", flush=True)
     with contextlib.suppress(KeyboardInterrupt):  # Ctrl-C is how you stop it
         uvicorn.run(api.app, host=HOST, port=port, log_level="warning")
     return 0

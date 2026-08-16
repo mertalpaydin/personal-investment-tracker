@@ -14,8 +14,18 @@ from __future__ import annotations
 import html
 import sqlite3
 from decimal import Decimal
+from pathlib import Path
 
-from portfolio_tracker.core import attribution, goal, inbox, look_through, returns
+from portfolio_tracker.core import (
+    attribution,
+    goal,
+    inbox,
+    incoming,
+    look_through,
+    projection,
+    returns,
+    vorabpauschale,
+)
 from portfolio_tracker.money import ZERO
 
 _STYLE = """
@@ -190,6 +200,7 @@ def render_dashboard(conn: sqlite3.Connection, *, person_id: int = 1) -> str:
     )
 
     parts.append(_goal_section(conn, person_id))
+    parts.append(_projection_section(conn, person_id))
 
     parts.append("<h2>Return</h2><div class='cards'>")
     parts.append(_card("Time-weighted", _pct(summary.twr)))
@@ -238,9 +249,15 @@ def render_dashboard(conn: sqlite3.Connection, *, person_id: int = 1) -> str:
         )
     parts.append("</table></div>")
 
+    parts.append(_incoming_section(conn))
+
     parts.append(_attribution_section(conn, person_id))
 
     parts.append(_exposure_section(conn, person_id))
+
+    parts.append(_scenario_section(conn, person_id))
+
+    parts.append(_vorabpauschale_section(conn, person_id))
 
     parts.append(_review_section(conn))
 
@@ -335,6 +352,295 @@ def _review_section(conn: sqlite3.Connection) -> str:
             "</div></div>"
         )
     return "\n".join(parts)
+
+
+_INCOMING_SCRIPT = """
+function ptImport(name, button) {
+  const row = document.getElementById('f' + button.dataset.row);
+  const fund = row.querySelector('select[name=fund]').value;
+  const when = row.querySelector('input[name=asof]').value;
+  if (!fund) { alert('Choose which fund this file belongs to.'); return; }
+  if (!when) { alert('Give the date the fund published it.'); return; }
+  button.disabled = true; button.textContent = 'Importing...';
+  ptPost('/api/incoming/import', {name: name, instrument: fund, as_of: when})
+    .then(() => location.reload())
+    .catch(e => { alert(e); button.disabled = false; button.textContent = 'Import'; });
+}
+function ptProposeVap(button) {
+  const year = document.getElementById('vapyear').value;
+  button.disabled = true; button.textContent = 'Computing...';
+  ptPost('/api/vorabpauschale/propose?year=' + encodeURIComponent(year), {})
+    .then(r => { alert(r.queued + ' charge(s) queued for review, EUR ' +
+                       (r.total_taxable_eur || 0).toFixed(2) + ' taxable.');
+                 location.reload(); })
+    .catch(e => { alert(e); button.disabled = false; button.textContent = 'Compute'; });
+}
+"""
+
+
+def _incoming_section(conn: sqlite3.Connection) -> str:
+    """The drop folder: what is in it, and what the tool thinks each file is.
+
+    The detection is a proposal and the page makes that obvious -- the fund and
+    the publication date are empty controls the owner fills in. A holdings file
+    does not say which fund it belongs to, and a wrong guess would attach one
+    issuer's constituents to another fund and corrupt every exposure figure
+    without erroring anywhere.
+    """
+    found = incoming.scan(_incoming_dir())
+    funds = conn.execute(
+        "SELECT import_key, name FROM instrument WHERE is_fund = 1 ORDER BY import_key"
+    ).fetchall()
+
+    parts = [
+        f"<script>{_INCOMING_SCRIPT}</script>",
+        "<h2>Drop folder</h2>",
+        f"<p class='note'>Put issuer holdings files in <code>{html.escape(str(_incoming_dir()))}"
+        "</code> and they appear here. Nothing is imported until you say which fund a "
+        "file is for &mdash; the file itself does not reliably say, and attaching one "
+        "fund's constituents to another would corrupt every exposure figure silently.</p>",
+    ]
+    if not found:
+        parts.append("<p class='note'>Nothing waiting.</p>")
+        return "\n".join(parts)
+
+    options = "".join(
+        f"<option value='{html.escape(f['import_key'])}'>{html.escape(f['import_key'])}"
+        f" &mdash; {html.escape(f['name'][:34])}</option>"
+        for f in funds
+    )
+
+    parts.append("<div class='wrap'><table>")
+    parts.append("<tr><th>File</th><th>What it looks like</th><th>Fund</th><th>Published</th>"
+                 "<th></th></tr>")  # fmt: skip
+    for index, entry in enumerate(found):
+        if entry.importable:
+            when = entry.suggested_as_of.isoformat() if entry.suggested_as_of else ""
+            control = f"<select name='fund'><option value=''>choose…</option>{options}</select>"
+            date_input = f"<input name='asof' type='date' value='{when}'>"
+            button = (
+                f"<button data-row='{index}' "
+                f'onclick="ptImport({entry.name!r}, this)">Import</button>'
+            )
+            detail = html.escape(entry.summary)
+        else:
+            control = date_input = "<span class='note'>&mdash;</span>"
+            button = ""
+            detail = html.escape(entry.problem or entry.summary or "not recognised")
+            if entry.problem:
+                detail = f"<span class='note warn'>{detail}</span>"
+
+        parts.append(
+            f"<tr id='f{index}'>"
+            f"<td><strong>{html.escape(entry.name)}</strong> "
+            f"<span class='note'>{entry.size_bytes:,} bytes</span></td>"
+            f"<td class='note'>{detail}</td>"
+            f"<td>{control}</td><td>{date_input}</td><td class='actions'>{button}</td>"
+            "</tr>"
+        )
+    parts.append("</table></div>")
+    parts.append(
+        "<p class='note'>Imported files move to <code>imported/</code> rather than being "
+        "deleted, so the folder shows what is still waiting and nothing you supplied is "
+        "destroyed.</p>"
+    )
+    return "\n".join(parts)
+
+
+def _vorabpauschale_section(conn: sqlite3.Connection, person_id: int) -> str:
+    """The January charge: what is stored, and a button to compute it.
+
+    Computing only *proposes*. The charges land in the review inbox above,
+    where confirming is a deliberate act -- which matters more for this kind
+    than any other, since it is the one figure that ends up on an *Anlage KAP*
+    and it rests on a rate published once a year plus a Teilfreistellung
+    classification the tool cannot verify.
+    """
+    stored = conn.execute(
+        "SELECT v.tax_year, v.status, i.import_key, v.taxable_eur, v.basisertrag_eur "
+        "FROM vorabpauschale v JOIN instrument i ON i.id = v.instrument_id "
+        "ORDER BY v.tax_year DESC, i.import_key"
+    ).fetchall()
+    latest = conn.execute("SELECT max(date) AS d FROM portfolio_daily").fetchone()["d"]
+    default_year = (int(latest[:4]) - 1) if latest else 2025
+
+    booked = vorabpauschale.taxable_income(conn, tax_year=default_year + 1, person_id=person_id)
+
+    parts = [
+        "<h2>Vorabpauschale</h2>",
+        "<p class='note'>German investors owe tax each January on a <em>deemed</em> "
+        "distribution from every accumulating fund that rose. No money arrives; the bank "
+        "withholds anyway. Confirming a charge also raises the cost basis, so the same "
+        "euros are not taxed again when you sell.</p>",
+        "<form class='goal' onsubmit='event.preventDefault()'>"
+        "<label for='vapyear'>Charge for year</label>"
+        f"<input id='vapyear' type='number' min='2018' max='2100' value='{default_year}'>"
+        "<button onclick='ptProposeVap(this)'>Compute</button>"
+        "</form>",
+    ]
+
+    if stored:
+        parts.append("<div class='wrap'><table>")
+        parts.append(
+            "<tr><th>Year</th><th>Fund</th><th>Basisertrag</th><th>Taxable</th><th>Status</th></tr>"
+        )
+        for row in stored:
+            state = (
+                "<span class='tag'>booked</span>"
+                if row["status"] == "ACTUAL"
+                else "<span class='tag'>not in the ledger</span>"
+            )
+            parts.append(
+                f"<tr><td>{row['tax_year']}</td>"
+                f"<td><strong>{html.escape(row['import_key'])}</strong></td>"
+                f"<td>{_eur(row['basisertrag_eur'])}</td>"
+                f"<td>{_eur(row['taxable_eur'])}</td><td>{state}</td></tr>"
+            )
+        parts.append("</table></div>")
+
+    if booked:
+        total = sum((amount for _, amount in booked), ZERO)
+        parts.append(
+            f"<p class='note'>{_eur(total)} EUR of it is booked as {default_year + 1} income "
+            "and is inside the tax figures. Tax is due on it although no money arrived.</p>"
+        )
+    elif stored:
+        parts.append(
+            "<p class='note warn'>Nothing is booked yet, so none of this is in the tax "
+            "figures. Confirm the proposals under <em>Awaiting review</em>.</p>"
+        )
+    return "\n".join(parts)
+
+
+_SCENARIO_SCRIPT = """
+function ptPriceSale() {
+  const fund = document.getElementById('selfund').value;
+  const qty = document.getElementById('selqty').value;
+  const out = document.getElementById('selout');
+  if (!fund) { out.innerHTML = ''; return; }
+  let url = '/api/scenario/sell?instrument=' + encodeURIComponent(fund);
+  if (qty) url += '&qty=' + encodeURIComponent(qty);
+  out.innerHTML = "<p class='note'>pricing...</p>";
+  fetch(url).then(r => r.json().then(j => r.ok ? j : Promise.reject(j.detail)))
+    .then(s => {
+      const rows = s.fifo_consumes.map(l =>
+        `<tr><td>${l.opened}</td><td>${l.quantity.toLocaleString()}</td>` +
+        `<td>${l.cost_basis_eur.toFixed(2)}</td><td>${l.proceeds_eur.toFixed(2)}</td>` +
+        `<td>${l.gross_gain_eur.toFixed(2)}</td></tr>`).join('');
+      out.innerHTML =
+        `<div class='cards'>
+           <div class='card'><div class='k'>Proceeds</div>
+             <div class='v'>${s.proceeds_eur.toFixed(2)}</div></div>
+           <div class='card'><div class='k'>Taxable gain</div>
+             <div class='v'>${s.taxable_gain_eur.toFixed(2)}</div></div>
+           <div class='card total'><div class='k'>Tax this sale adds</div>
+             <div class='v'>${s.marginal_tax_eur.toFixed(2)}</div>
+             <div class='note'>allowance left after: ${
+               s.allowance.remaining_after_eur.toFixed(2)}</div></div>
+         </div>
+         <p class='note'>FIFO would consume these lots &mdash; selling part of a holding
+          realises the <em>oldest</em> units, which usually carry a different gain.</p>
+         <div class='wrap'><table><tr><th>Opened</th><th>Units</th><th>Cost</th>
+           <th>Proceeds</th><th>Gain</th></tr>${rows}</table></div>
+         <ul class='caveats'>${s.caveats.map(c => '<li>' + c + '</li>').join('')}</ul>`;
+    })
+    .catch(e => { out.innerHTML = "<p class='note warn'>" + e + "</p>"; });
+}
+"""
+
+
+def _scenario_section(conn: sqlite3.Connection, person_id: int) -> str:
+    """Price a sale before making it. Reads only; writes nothing, and says so."""
+    holdings = conn.execute(
+        "SELECT DISTINCT i.import_key, i.name FROM lot l "
+        "JOIN instrument i ON i.id = l.instrument_id "
+        "JOIN account a ON a.id = l.account_id "
+        "WHERE l.qty_remaining > 0 AND a.person_id = ? ORDER BY i.import_key",
+        (person_id,),
+    ).fetchall()
+    if not holdings:
+        return ""
+
+    options = "".join(
+        f"<option value='{html.escape(h['import_key'])}'>{html.escape(h['import_key'])}"
+        f" &mdash; {html.escape(h['name'][:34])}</option>"
+        for h in holdings
+    )
+    return (
+        f"<script>{_SCENARIO_SCRIPT}</script>"
+        "<h2>What would selling cost?</h2>"
+        "<p class='note'>Priced at the last observed close. Nothing is written, and no "
+        "future return is assumed anywhere in the figure. The number that matters is what "
+        "the sale <em>adds</em> to this year's tax: the same gain costs nothing or 26.375% "
+        "depending only on what your allowance has already absorbed.</p>"
+        "<form class='goal' onsubmit='event.preventDefault();ptPriceSale()'>"
+        f"<select id='selfund'><option value=''>choose a holding…</option>{options}</select>"
+        "<label for='selqty'>units (blank = all)</label>"
+        "<input id='selqty' type='number' step='any' min='0'>"
+        "<button type='submit'>Price it</button>"
+        "</form>"
+        "<div id='selout'></div>"
+    )
+
+
+def _projection_section(conn: sqlite3.Connection, person_id: int) -> str:
+    """When the target is reached, across stated returns and the holdings' own history."""
+    try:
+        result = projection.project(conn, person_id=person_id)
+    except (LookupError, projection.ProjectionError):
+        return ""
+    if result.already_reached:
+        return ""
+
+    rows = "".join(
+        f"<tr><td>{r.annual_return:.0%} a year</td>"
+        f"<td>{
+            html.escape(r.reached_on.isoformat())
+            if r.reached_on
+            else 'not within ' + str(result.horizon_years) + ' years'
+        }</td></tr>"
+        for r in result.scenarios
+    )
+    parts = [
+        "<h2>When you reach the target</h2>",
+        "<p class='note'>These are <strong>assumptions, not predictions</strong>. The tool "
+        "does not choose between them &mdash; the spread between the rows is the answer, "
+        "because it shows how much the date rests on the assumption.</p>",
+        "<div class='wrap'><table>",
+        "<tr><th>If the portfolio returns…</th><th>Target reached</th></tr>",
+        rows,
+        "</table></div>",
+        # The contribution figure is a measurement of the owner's own behaviour
+        # and is the input they are most likely to want to change.
+        f"<p class='note'>{html.escape(result.contributions.sentence)}</p>",
+        "<form class='goal' onsubmit=\"event.preventDefault();"
+        "location.search='?monthly='+this.monthly.value\">"
+        "<label for='monthly'>Assume I save</label>"
+        f"<input id='monthly' name='monthly' type='number' step='50' min='0' "
+        f"value='{result.contributions.monthly_eur:f}'>"
+        "<button type='submit'>EUR a month</button>"
+        "</form>",
+    ]
+
+    if result.bootstrap is not None:
+        b = result.bootstrap
+        parts.append(
+            "<p class='note'>Resampling the price history of what you hold today "
+            f"({b.model.days} days, {b.block_days}-day blocks): middle path "
+            f"<strong>{b.median}</strong>, "
+            f"between {b.earliest_decile} and {b.latest_decile}.</p>"
+        )
+        parts.append("<ul class='caveats'>")
+        parts += [f"<li>{html.escape(c)}</li>" for c in b.caveats]
+        parts.append("</ul>")
+    return "\n".join(parts)
+
+
+def _incoming_dir() -> Path:
+    """Read from the app module so `run.py` and the tests can point it elsewhere."""
+    from portfolio_tracker.api import app as api
+
+    return Path(api.INCOMING_DIR)
 
 
 def _attribution_section(conn: sqlite3.Connection, person_id: int) -> str:
