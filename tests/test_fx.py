@@ -215,16 +215,23 @@ def test_only_modules_permitted_to_convert_contain_fx_arithmetic() -> None:
         "core/valuation.py",  # daily revaluation of positions
         "core/cash.py",  # freezes a confirmed flow; revalues cash daily
         "core/accounts.py",  # revalues a deposit's accrued interest daily
+        # Freezes the euro leg of a trade a person entered by hand, at the
+        # rate for its trade date. The same operation core/cash.py performs
+        # for a flow the tool inferred, and admitted on the same grounds: the
+        # rule is "a rate pinned to a date", and `trade_date` is that date.
+        # It lives in core precisely so the HTTP layer does not have to --
+        # `api/transactions.py` hands it a validated trade and converts nothing.
+        "core/ledger.py",
         # Prices a hypothetical sale at the rate observed on a stated date --
         # the same operation valuation.py performs, for a quantity that has not
         # been sold. Admitted deliberately rather than by reflex: the rule is
         # "a rate pinned to a date", and `as_of` is that date.
         "core/scenario.py",
     }
-    # The list is short because it is meant to be. If it needs a seventh entry,
+    # The list is short because it is meant to be. If it needs a ninth entry,
     # the question to answer first is why that module knows about currency at
     # all -- returns.py, tax.py and the whole API manage without.
-    assert len(allowed) == 7
+    assert len(allowed) == 8
     offenders = []
     for path in root.rglob("*.py"):
         rel = path.relative_to(root).as_posix()

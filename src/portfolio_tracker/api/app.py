@@ -24,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from portfolio_tracker import __version__
-from portfolio_tracker.api import admin, deps
+from portfolio_tracker.api import admin, deps, transactions
 from portfolio_tracker.api.deps import configure, get_db, get_writable_db
 from portfolio_tracker.api.render import render_dashboard
 from portfolio_tracker.core import (
@@ -1795,6 +1795,10 @@ def dashboard(
         return HTMLResponse(f"<p>{exc}</p>", status_code=404)
 
 
+# Recording a trade lives in its own module: it is the largest single feature
+# on this surface and app.py is long enough. Included after the routes above
+# so the OpenAPI page lists reporting before recording.
+app.include_router(transactions.router)
 app.include_router(admin.router)
 
 

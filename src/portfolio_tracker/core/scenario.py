@@ -84,6 +84,10 @@ class SaleScenario:
     proceeds_eur: Decimal = ZERO
     cost_basis_eur: Decimal = ZERO
     gross_gain_eur: Decimal = ZERO
+    #: Dealing costs, already subtracted from `proceeds_eur`. Reported so the
+    #: page can show what the fee did rather than leaving the reader to
+    #: reconcile a total against a price times a quantity.
+    fees_eur: Decimal = ZERO
     vap_offset_eur: Decimal = ZERO
     teilfreistellung_eur: Decimal = ZERO
     taxable_gain_eur: Decimal = ZERO
@@ -146,6 +150,8 @@ def sell(
     person_id: int = 1,
     as_of: date | None = None,
     tax_year: int | None = None,
+    price_local: Decimal | None = None,
+    fees_local: Decimal = ZERO,
 ) -> SaleScenario:
     """Price a hypothetical sale at the latest observed price.
 
@@ -153,18 +159,38 @@ def sell(
     consumed, which is not a detail: selling half a position realises the
     *oldest* half, and on a holding built up over two years those lots can have
     a completely different cost basis from the newest ones.
+
+    ``price_local`` and ``fees_local`` exist so that entering a real trade can
+    be previewed by *this* function rather than by a second implementation of
+    the same tax chain. When the user types a sale into the page, the price is
+    the one on their contract note, not the last close -- but every other step,
+    FIFO order through advance-charge relief through partial exemption to the
+    allowance, must be identical to what the ledger will do when it is saved.
+    Two implementations of that chain is precisely how a preview comes to
+    disagree with the thing it previews.
+
+    Both default to the previous behaviour, so `harvest()` and the read-only
+    scenario endpoint are unaffected. `tests/test_scenario_regression.py`
+    holds that to the letter.
     """
     on = as_of or date.today()
     year = tax_year or on.year
     row = _instrument(conn, instrument)
     instrument_id = int(row["id"])
 
-    priced = _latest_price(conn, instrument_id, on)
-    if priced is None:
-        raise ScenarioError(
-            f"no price for {row['import_key']} on or before {on}; run `pt fetch-prices` first"
-        )
-    price, price_asof = priced
+    if price_local is not None:
+        # Not an observation, so it has no age. Reporting a staleness here
+        # would attach the last close's provenance to a figure that did not
+        # come from it.
+        price, price_asof = price_local, on
+    else:
+        priced = _latest_price(conn, instrument_id, on)
+        if priced is None:
+            raise ScenarioError(
+                f"no price for {row['import_key']} on or before {on}; "
+                "update prices from Settings, or enter the price you dealt at"
+            )
+        price, price_asof = priced
 
     open_lots = [
         lots.Lot(
@@ -227,9 +253,30 @@ def sell(
         pot=tax.loss_pot_for(conn, instrument_id),
     )
 
-    for lot, used in lots.fifo_consume(open_lots, wanted):
+    # Dealing costs reduce the proceeds, and therefore the gain -- the same
+    # treatment German tax gives them. Spread across the consumed lots in
+    # proportion to quantity so the per-lot rows still add up to the totals
+    # shown above them; a fee taken off the total alone would leave the lot
+    # table visibly failing to sum.
+    consumed_plan = list(lots.fifo_consume(open_lots, wanted))
+    total_fee_eur = quantize_money(fx.to_eur(fees_local, rate)) if fees_local else ZERO
+    fee_allocated = ZERO
+
+    for index, (lot, used) in enumerate(consumed_plan):
+        if total_fee_eur:
+            # The last lot absorbs the rounding remainder, so the shares sum
+            # to the fee exactly rather than to within a cent of it.
+            fee_share = (
+                total_fee_eur - fee_allocated
+                if index == len(consumed_plan) - 1
+                else quantize_money(total_fee_eur * used / wanted)
+            )
+            fee_allocated += fee_share
+        else:
+            fee_share = ZERO
+
         proceeds_local = price * used
-        proceeds_eur = quantize_money(fx.to_eur(proceeds_local, rate))
+        proceeds_eur = quantize_money(fx.to_eur(proceeds_local, rate)) - fee_share
         cost_eur = quantize_money((lot.cost_per_unit_eur or ZERO) * used)
         gain = proceeds_eur - cost_eur
         # The relief travels with the units, exactly as `lots.py` applies it on
@@ -256,6 +303,8 @@ def sell(
         scenario.gross_gain_eur += gain
         scenario.vap_offset_eur += vap
 
+    scenario.fees_eur = total_fee_eur
+
     # From here the arithmetic is the tax engine's, applied in its order: the
     # Vorabpauschale relief reduces a positive gain toward zero and never
     # deepens a loss, then Teilfreistellung applies to what is left.
@@ -275,7 +324,7 @@ def sell(
         scenario.taxable_gain_eur = ZERO
 
     _apply_to_year(conn, scenario, person_id=person_id, tax_year=year)
-    scenario.caveats = _caveats(scenario)
+    scenario.caveats = _caveats(scenario, price_supplied=price_local is not None)
     return scenario
 
 
@@ -311,9 +360,12 @@ def _apply_to_year(
     scenario.tax_after_eur = quantize_money(taxable * tax.COMBINED_RATE)
 
 
-def _caveats(scenario: SaleScenario) -> list[str]:
+def _caveats(scenario: SaleScenario, *, price_supplied: bool = False) -> list[str]:
     out = [
-        "Priced at the last observed close. No future return is assumed anywhere in this figure.",
+        "Priced at the figure you entered, not an observed close."
+        if price_supplied
+        else "Priced at the last observed close. "
+        "No future return is assumed anywhere in this figure.",
     ]
     if scenario.price_stale_days > 0:
         out.append(

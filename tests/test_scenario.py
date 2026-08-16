@@ -155,9 +155,15 @@ def test_an_unknown_instrument_is_refused(db: sqlite3.Connection) -> None:
         scenario.sell(db, instrument="NOPE", as_of=TODAY)
 
 
-def test_an_unpriced_holding_says_what_to_run(db: sqlite3.Connection) -> None:
+def test_an_unpriced_holding_says_how_to_fix_it(db: sqlite3.Connection) -> None:
+    """The remedy has to be something reachable from the page.
+
+    It used to read "run `pt fetch-prices` first", which is not a remedy for
+    the person this tool is for -- they do not use a terminal. The refusal is
+    still a refusal; only the instruction changed.
+    """
     db.execute("DELETE FROM price WHERE instrument_id = 1")
-    with pytest.raises(scenario.ScenarioError, match="fetch-prices"):
+    with pytest.raises(scenario.ScenarioError, match="update prices from Settings"):
         scenario.sell(db, instrument="ZFND", as_of=TODAY)
 
 
