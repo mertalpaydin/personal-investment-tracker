@@ -19,6 +19,7 @@ const NAV = [
   { href: "#/holdings", pattern: "/holdings", label: "Holdings" },
   { href: "#/tax", pattern: "/tax", label: "Tax" },
   { href: "#/inbox", pattern: "/inbox", label: "Inbox" },
+  { href: "#/settings", pattern: "/settings", label: "Settings" },
 ];
 
 const VIEWS = {
@@ -27,6 +28,7 @@ const VIEWS = {
   "/holdings/:key": () => import("./views/holding.js"),
   "/tax": () => import("./views/tax.js"),
   "/inbox": () => import("./views/inbox.js"),
+  "/settings": () => import("./views/settings.js"),
 };
 
 function buildNav() {

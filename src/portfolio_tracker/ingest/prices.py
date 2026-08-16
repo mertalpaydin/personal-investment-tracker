@@ -31,6 +31,11 @@ from portfolio_tracker.ingest.providers.market import (
 #: Calendar days of price history to fetch before the first trade.
 PRICE_LEAD_DAYS = 10
 
+#: Days of already-stored history re-requested on an incremental run.
+#: Providers revise a provisional close for a day or two after the fact, and
+#: `store` never overwrites, so the cost of asking again is one small request.
+REFETCH_OVERLAP_DAYS = 5
+
 
 def default_providers() -> dict[str, PriceProvider]:
     return {
@@ -64,6 +69,14 @@ def held_instruments(conn: sqlite3.Connection) -> list[InstrumentRef]:
         )
         for r in rows
     ]
+
+
+def last_price_date(conn: sqlite3.Connection, instrument_id: int) -> date | None:
+    """The most recent observation stored for an instrument."""
+    row = conn.execute(
+        "SELECT max(date) AS d FROM price WHERE instrument_id = ?", (instrument_id,)
+    ).fetchone()
+    return date.fromisoformat(row["d"]) if row and row["d"] else None
 
 
 def first_trade_date(conn: sqlite3.Connection, instrument_id: int) -> date | None:
@@ -184,6 +197,33 @@ def coverage(
     )
 
 
+def window_for(
+    conn: sqlite3.Connection,
+    instrument: InstrumentRef,
+    *,
+    end: date,
+    incremental: bool,
+) -> date:
+    """The first date to request for this instrument.
+
+    On a full run, reach back before the first trade: a market can be shut on
+    the day a position is opened, and without an earlier observation that day
+    cannot be valued at all.
+
+    On an incremental run, start a few days before the last stored price. That
+    is what makes "pick up everything missing" true regardless of *when* the
+    last run happened -- a laptop closed for a fortnight resumes from the last
+    observation, not from yesterday. An instrument with nothing stored falls
+    back to the full window, so a newly watched ticker still gets its history.
+    """
+    traded_from = first_trade_date(conn, instrument.instrument_id) or end
+    full = traded_from - timedelta(days=PRICE_LEAD_DAYS)
+    if not incremental:
+        return full
+    stored = last_price_date(conn, instrument.instrument_id)
+    return min(stored - timedelta(days=REFETCH_OVERLAP_DAYS), end) if stored else full
+
+
 def fetch_all(
     conn: sqlite3.Connection,
     *,
@@ -191,22 +231,28 @@ def fetch_all(
     start: date | None = None,
     providers: dict[str, PriceProvider] | None = None,
     allow_manual_fallback: bool = True,
+    incremental: bool = False,
+    only: list[int] | None = None,
 ) -> list[InstrumentCoverage]:
-    """Fetch prices for every held instrument, then report coverage.
+    """Fetch prices for every priced instrument, then report coverage.
 
     A provider failure is recorded and the run continues. One dead endpoint must
     not prevent the other eleven instruments from being priced.
+
+    ``incremental`` asks each provider only for what is missing, which is what
+    the daily job uses; without it every run re-requests two years of history
+    from every provider on every run. ``only`` restricts to given instrument
+    ids, for backfilling a single newly added ticker.
     """
     registry = providers or default_providers()
     manual = registry.get("manual")
     results: list[InstrumentCoverage] = []
 
     for instrument in held_instruments(conn):
-        # Reach back before the first trade: a market can be shut on the day
-        # a position is opened, and without an earlier observation that day
-        # cannot be valued at all.
+        if only is not None and instrument.instrument_id not in only:
+            continue
         traded_from = first_trade_date(conn, instrument.instrument_id) or end
-        window_start = start or (traded_from - timedelta(days=PRICE_LEAD_DAYS))
+        window_start = start or window_for(conn, instrument, end=end, incremental=incremental)
         provider = registry.get(instrument.price_source)
         error: str | None = None
         used: str | None = None
