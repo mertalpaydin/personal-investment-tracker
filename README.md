@@ -52,7 +52,9 @@ both be true and visible at once.
 - **TWR via unit accounting**, XIRR, volatility, max drawdown, and the return
   attributed to prices, currency, income and trading — Cariño-linked, so the
   parts sum to the whole exactly
-- **JSON API** at `/api/*` plus a minimal server-rendered debug UI
+- **A UI that leads**: charts of the portfolio and of each holding over time,
+  trade entry with the tax consequence shown before you save, and daily price
+  updates you schedule from a button — no command line in normal use
 - **A goal target you set**, projected across stated returns and against the
   portfolio's own resampled history — never a single blessed date
 
@@ -61,12 +63,24 @@ tax advice — the bank's *Steuerbescheinigung* is authoritative.
 
 ## Quickstart
 
-Works on a clean clone with no real data present:
+Once a database exists, the whole application is one command:
 
 ```bash
-uv sync
+python run.py
+```
+
+That applies any pending schema updates, recomputes anything they left stale,
+starts the server on a free port, waits until it actually answers, and opens the
+browser. Everything else — recording a trade, updating prices, scheduling the
+daily update, confirming an inferred dividend, reading the tax position — lives
+on the page. Nothing in normal use requires a terminal.
+
+To build a database on a clean clone, with no real data present:
+
+```bash
+uv sync --extra api --extra ingest
 uv run pt init-db
-uv run pt import investing \
+uv run pt import \
     --open   data/example/open.csv \
     --closed data/example/closed.csv \
     --account 1
@@ -81,19 +95,10 @@ uv run pt look-through import -i ZGEQ -f data/example/holdings/ZGEQ.csv --as-of 
 uv run pt look-through exposure --dim currency
 ```
 
-Then, with the API extra installed:
+### Why `run.py` does the preparation itself
 
-```bash
-uv sync --extra api
-uv run pt serve                     # http://127.0.0.1:8000/
-```
-
-Or just run [`run.py`](run.py) — from an IDE's run button or `python run.py`. It
-applies any pending schema updates, rebuilds the derived figures if that left
-them stale, picks a free port if 8000 is taken, waits for the server to actually
-answer, and only then opens the browser.
-
-The first two matter more than they look. A program that knows what needs doing
+It applies pending schema updates and rebuilds stale figures before opening the
+browser. Those two matter more than they look. A program that knows what needs doing
 and prints instructions instead has just moved its own work onto you. Both are
 safe unasked — a migration adds structure, a rebuild recomputes tables that are
 pure functions of the ledger — and neither can touch a trade, a price, or
@@ -103,11 +108,19 @@ The last step is the point too: opening the browser immediately races a cold
 start and loses, which means a connection-refused page and a manual reload
 every time.
 
-`/` and `/debug` serve the same server-rendered page — no build step, no
-JavaScript framework, no CDN. The JSON lives under `/api/*`, with OpenAPI at
-`/docs`. Routes take a **read-only** connection by default; the four that write
-ask for a writable one explicitly, so write access is something a route requests
-rather than something it inherits.
+`/` serves the application: plain HTML, CSS and ES modules with uPlot vendored
+into the repository. No build step, no framework, no CDN — it works with the
+network off, and a test fails the build if any asset ever references a remote
+host. `/debug` still serves the older server-rendered page, which renders the
+same figures without JavaScript and is the thing to open when the app itself
+looks wrong.
+
+The JSON lives under `/api/*`, with OpenAPI at `/docs`. Routes take a
+**read-only** connection by default; the ones that write ask for a writable one
+explicitly, so write access is something a route requests rather than something
+it inherits. `POST /api/transactions/validate` takes the read-only connection on
+purpose — that is what makes "the preview writes nothing" true by construction
+rather than by review.
 
 Three things the API does that are easy to get wrong:
 
@@ -137,6 +150,15 @@ POST /api/incoming/import      import one dropped holdings file, against a fund 
 POST /api/vorabpauschale/propose   compute the January charge and queue it
 GET  /api/scenario/sell        what selling a holding today would cost in tax
 GET  /api/scenario/harvest     what could be sold to use up this year's allowance
+POST /api/transactions/validate  what a trade would do -- lots consumed, tax, allowance
+POST /api/transactions         record it; recomputes before answering
+GET  /api/transactions         the ledger, and what may be edited
+GET  /api/tax/constants · PUT  the published rates, so a refusal has a remedy
+GET  /api/updates              how current the prices are, and what recent runs did
+POST /api/updates/run          fetch now, in the background
+GET  /api/scheduler · POST · DELETE   the daily Windows task
+GET  /api/admin/doctor         the integrity checks
+POST /api/admin/recompute      throw away the derived layer and rebuild it
 GET  /api/goal  · PUT          progress toward the target
 GET  /api/goal/projection      when it is reached, across stated returns
 POST /api/pending/{id}/confirm · /reject      decide an inference
@@ -463,7 +485,15 @@ core/inbox.py              what confirming an inference means, for every front e
 core/goal.py               target and projection; contributions only, no assumed return
 ingest/dividends.py        distributions, proposed for review rather than booked
 ingest/look_through.py     issuer holdings files; refuses rather than guesses a unit
-api/                       read-only FastAPI JSON + a server-rendered debug page
+core/ledger.py             writes a trade somebody typed; freezes its EUR leg
+core/glossary.py           German statutory terms, in English, German kept alongside
+core/locking.py            one update at a time, across processes; refuses, never queues
+jobs/update.py             fetch what is missing, then recompute; unattended
+jobs/windows_task.py       registers the daily update with Task Scheduler, from the page
+api/transactions.py        record a trade -- and say what it will do before you save it
+api/admin.py               the maintenance that used to be CLI-only
+api/static/                the app: plain HTML/CSS/ES modules, uPlot vendored, no build
+api/render.py              the server-rendered page it replaced, kept at /debug
 ```
 
 Three currency rules hold everywhere:

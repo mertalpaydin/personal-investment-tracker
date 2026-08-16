@@ -1755,11 +1755,14 @@ def write_goal(
 ) -> dict[str, Any]:
     """Set the target.
 
-    The only write the HTTP surface can perform. A goal is a preference, not a
-    fact about the portfolio; nothing derived depends on it, so it cannot
-    corrupt a figure by being wrong. Everything that *would* corrupt a figure --
-    a confirmed cash flow, a booked distribution -- stays on the CLI, where the
-    inference behind it can be read before it is accepted.
+    The safest write on this surface: a goal is a preference, not a fact about
+    the portfolio, and nothing derived depends on it, so it cannot corrupt a
+    figure by being wrong.
+
+    It was once the *only* write, which is no longer true -- see ADR 0010. What
+    survives from that rule is the part that mattered: an inference still
+    cannot reach the ledger without somebody reading its derivation and
+    confirming it.
     """
     try:
         with transaction(conn):
