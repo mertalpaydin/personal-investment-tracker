@@ -289,3 +289,12 @@ def test_importing_takes_the_writable_connection_and_listing_does_not(
         inspect.signature(api_module.import_incoming).parameters["conn"].default.dependency
         is api_module.get_writable_db
     )
+
+
+def test_notes_left_in_the_folder_are_not_reported_as_data(folder: Path) -> None:
+    """Reporting a README as 'unrecognised' trains the reader to ignore the
+    column where real problems appear."""
+    (folder / "README.txt").write_text("how to use this folder\n", encoding="utf-8")
+    (folder / "notes.md").write_text("reminders\n", encoding="utf-8")
+    (folder / "real.csv").write_text(HOLDINGS_CSV, encoding="utf-8")
+    assert [f.name for f in incoming.scan(folder)] == ["real.csv"]

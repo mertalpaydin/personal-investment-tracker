@@ -176,6 +176,11 @@ def scan(directory: Path = DEFAULT_INCOMING) -> list[Detected]:
     for path in sorted(directory.iterdir()):
         if not path.is_file() or path.name.startswith("."):
             continue
+        # Notes left in the folder are not data. Reporting a README as
+        # "unrecognised" is noise that trains the reader to ignore the column
+        # where real problems appear.
+        if path.stem.lower() in {"readme", "notes", "read me"}:
+            continue
         if path.stat().st_size > MAX_BYTES:
             out.append(
                 Detected(
