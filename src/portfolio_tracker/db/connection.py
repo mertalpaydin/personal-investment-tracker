@@ -10,6 +10,12 @@ Two of these settings are not optional and are easy to omit:
 ``PARSE_DECLTYPES``
     Without it the Decimal converter never runs and every monetary column comes
     back as ``str``, which then compares and sorts lexically. ``'9' > '10'``.
+
+``busy_timeout``
+    WAL allows one writer and many readers, but a reader that arrives mid-write
+    still gets ``database is locked`` *immediately* unless told to wait. Once a
+    scheduled task can update prices while the page is open, that collision
+    stops being hypothetical.
 """
 
 from __future__ import annotations
@@ -22,6 +28,13 @@ from pathlib import Path
 from portfolio_tracker.money import register_decimal_support
 
 DEFAULT_DB_PATH = Path("data/portfolio.db")
+
+#: How long a statement waits for a lock before giving up. Fifteen seconds is
+#: far longer than any single write here takes, and far shorter than a user
+#: will wait before deciding the page is broken. The long-running case -- a
+#: whole daily update -- is guarded by `core.locking` instead, because a busy
+#: timeout is the wrong tool for something that takes minutes.
+BUSY_TIMEOUT_MS = 15_000
 
 
 def connect(
@@ -64,6 +77,9 @@ def connect(
 
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # Set on read-only connections too: a reader is exactly what collides with
+    # the update job's commit, and it is the reader that must be patient.
+    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
     if not read_only:
         # WAL survives across connections and is a property of the file, so this
         # is a no-op after the first write connection. In-memory databases do
