@@ -425,28 +425,46 @@ def series(
     conn: sqlite3.Connection = Depends(get_db),
     person_id: int = Query(1, alias="person"),
 ) -> dict[str, Any]:
-    """The daily unit-price index, base 100 at inception."""
+    """The daily unit-price index, base 100 at inception.
+
+    ``net_contributions_eur`` is a running total of external flows, and it is
+    here so the page can draw value against money-put-in on one pair of axes.
+    That single picture answers "how is it going" better than any percentage:
+    the gap between the two lines *is* the return, and a rising total value
+    that merely tracks a rising contribution line is visibly not a gain.
+
+    It is summed here rather than stored because it is a pure function of a
+    column that already exists, and a stored copy is one more thing a rebuild
+    could leave disagreeing with its source.
+    """
     rows = conn.execute(
         "SELECT date, unit_price, total_value_eur, cash_eur, deposits_eur, "
-        "income_cash_eur, income_received_eur, drawdown_pct "
+        "income_cash_eur, income_received_eur, drawdown_pct, net_external_flow_eur "
         "FROM portfolio_daily WHERE person_id = ? ORDER BY date",
         (person_id,),
     ).fetchall()
-    return {
-        "person_id": person_id,
-        "points": [
+
+    points: list[dict[str, Any]] = []
+    contributed = ZERO
+    for r in rows:
+        contributed += r["net_external_flow_eur"] or ZERO
+        points.append(
             {
                 "date": r["date"],
                 "unit_price": _decimal(r["unit_price"]),
                 "total_value_eur": _decimal(r["total_value_eur"]),
+                "net_contributions_eur": _decimal(contributed),
                 "deposits_eur": _decimal(r["deposits_eur"]),
                 "uninvested_cash_eur": _decimal(r["cash_eur"]),
                 "income_cash_eur": _decimal(r["income_cash_eur"]),
                 "income_received_eur": _decimal(r["income_received_eur"]),
                 "drawdown_pct": _decimal(r["drawdown_pct"]),
             }
-            for r in rows
-        ],
+        )
+
+    return {
+        "person_id": person_id,
+        "points": points,
     }
 
 
@@ -676,84 +694,243 @@ def admin_rebuild(
     }
 
 
-@app.get("/api/positions/{import_key}")
+def _now_or_zero(row: sqlite3.Row | None, column: str, open_now: bool) -> float | None:
+    """A current figure, or zero once the holding has been sold."""
+    return _decimal(row[column]) if open_now and row is not None else 0.0
+
+
+# `:path` because an import key may legitimately contain a slash -- `BTC/EUR`
+# is one of the keys in the live database. Without it the route 404s on that
+# holding whether the slash is sent raw or percent-encoded, since Starlette
+# does not decode %2F inside a path segment. Declared after `/api/positions`,
+# which is an exact match and therefore still wins.
+@app.get("/api/positions/{import_key:path}")
 def position_detail(
     import_key: str,
     conn: sqlite3.Connection = Depends(get_db),
     person_id: int = Query(1, alias="person"),
 ) -> dict[str, Any]:
-    """One position, with the currency question answered in words.
+    """One holding over its whole life, with the currency question answered.
 
     For a foreign-currency holding this is the endpoint the whole FX design
     exists to serve: the source export shows the local gain translated at
     today's rate, which is not what the owner made, and the difference has a
     name and a size.
+
+    **A sold holding is still a holding here.** ``core/valuation.py`` writes a
+    ``position_daily`` row only while the quantity is positive, so resolving
+    this endpoint through that table -- as it used to -- made everything ever
+    sold return 404. The question "how did that investment do" is not answered
+    by refusing to discuss it, and a realised gain is the one figure that is
+    finally certain. So the instrument is resolved first, and an empty current
+    position is a state (``closed: true``), not an error.
     """
-    row = conn.execute(
+    instrument = conn.execute(
         """
-        SELECT i.import_key, i.name, i.currency, i.asset_class, i.tax_regime,
-               i.tax_scope_note, p.*
-        FROM position_daily p
-        JOIN instrument i ON i.id = p.instrument_id
-        JOIN account a ON a.id = p.account_id
-        WHERE i.import_key = ? AND a.person_id = ?
-        ORDER BY p.date DESC LIMIT 1
+        SELECT i.id, i.import_key, i.name, i.currency, i.asset_class, i.is_fund,
+               i.tax_regime, i.tax_scope_note, i.teilfreistellung_pct, i.status
+        FROM instrument i WHERE i.import_key = ? OR i.isin = ?
         """,
-        (import_key, person_id),
+        (import_key, import_key),
     ).fetchone()
-    if row is None:
-        raise HTTPException(404, f"no position in {import_key!r}")
+    if instrument is None:
+        raise HTTPException(404, f"no instrument called {import_key!r}")
+
+    instrument_id = instrument["id"]
+
+    rows = conn.execute(
+        """
+        SELECT p.* FROM position_daily p
+        JOIN account a ON a.id = p.account_id
+        WHERE p.instrument_id = ? AND a.person_id = ?
+        ORDER BY p.date
+        """,
+        (instrument_id, person_id),
+    ).fetchall()
 
     history = [
         {
             "date": r["date"],
+            # Quantity and cost basis are here so the page can draw value
+            # against what was paid for it. Without the cost line, a chart of
+            # market value alone cannot show whether a rise is a gain or just
+            # more money going in.
+            "quantity": _decimal(r["quantity"]),
             "price_local": _decimal(r["price_local"]),
+            "price_asof": r["price_asof"],
             "fx_rate": _decimal(r["fx_rate"]),
             "market_value_eur": _decimal(r["market_value_eur"]),
+            "market_value_local": _decimal(r["market_value_local"]),
+            "cost_basis_eur": _decimal(r["cost_basis_eur"]),
             "unrealized_eur": _decimal(r["unrealized_eur"]),
             "unrealized_local_eur": _decimal(r["unrealized_local_eur"]),
             "unrealized_fx_eur": _decimal(r["unrealized_fx_eur"]),
+            "valuation_status": r["valuation_status"],
+        }
+        for r in rows
+    ]
+
+    # The current position, if there still is one. `rows` is ordered by date,
+    # so the last row is the most recent valuation -- which for a closed
+    # holding is the last day it was held, not today.
+    last = rows[-1] if rows else None
+    open_now = last is not None and (last["quantity"] or ZERO) > ZERO
+
+    lots = [
+        {
+            "lot_id": r["id"],
+            "open_date": r["open_date"],
+            "qty_opened": _decimal(r["qty_opened"]),
+            "qty_remaining": _decimal(r["qty_remaining"]),
+            "currency": r["currency"],
+            "cost_total_local": _decimal(r["cost_total_local"]),
+            "cost_per_unit_local": _decimal(r["cost_per_unit_local"]),
+            "cost_total_eur": _decimal(r["cost_total_eur"]),
+            "cost_per_unit_eur": _decimal(r["cost_per_unit_eur"]),
+            "fx_rate_at_open": _decimal(r["fx_rate_at_open"]),
+            "vap_accumulated_eur": _decimal(r["vap_accumulated_eur"]),
+            # Surfaced rather than hidden: a lira cost basis reconstructed from
+            # a positions export is not the same evidence as one read off a
+            # contract note, and it is the open lots where that matters.
+            "basis_quality": r["basis_quality"],
         }
         for r in conn.execute(
-            "SELECT * FROM position_daily WHERE instrument_id = ? ORDER BY date",
-            (row["instrument_id"],),
+            "SELECT l.* FROM lot l JOIN account a ON a.id = l.account_id "
+            "WHERE l.instrument_id = ? AND a.person_id = ? "
+            "ORDER BY l.open_date, l.id",
+            (instrument_id, person_id),
         )
     ]
 
-    decomposition: dict[str, Any] = {
-        "true_eur_gain": _decimal(row["unrealized_eur"]),
-        "local_gain_at_todays_rate": _decimal(row["unrealized_local_eur"]),
-        "currency_effect": _decimal(row["unrealized_fx_eur"]),
-        "identity": "true_eur_gain = local_gain_at_todays_rate + currency_effect",
-    }
-    if row["currency"] != "EUR":
-        local = row["unrealized_local_eur"]
-        actual = row["unrealized_eur"]
-        gap = row["unrealized_fx_eur"]
-        direction = "depreciation" if gap < ZERO else "appreciation"
-        decomposition["vs_broker_export"] = (
-            f"A tracker translating at today's rate shows EUR {local:,.2f}. That is the "
-            f"{row['currency']} gain converted as if the capital had been invested today. "
-            f"The actual euro gain is EUR {actual:,.2f}; the EUR {abs(gap):,.2f} gap is "
-            f"{row['currency']} {direction} against the original capital."
+    disposals = [
+        {
+            "disposal_id": r["id"],
+            "sell_date": r["sell_date"],
+            "lot_id": r["lot_id"],
+            "lot_open_date": r["lot_open_date"],
+            "quantity": _decimal(r["qty"]),
+            "proceeds_eur": _decimal(r["proceeds_eur"]),
+            "cost_basis_eur": _decimal(r["cost_basis_eur"]),
+            "gross_gain_eur": _decimal(r["gross_gain_eur"]),
+            "fx_gain_eur": _decimal(r["fx_gain_eur"]),
+            "vap_offset_eur": _decimal(r["vap_offset_eur"]),
+            "teilfreistellung_eur": _decimal(r["teilfreistellung_eur"]),
+            "taxable_gain_eur": _decimal(r["taxable_gain_eur"]),
+            "holding_days": r["holding_days"],
+            "basis_quality": r["basis_quality"],
+        }
+        for r in conn.execute(
+            """
+            SELECT d.*, t.trade_date AS sell_date, l.open_date AS lot_open_date
+            FROM lot_disposal d
+            JOIN transaction_ t ON t.id = d.sell_txn_id
+            JOIN lot l ON l.id = d.lot_id
+            JOIN account a ON a.id = l.account_id
+            WHERE l.instrument_id = ? AND a.person_id = ?
+            ORDER BY t.trade_date, d.id
+            """,
+            (instrument_id, person_id),
         )
+    ]
+
+    transactions = [
+        {
+            "id": r["id"],
+            "type": r["type"],
+            "trade_date": r["trade_date"],
+            "quantity": _decimal(r["quantity"]),
+            "price_per_unit_local": _decimal(r["price_per_unit_local"]),
+            "gross_amount_eur": _decimal(r["gross_amount_eur"]),
+            "currency": r["currency"],
+            "fees_local": _decimal(r["fees_local"]),
+            "fees_known": bool(r["fees_known"]),
+            "source": r["source"],
+            "confidence": r["confidence"],
+            "flow_class": r["flow_class"],
+            "note": r["note"],
+        }
+        for r in conn.execute(
+            "SELECT t.* FROM transaction_ t JOIN account a ON a.id = t.account_id "
+            "WHERE t.instrument_id = ? AND a.person_id = ? "
+            "ORDER BY t.trade_date, t.id",
+            (instrument_id, person_id),
+        )
+    ]
+
+    # Life-to-date and final: these survive the sale, which is exactly what
+    # makes them the figures worth showing on a holding you no longer own.
+    realised = sum((d["gross_gain_eur"] or 0.0 for d in disposals), 0.0)
+    income = sum(
+        (
+            t["gross_amount_eur"] or 0.0
+            for t in transactions
+            if t["type"] in ("DIVIDEND", "INTEREST")
+        ),
+        0.0,
+    )
+
+    decomposition: dict[str, Any] = {}
+    if last is not None:
+        decomposition = {
+            "true_eur_gain": _decimal(last["unrealized_eur"]),
+            "local_gain_at_todays_rate": _decimal(last["unrealized_local_eur"]),
+            "currency_effect": _decimal(last["unrealized_fx_eur"]),
+            "identity": "true_eur_gain = local_gain_at_todays_rate + currency_effect",
+        }
+        if instrument["currency"] != "EUR":
+            local = last["unrealized_local_eur"]
+            actual = last["unrealized_eur"]
+            gap = last["unrealized_fx_eur"]
+            direction = "depreciation" if gap < ZERO else "appreciation"
+            decomposition["vs_broker_export"] = (
+                f"A tracker translating at today's rate shows EUR {local:,.2f}. That is the "
+                f"{instrument['currency']} gain converted as if the capital had been invested "
+                f"today. The actual euro gain is EUR {actual:,.2f}; the EUR {abs(gap):,.2f} gap "
+                f"is {instrument['currency']} {direction} against the original capital."
+            )
 
     return {
-        "as_of": row["date"],
-        "instrument": row["import_key"],
-        "name": row["name"],
-        "currency": row["currency"],
-        "asset_class": row["asset_class"],
-        "quantity": _decimal(row["quantity"]),
-        "market_value_local": _decimal(row["market_value_local"]),
-        "market_value_eur": _decimal(row["market_value_eur"]),
-        "cost_basis_eur": _decimal(row["cost_basis_eur"]),
-        "cost_basis_eur_at_spot": _decimal(row["cost_basis_eur_at_spot"]),
+        "as_of": last["date"] if last is not None else None,
+        "instrument": instrument["import_key"],
+        "name": instrument["name"],
+        "currency": instrument["currency"],
+        "asset_class": instrument["asset_class"],
+        "is_fund": bool(instrument["is_fund"]),
+        "status": instrument["status"],
+        # `closed` is the whole reason this endpoint no longer 404s. The UI
+        # reads it to say "sold on 4 March" instead of showing a live position.
+        "closed": not open_now,
+        "first_held": rows[0]["date"] if rows else None,
+        "last_held": last["date"] if last is not None else None,
+        # Zero rather than the last observed figure, for a holding that is
+        # closed: "worth EUR 4,200" about something sold in March would be a
+        # false statement, where zero is a true one.
+        "quantity": _now_or_zero(last, "quantity", open_now),
+        "market_value_local": _now_or_zero(last, "market_value_local", open_now),
+        "market_value_eur": _now_or_zero(last, "market_value_eur", open_now),
+        "cost_basis_eur": _now_or_zero(last, "cost_basis_eur", open_now),
+        "cost_basis_eur_at_spot": _now_or_zero(last, "cost_basis_eur_at_spot", open_now),
+        # Realised gain and income received are life-to-date and survive the
+        # sale, which is exactly what makes them worth showing on a closed
+        # holding: they are the only figures about it that are now final.
+        "realised_gain_eur": realised,
+        "income_eur": income,
         "return_decomposition": decomposition,
-        "tax_regime": row["tax_regime"],
-        "tax_scope_note": row["tax_scope_note"],
-        "valuation_status": row["valuation_status"],
+        "performance_basis": (
+            "Price return only. The price line follows the raw closing price, "
+            "not a dividend-adjusted one, so anything the holding paid out is "
+            "counted under income received rather than shown as price growth. "
+            "For a distributing fund that makes this line understate the total "
+            "return by roughly its yield."
+        ),
+        "tax_regime": instrument["tax_regime"],
+        "tax_scope_note": instrument["tax_scope_note"],
+        "teilfreistellung_pct": _decimal(instrument["teilfreistellung_pct"]),
+        "valuation_status": last["valuation_status"] if last is not None else None,
         "history": history,
+        "lots": lots,
+        "disposals": disposals,
+        "transactions": transactions,
     }
 
 
