@@ -1,14 +1,25 @@
 """Start the server and open the dashboard. Run this file; that is the whole UI.
 
 Meant to be launched straight from an IDE -- the green arrow in VS Code or
-PyCharm, or ``python run.py`` -- with no arguments and nothing to remember. It
-does what the three-command version of this would do, in the right order:
+PyCharm, or ``python run.py`` -- with no arguments and nothing to remember:
 
-1. checks the database exists and is migrated, and says what to run if not;
-2. starts uvicorn on a port that is actually free;
-3. waits until the server answers, *then* opens the browser.
+1. applies any pending schema migrations;
+2. rebuilds the derived layer if a migration or a decision made it stale;
+3. starts uvicorn on a port that is actually free;
+4. waits until the server answers, *then* opens the browser.
 
-Point 3 is the reason this is a script rather than a shell alias. Opening the
+Steps 1 and 2 used to be an error message telling the reader to go and type two
+commands. That was wrong. The owner of this tool does not use the command line,
+and a program that knows exactly what needs doing, is capable of doing it, and
+instead prints instructions has simply moved its own work onto a person.
+
+Both steps are safe to do unasked, which is the only reason they are done
+unasked. A migration adds structure and never edits a figure; a rebuild deletes
+and recomputes tables that are pure functions of the ledger. Neither can touch a
+trade, a price, or anything a person confirmed. Anything that *could* -- booking
+an inference, importing a file -- stays a decision and lives on the page.
+
+Point 4 is the reason this is a script rather than a shell alias. Opening the
 browser immediately races the server's startup, and the race is usually lost on
 a cold start -- the user gets a connection-refused page and reloads by hand,
 every single time. Waiting for a real HTTP response costs a few hundred
@@ -72,6 +83,42 @@ def _wait_then_open(url: str, deadline: float) -> None:
     webbrowser.open(url)
 
 
+def _prepare() -> str | None:
+    """Migrate, and rebuild if that left the derived layer behind.
+
+    Returns None on success, or a message explaining what could not be fixed
+    automatically. The distinction that matters: a migration failing is a
+    genuine problem worth stopping for, while *needing* one is not.
+    """
+    from datetime import date
+
+    from portfolio_tracker.core import inbox, rebuild
+    from portfolio_tracker.db import migrate as migrations
+    from portfolio_tracker.db.connection import connect
+
+    with contextlib.closing(connect(DB_PATH)) as conn:
+        try:
+            applied = migrations.migrate(conn)
+        except migrations.MigrationError as exc:
+            # The checksum guard, almost always. Not something to paper over:
+            # it means this database and this checkout disagree about history.
+            return f"The database cannot be upgraded automatically.\n\n{exc}\n"
+
+        if applied:
+            print(f"applied schema update(s): {', '.join(f'{v:04d}' for v in applied)}")
+
+        # A migration that adds a derived column leaves every existing row with
+        # it empty, and the page would show blanks with no hint why. The same
+        # is true after a decision has been confirmed.
+        needs = bool(applied) or inbox.stale_after_decision(conn)
+        if needs and conn.execute("SELECT count(*) FROM transaction_").fetchone()[0]:
+            print("recomputing the derived figures...", flush=True)
+            result = rebuild.run(conn, end=date.today())
+            for problem in result.breaks:
+                print(f"  {problem}", file=sys.stderr)
+    return None
+
+
 def main() -> int:
     try:
         import uvicorn
@@ -92,20 +139,9 @@ def main() -> int:
         return 1
 
     from portfolio_tracker.api import app as api
-    from portfolio_tracker.db import migrate as migrations
-    from portfolio_tracker.db.connection import connect
 
-    # A database one migration behind produces "no such column" at request
-    # time, which reads as a bug in the page rather than a missing step here.
-    with contextlib.closing(connect(DB_PATH, read_only=True)) as conn:
-        have = migrations.current_version(conn)
-    head = max((m.version for m in migrations.discover()), default=0)
-    if have < head:
-        print(
-            f"Database is at schema version {have}; the code expects {head}.\n\n"
-            "    uv run pt init-db\n",
-            file=sys.stderr,
-        )
+    if (problem := _prepare()) is not None:
+        print(problem, file=sys.stderr)
         return 1
 
     api.DB_PATH = DB_PATH

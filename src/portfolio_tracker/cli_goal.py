@@ -100,6 +100,14 @@ def project(
     paths: Annotated[
         int, typer.Option("--paths", help="Bootstrap paths to simulate.")
     ] = projection.DEFAULT_PATHS,
+    block: Annotated[
+        str,
+        typer.Option("--block", help="Resample in blocks of: month, quarter, year, or a number."),
+    ] = "year",
+    window: Annotated[
+        int,
+        typer.Option("--window", help="Months of history to measure contributions over."),
+    ] = projection.CONTRIBUTION_WINDOW_MONTHS,
 ) -> None:
     """When the target is reached, and what that answer depends on.
 
@@ -116,6 +124,8 @@ def project(
                 monthly_eur=_decimal(monthly, "--monthly") if monthly else None,
                 horizon_years=years,
                 paths=paths,
+                block_days=projection.BLOCK_CHOICES.get(block, 0) or int(block),
+                contribution_window_months=window,
             )
             observed = projection.observed_annual_return(conn, person_id)
         except (LookupError, projection.ProjectionError) as exc:
@@ -153,7 +163,10 @@ def project(
     if result.bootstrap:
         b = result.bootstrap
         typer.echo("")
-        typer.echo(f"  Resampling its own {b.sample_days} days of returns, {b.paths} paths:")
+        typer.echo(
+            f"  Resampling {b.model.days} days of price history for what you hold "
+            f"today, {b.paths} paths, {b.block_days}-day blocks:"
+        )
         typer.echo(f"    earlier than 9 in 10 paths   {b.earliest_decile}")
         typer.echo(f"    middle path                  {b.median}")
         typer.echo(f"    later than 9 in 10 paths     {b.latest_decile}")

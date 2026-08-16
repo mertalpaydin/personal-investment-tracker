@@ -224,6 +224,23 @@ deliberately pessimistic, and for a portfolio that compounds it is wrong in a
 known direction: it always names a date too late. The owner asked for the
 missing half.
 
+### Corrected after review
+
+The first version bootstrapped the **portfolio's own** return history. That is
+contaminated for this purpose: it contains positions since sold, the timing of
+past contributions, and weights that describe nothing current — it was
+projecting a portfolio that no longer exists. On the example corpus a
+fully-closed crypto position that lost 40% was still influencing the forecast.
+
+It now models the **price history of the instruments held today**, at today's
+weights, with each instrument's euro return being its local price move combined
+with the currency move (ADR 0004's identity applied to a return, not an amount —
+which is why this module is not a currency conversion site).
+
+Contributions were also being averaged over all history. They are now measured
+over a recent window (6 months by default), **reported as a suggestion with the
+window stated, and editable**. A savings rate is a decision, not a constant.
+
 ### Two answers, neither a forecast
 
 | | What it is |
@@ -241,6 +258,8 @@ made. Nothing is invented.
 |---|---|
 | **`r/12`** | Overstates the monthly rate, and the error compounds over a decade of steps. It is `(1+r)^(1/12) - 1`. |
 | **Contributions at the start of the month** | Compounds money not yet paid in and flatters every date by a few months. They land at the end and earn nothing that month. |
+| **A window where every holding has a price** | Prices are stored from each instrument's first trade, so one recently-bought fund truncates the whole model to its own lifetime. Each day now uses the holdings that existed then, renormalised, and `min_daily_coverage` reports the thinnest day kept. |
+| **Overlapping blocks look like more data** | 359 days cut into 252-day blocks yields 108 windows and about 1.4 *independent* observations. `effective_samples` reports the honest number and a `WEAK:` caveat fires below three. |
 | **Block length aliasing** | A 21-day block over a 7-day repeating history is exactly three whole cycles, so every block is identical and the bootstrap silently collapses to one path — a sample that looks varied and behaves flat. The test fixture uses a 13-day cycle for this reason, and `test_a_history_with_no_dispersion_produces_none` pins the collapsed case as correct behaviour. |
 | **A cone from a flat history** | A bootstrap cannot manufacture uncertainty the sample does not contain, and should not try. |
 

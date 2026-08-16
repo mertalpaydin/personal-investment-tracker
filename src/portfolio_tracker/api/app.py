@@ -979,6 +979,13 @@ def goal_projection(
     monthly: Decimal | None = Query(None, ge=0, description="Override the measured rate"),
     years: int = Query(projection.HORIZON_YEARS, ge=1, le=50),
     paths: int = Query(projection.DEFAULT_PATHS, ge=100, le=20000),
+    block_days: int = Query(projection.BLOCK_DAYS, ge=5, le=756, description="Resample block"),
+    window: int = Query(
+        projection.CONTRIBUTION_WINDOW_MONTHS,
+        ge=1,
+        le=60,
+        description="Months of history the contribution suggestion is measured over",
+    ),
 ) -> dict[str, Any]:
     """When the target is reached, and what that answer depends on.
 
@@ -999,6 +1006,8 @@ def goal_projection(
             monthly_eur=monthly,
             horizon_years=years,
             paths=paths,
+            block_days=block_days,
+            contribution_window_months=window,
         )
         observed = projection.observed_annual_return(conn, person_id)
     except LookupError as exc:
@@ -1012,10 +1021,21 @@ def goal_projection(
         bootstrap = {
             "paths": b.paths,
             "block_days": b.block_days,
-            "sample": {
-                "days": b.sample_days,
-                "from": b.sample_start.isoformat(),
-                "to": b.sample_end.isoformat(),
+            "effective_samples": _decimal(b.effective_samples),
+            "model": {
+                "days": b.model.days,
+                "from": b.model.start.isoformat() if b.model.start else None,
+                "to": b.model.end.isoformat() if b.model.end else None,
+                "covers_pct_of_portfolio": _decimal(b.model.covered_pct),
+                "holdings": [
+                    {"instrument": key, "weight": _decimal(weight)}
+                    for key, weight in b.model.holdings
+                ],
+                "excluded": [{"instrument": key, "why": why} for key, why in b.model.excluded],
+                "basis": (
+                    "price history of the holdings you own today, at today's weights -- "
+                    "not the portfolio's own past performance"
+                ),
             },
             "earliest_decile": b.earliest_decile.isoformat() if b.earliest_decile else None,
             "median": b.median.isoformat() if b.median else None,
@@ -1028,6 +1048,26 @@ def goal_projection(
         "as_of": result.as_of.isoformat(),
         "target_eur": _decimal(result.target_eur),
         "current_eur": _decimal(result.current_eur),
+        "contributions": {
+            "monthly_eur": _decimal(result.contributions.monthly_eur),
+            # measured = a suggestion drawn from a stated window; supplied = your
+            # decision. Never presentable as the same kind of number.
+            "source": result.contributions.source,
+            "window_months": result.contributions.window_months,
+            "total_eur": _decimal(result.contributions.total_eur),
+            "measured_from": (
+                result.contributions.measured_from.isoformat()
+                if result.contributions.measured_from
+                else None
+            ),
+            "measured_to": (
+                result.contributions.measured_to.isoformat()
+                if result.contributions.measured_to
+                else None
+            ),
+            "explanation": result.contributions.sentence,
+            "editable": True,
+        },
         "monthly_contribution_eur": _decimal(result.monthly_contribution_eur),
         "horizon_years": result.horizon_years,
         "already_reached": result.already_reached,
