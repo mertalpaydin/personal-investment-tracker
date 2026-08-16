@@ -17,12 +17,14 @@ import { ApiError } from "./api.js";
 const NAV = [
   { href: "#/", pattern: "/", label: "Overview" },
   { href: "#/holdings", pattern: "/holdings", label: "Holdings" },
+  { href: "#/inbox", pattern: "/inbox", label: "Inbox" },
 ];
 
 const VIEWS = {
   "/": () => import("./views/overview.js"),
   "/holdings": () => import("./views/holdings.js"),
   "/holdings/:key": () => import("./views/holding.js"),
+  "/inbox": () => import("./views/inbox.js"),
 };
 
 function buildNav() {
