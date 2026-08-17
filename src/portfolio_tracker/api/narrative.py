@@ -34,6 +34,25 @@ def _num(value: object) -> float | None:
     return float(value) if isinstance(value, Decimal) else None
 
 
+# A model is forbidden to compute anything, which is right -- and it means a
+# raw 0.4733688157975862 comes back in the prose verbatim, because rounding it
+# would be arithmetic. So figures are formatted here, where the semantics are
+# known, and the model quotes them. Presentation is this layer's job anyway.
+
+
+def _money(value: object) -> str | None:
+    v = _num(value)
+    return None if v is None else f"EUR {v:,.2f}"
+
+
+def _pct(value: object, *, sign: bool = False) -> str | None:
+    """A fraction as a percentage string. 0.4733… becomes '47.34%'."""
+    v = _num(value)
+    if v is None:
+        return None
+    return f"{v * 100:+.2f}%" if sign else f"{v * 100:.2f}%"
+
+
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
@@ -56,6 +75,11 @@ def read_settings(conn: sqlite3.Connection = Depends(get_db)) -> dict[str, Any]:
         "configured": bool(key),
         # Enough to tell which key is stored, not enough to use it.
         "hint": keys.hint(key),
+        # `.env` beats the settings page, so the page has to say when it is
+        # showing something it cannot change -- otherwise "Forget the key"
+        # appears to do nothing.
+        "key_source": keys.key_source(conn),
+        "model_source": keys.model_source(conn),
         "verified_at": settings.get(conn, keys.VERIFIED_SETTING),
         "enabled": keys.enabled(conn),
         "model": keys.model(conn),
@@ -101,7 +125,18 @@ def delete_key(conn: sqlite3.Connection = Depends(get_writable_db)) -> dict[str,
     with transaction(conn):
         keys.clear_key(conn)
         settings.set_value(conn, keys.ENABLED_SETTING, False)
-    return {"configured": False, "note": "Key removed and narration switched off."}
+
+    still_there = keys.get_key(conn)
+    return {
+        "configured": bool(still_there),
+        "note": (
+            f"The stored key was removed and narration switched off, but {keys.ENV_KEY} "
+            "in your .env file still supplies one. Remove it from there too if you "
+            "want no key at all."
+            if still_there
+            else "Key removed and narration switched off."
+        ),
+    }
 
 
 @router.get("/api/settings/llm/models")
@@ -183,11 +218,16 @@ def _movers(conn: sqlite3.Connection, person_id: int, as_of: str) -> list[dict[s
             {
                 "instrument": row["import_key"],
                 "name": row["name"],
-                "change_pct": _num(change),
-                "value_eur": _num(row["market_value_eur"]),
+                "change_since_previous": _pct(change, sign=True),
+                "value_eur": _money(row["market_value_eur"]),
+                # Sorted on, then dropped: the model is given the readable
+                # form, and a raw float beside it would only invite quoting.
+                "_abs_change": abs(float(change)),
             }
         )
-    out.sort(key=lambda m: abs(m["change_pct"] or 0), reverse=True)
+    out.sort(key=lambda m: m["_abs_change"], reverse=True)
+    for mover in out:
+        mover.pop("_abs_change")
     return out[:5]
 
 
@@ -208,24 +248,25 @@ def brief_payload(conn: sqlite3.Connection, person_id: int) -> dict[str, Any]:
         "as_of": row["date"],
         "currency": "EUR",
         "portfolio": {
-            "total_value_eur": _num(row["total_value_eur"]),
-            "holdings_eur": _num(row["market_value_eur"]),
-            "deposits_eur": _num(row["deposits_eur"]),
-            "uninvested_cash_eur": _num(row["cash_eur"]),
-            "twr": _num(summary.twr),
-            "twr_annualised": _num(summary.twr_annualised),
-            "max_drawdown": _num(summary.max_drawdown),
-            "volatility": _num(summary.volatility),
+            "total_value_eur": _money(row["total_value_eur"]),
+            "holdings_eur": _money(row["market_value_eur"]),
+            "deposits_eur": _money(row["deposits_eur"]),
+            "uninvested_cash_eur": _money(row["cash_eur"]),
+            "total_return": _pct(summary.twr, sign=True),
+            "return_per_year": _pct(summary.twr_annualised, sign=True),
+            "worst_fall": _pct(summary.max_drawdown),
+            "volatility": _pct(summary.volatility),
             "days_tracked": summary.days,
         },
         "movers": _movers(conn, person_id, str(row["date"])),
         "where_the_return_came_from": (
             {
-                "asset_prices": _num(split.local),
-                "currency": _num(split.currency),
-                "income": _num(split.income),
-                "trading": _num(split.unexplained),
-                "total": _num(split.total),
+                "asset_prices": _pct(split.local, sign=True),
+                "currency": _pct(split.currency, sign=True),
+                "income": _pct(split.income, sign=True),
+                "trading": _pct(split.unexplained, sign=True),
+                "total": _pct(split.total, sign=True),
+                "unit": "percentage points of the total return",
             }
             if split is not None
             else None
@@ -237,9 +278,9 @@ def brief_payload(conn: sqlite3.Connection, person_id: int) -> dict[str, Any]:
     try:
         progress = goal.progress(conn, person_id=person_id)
         payload["goal"] = {
-            "target_eur": _num(progress.target_eur),
-            "reached_pct": _num(progress.progress_pct),
-            "remaining_eur": _num(progress.remaining_eur),
+            "target_eur": _money(progress.target_eur),
+            "reached": _pct(progress.progress_pct),
+            "remaining_eur": _money(progress.remaining_eur),
             # A projection from contributions alone, assuming no investment
             # return whatever. Included so the model can repeat it; the
             # guardrails forbid it commenting on whether it looks achievable.
@@ -304,20 +345,20 @@ def explain_payload(conn: sqlite3.Connection, person_id: int, tax_year: int) -> 
         "jurisdiction": "DE",
         "reader": "does not read German",
         "allowance": {
-            "tax_free_allowance_eur": _num(state.statutory_cap_eur),
-            "realised_gains_eur": _num(realised if realised > 0 else Decimal(0)),
-            "dividends_and_interest_eur": _num(distributions),
-            "advance_lump_sum_eur": _num(advance),
-            "losses_offset_eur": _num(state.losses_offset_eur),
-            "allowance_used_eur": _num(state.consumed_eur),
-            "allowance_remaining_eur": _num(state.remaining_eur),
-            "taxable_after_allowance_eur": _num(state.taxable_after_allowance_eur),
-            "estimated_tax_eur": _num(state.estimated_tax_eur),
-            "tax_rate_pct": 26.375,
+            "tax_free_allowance_eur": _money(state.statutory_cap_eur),
+            "realised_gains_eur": _money(realised if realised > 0 else Decimal(0)),
+            "dividends_and_interest_eur": _money(distributions),
+            "advance_lump_sum_eur": _money(advance),
+            "losses_offset_eur": _money(state.losses_offset_eur),
+            "allowance_used_eur": _money(state.consumed_eur),
+            "allowance_remaining_eur": _money(state.remaining_eur),
+            "taxable_after_allowance_eur": _money(state.taxable_after_allowance_eur),
+            "estimated_tax_eur": _money(state.estimated_tax_eur),
+            "tax_rate": "26.375%",
         },
         "loss_carry_forward": {
-            "individual_shares_eur": _num(state.carried_forward.aktien),
-            "everything_else_eur": _num(state.carried_forward.sonstige),
+            "individual_shares_eur": _money(state.carried_forward.aktien),
+            "everything_else_eur": _money(state.carried_forward.sonstige),
         },
         "not_included": {
             "instruments": excluded.instruments,

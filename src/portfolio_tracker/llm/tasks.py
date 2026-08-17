@@ -202,7 +202,7 @@ def narrate(
     ]
 
     try:
-        completion = chosen.complete(messages, max_output_tokens=700)
+        completion = chosen.complete(messages)
     except LLMUnavailable as exc:
         run_id = log("UNAVAILABLE", error=keys.redact(str(exc), keys.get_key(conn)))
         return Narration(status="UNAVAILABLE", reason=str(exc), run_id=run_id)

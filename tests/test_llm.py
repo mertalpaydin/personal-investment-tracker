@@ -16,6 +16,7 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -23,7 +24,7 @@ from fastapi.testclient import TestClient
 
 from portfolio_tracker.api.app import app as api_app
 from portfolio_tracker.api.app import get_db, get_writable_db
-from portfolio_tracker.core import settings
+from portfolio_tracker.core import env, settings
 from portfolio_tracker.db import migrate as M
 from portfolio_tracker.db.connection import connect
 from portfolio_tracker.llm import keys, runs, tasks
@@ -32,6 +33,23 @@ from portfolio_tracker.llm.providers.gemini import GeminiProvider
 from portfolio_tracker.llm.providers.null import NullProvider
 
 VALID_KEY = "AIza" + "b" * 35
+
+
+@pytest.fixture(autouse=True)
+def no_ambient_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Isolate from a real `.env` and real environment variables.
+
+    Without this, these tests pass or fail depending on whether the machine
+    running them happens to have a key configured -- which is the definition
+    of a flaky test, and would have hidden a genuine bug the day somebody
+    removed their key.
+    """
+    monkeypatch.delenv(keys.ENV_KEY, raising=False)
+    monkeypatch.delenv(keys.ENV_MODEL, raising=False)
+    monkeypatch.setattr(env, "DEFAULT_ENV", tmp_path / "absent.env")
+    env.reload()
+    yield
+    env.reload()
 
 
 @pytest.fixture
@@ -272,9 +290,36 @@ def test_amounts_can_be_withheld_while_percentages_are_sent(db: sqlite3.Connecti
 # ---------------------------------------------------------------------------
 
 
-def test_a_malformed_key_is_refused_before_any_request(db: sqlite3.Connection) -> None:
-    with pytest.raises(keys.KeyError_, match="AIza"):
-        keys.set_key(db, "not-a-key")
+@pytest.mark.parametrize("bad", ["short", "", "   ", "https://aistudio.google.com/apikey", "a b c"])
+def test_an_obviously_wrong_key_is_refused_before_any_request(
+    db: sqlite3.Connection, bad: str
+) -> None:
+    """The mistakes a person actually makes: a truncated paste, a URL, spaces.
+
+    Deliberately not a format check. Google has shipped at least two key
+    formats -- `AIza…` of 39 characters and `AQ.…` of 53 -- and a rule that
+    knows today's rejects tomorrow's for a reason the person pasting it cannot
+    do anything about. Whether a key works is the API's judgement.
+    """
+    with pytest.raises(keys.KeyError_, match="does not look like an API key"):
+        keys.set_key(db, bad)
+
+
+@pytest.mark.parametrize(
+    "good",
+    [
+        "AIza" + "b" * 35,  # the older format
+        "AQ." + "Ab8RN" * 10,  # the newer one
+    ],
+)
+def test_both_known_key_formats_are_accepted(db: sqlite3.Connection, good: str) -> None:
+    keys.set_key(db, good)
+    assert keys.get_key(db) == good
+
+
+def test_a_key_of_either_format_is_scrubbed_from_text() -> None:
+    for key in ("AIza" + "b" * 35, "AQ." + "Ab8RN" * 10):
+        assert key not in keys.redact(f"boom: {key} failed")
 
 
 def test_a_key_is_never_returned_only_hinted(db: sqlite3.Connection, client: TestClient) -> None:

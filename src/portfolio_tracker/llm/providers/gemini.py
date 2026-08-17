@@ -35,6 +35,14 @@ RETRY_STATUSES = (429, 500, 502, 503, 504)
 #: third backoff has already failed as far as the reader is concerned.
 RETRY_BACKOFF_S = (2.0, 8.0)
 
+#: Gemini 3.x models think before answering, and those thinking tokens count
+#: against `maxOutputTokens`. On a payload the size of a daily brief the model
+#: spent nearly the whole budget reasoning and the answer was cut off
+#: mid-number -- "a return of 0.4" where the figure was 0.47, which is worse
+#: than no answer at all. The budget therefore has to cover both, and this is
+#: sized for the longest task rather than the shortest.
+DEFAULT_MAX_OUTPUT_TOKENS = 3000
+
 #: Google's free-tier limits are per project and change without notice, so
 #: nothing here hardcodes one. The caller enforces its own cap; this only
 #: reacts to what the API actually says.
@@ -81,7 +89,7 @@ class GeminiProvider:
         self,
         messages: list[Message],
         *,
-        max_output_tokens: int = 700,
+        max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
         temperature: float = 0.2,
         timeout_s: float = 30.0,
     ) -> Completion:
@@ -153,6 +161,15 @@ class GeminiProvider:
 
         if finish == "SAFETY" or not text:
             raise LLMRefused(f"the model declined to answer ({finish or 'empty reply'})")
+
+        if finish == "MAX_TOKENS":
+            # A truncated answer is not a shorter answer. It stops mid-sentence,
+            # and a sentence about money that stops mid-number reads as a
+            # different figure -- "a return of 0.4" where the value was 0.47.
+            raise LLMRefused(
+                "the model ran out of room before finishing, so the answer would "
+                "have been cut off mid-sentence"
+            )
 
         usage = parsed.get("usageMetadata") or {}
         return Completion(
