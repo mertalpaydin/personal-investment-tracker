@@ -127,10 +127,21 @@ def _data_quality(conn: sqlite3.Connection, person_id: int, as_of: str) -> dict[
              AND type IN ('BUY', 'SELL')) AS trades_without_fees,
           (SELECT count(*) FROM transaction_ WHERE quantity_confidence = 'ESTIMATED')
             AS estimated_quantities,
-          (SELECT count(*) FROM instrument WHERE tax_regime <> 'DE_INVESTMENT')
+          -- Watched instruments are excluded from both counts. Nothing is
+          -- taxed on something nobody owns, so a missing exemption rate on a
+          -- watchlist entry is not a gap in anything -- and an alarm that
+          -- cannot be acted on is how people learn to ignore the real ones.
+          (SELECT count(*) FROM instrument i WHERE i.tax_regime <> 'DE_INVESTMENT'
+             AND EXISTS (SELECT 1 FROM transaction_ t WHERE t.instrument_id = i.id
+                         UNION ALL
+                         SELECT 1 FROM position_daily d WHERE d.instrument_id = i.id))
             AS instruments_out_of_tax_scope,
-          (SELECT count(*) FROM instrument WHERE tax_regime = 'DE_INVESTMENT'
-             AND teilfreistellung_pct IS NULL) AS unresolved_teilfreistellung,
+          (SELECT count(*) FROM instrument i WHERE i.tax_regime = 'DE_INVESTMENT'
+             AND i.teilfreistellung_pct IS NULL AND i.is_fund = 1
+             AND EXISTS (SELECT 1 FROM transaction_ t WHERE t.instrument_id = i.id
+                         UNION ALL
+                         SELECT 1 FROM position_daily d WHERE d.instrument_id = i.id))
+            AS unresolved_teilfreistellung,
           (SELECT count(*) FROM position_daily WHERE date = ? AND valuation_status <> 'OK')
             AS stale_or_missing_prices
         """,
