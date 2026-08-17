@@ -17,6 +17,7 @@ import { get, all, isError } from "../api.js";
 import * as f from "../fmt.js";
 import { timeChart, toTs, palette } from "../charts.js";
 import { bars, divergingBars } from "../bars.js";
+import { explainPanel } from "../narrative.js";
 
 export async function render() {
   const data = await all({
@@ -44,6 +45,9 @@ export async function render() {
   );
 
   view.append(headline(p));
+  // Opt-in: the figures above are the product, and each narration costs a
+  // call against a free tier.
+  view.append(explainPanel("/api/brief", {}, "Summarise this in words"));
   view.append(outsideTheTotal(p));
 
   if (!isError(data.series) && data.series.points.length > 1) {

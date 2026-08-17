@@ -17,6 +17,7 @@ import * as router from "../router.js";
 export async function render() {
   const data = await all({
     updates: get("/api/updates"),
+    llm: get("/api/settings/llm"),
     health: get("/api/health/data"),
     goal: get("/api/goal"),
     accounts: get("/api/accounts"),
@@ -38,6 +39,7 @@ export async function render() {
   if (!isError(data.health)) view.append(healthSection(data.health));
   if (!isError(data.constants)) view.append(taxSection(data.constants));
   if (!isError(data.accounts)) view.append(accountsSection(data.accounts));
+  if (!isError(data.llm)) view.append(narrationSection(data.llm));
   view.append(maintenanceSection());
   return view;
 }
@@ -436,4 +438,173 @@ function maintenanceSection() {
     out,
     el("p", el("a", { href: "/debug", text: "Server-rendered debug page" })),
   );
+}
+
+
+/* ------------------------------------------------------- written summaries */
+
+/*
+ * Switched off until somebody turns it on, and the panel says in one sentence
+ * exactly what would leave the machine. Sending a household's figures to a
+ * third party is a decision to make deliberately, not one to discover has
+ * already been made.
+ */
+function narrationSection(llm) {
+  const key = el("input", {
+    type: "password",
+    placeholder: llm.configured ? llm.hint : "AIza…",
+    autocomplete: "off",
+  });
+  const model = el("input", { type: "text", value: llm.model });
+  const cap = el("input", { type: "number", min: "1", max: "1000", value: String(llm.daily_cap) });
+  const enabled = el("input", { type: "checkbox", checked: llm.enabled });
+  const amounts = el("input", { type: "checkbox", checked: llm.send_amounts });
+  const status = el("p.note");
+  const models = el("div");
+
+  const save = async () => {
+    status.className = "note";
+    status.textContent = "Saving…";
+    try {
+      const body = {
+        model: model.value.trim(),
+        enabled: enabled.checked,
+        daily_cap: Number(cap.value),
+        send_amounts: amounts.checked,
+      };
+      if (key.value.trim()) body.api_key = key.value.trim();
+      await put("/api/settings/llm", body);
+      router.refresh();
+    } catch (err) {
+      status.className = "note bad";
+      status.textContent = err.message;
+    }
+  };
+
+  const listModels = async () => {
+    models.replaceChildren(el("p.note", { text: "Asking which models this key can use…" }));
+    try {
+      const body = await get("/api/settings/llm/models");
+      if (body.problem) {
+        models.replaceChildren(el("p.note.bad", { text: body.problem }));
+        return;
+      }
+      // A picker rather than a text field: model names change, and a field
+      // that lets you type one lets you type one that does not exist.
+      const select = el(
+        "select",
+        body.models.map((m) =>
+          el("option", { value: m, text: m, selected: m === body.current }),
+        ),
+      );
+      select.addEventListener("change", () => {
+        model.value = select.value;
+      });
+      models.replaceChildren(
+        el("label.field", el("span", { text: "Models this key can use" }), select),
+      );
+    } catch (err) {
+      models.replaceChildren(el("p.note.bad", { text: err.message }));
+    }
+  };
+
+  const forget = async () => {
+    if (!window.confirm("Remove the key and switch written summaries off?")) return;
+    try {
+      await del("/api/settings/llm/key");
+      router.refresh();
+    } catch (err) {
+      status.className = "note bad";
+      status.textContent = err.message;
+    }
+  };
+
+  return el(
+    "section",
+    heading("Written summaries"),
+    el("p.note", { text: llm.what_leaves_this_machine }),
+    el(
+      "div.panel",
+      el("p", {
+        text: llm.configured
+          ? `A key is stored (${llm.hint}). Written summaries are ${llm.enabled ? "on" : "off"}. ` +
+            `${llm.calls_today} of ${llm.daily_cap} used today.`
+          : "No key stored. Get a free one from Google AI Studio and paste it here.",
+      }),
+      el(
+        "form.entry",
+        { onsubmit: (e) => (e.preventDefault(), save()) },
+        el(
+          "label.field",
+          el("span", { text: llm.configured ? "Replace the key" : "API key" }),
+          key,
+          el("span.note", { text: "stored on this machine; never shown again" }),
+        ),
+        el("label.field", el("span", { text: "Model" }), model),
+        el("label.field", el("span", { text: "Daily limit" }), cap),
+        el("label.check.wide", enabled, el("span", { text: "Write summaries when I ask for them" })),
+        el(
+          "label.check.wide",
+          amounts,
+          el("span", { text: "Include amounts in euros" }),
+          el("span.note", {
+            text: " — untick to send only percentages and differences",
+          }),
+        ),
+        el(
+          "div.wide.actions",
+          el("button.primary", { type: "submit", text: "Save" }),
+          el("button", { type: "button", text: "Which models?", onclick: listModels }),
+          llm.configured
+            ? el("button.danger", { type: "button", text: "Forget the key", onclick: forget })
+            : null,
+        ),
+      ),
+      models,
+      status,
+    ),
+    el("p", el("a", { href: "#/settings?log=llm", text: "Read what has been sent", onclick: showLog })),
+  );
+}
+
+/** The audit trail: exactly what was sent, and what came back. */
+async function showLog(event) {
+  event.preventDefault();
+  const target = event.target;
+  target.replaceWith(el("p.note", { text: "Loading…" }));
+  try {
+    const body = await get("/api/llm/runs", { limit: 20 });
+    const rows = (body.runs || []).map((r) =>
+      row([
+        f.date(r.created_at),
+        r.task,
+        { node: el("span.tag", { text: r.status.toLowerCase() }) },
+        { text: r.output_text || r.error || "—", cls: "name", title: r.input_json },
+      ]),
+    );
+    document.querySelector("#view").append(
+      el(
+        "section",
+        heading("What has been sent"),
+        rows.length
+          ? el(
+              "div.wrap",
+              el(
+                "table",
+                el("thead", el("tr", ["When", "About", "Result", "What came back"].map((t) => el("th", { text: t })))),
+                el("tbody", rows),
+              ),
+            )
+          : el("p.nodata", { text: "Nothing has been sent." }),
+        el("p.note", {
+          text:
+            "Hover a row to see the exact JSON that was sent. Every number in a " +
+            "summary should appear in it — that is how you check the model did " +
+            "not invent one.",
+        }),
+      ),
+    );
+  } catch (err) {
+    document.querySelector("#view").append(el("p.note.bad", { text: err.message }));
+  }
 }

@@ -18,6 +18,7 @@ import { get, put, all, isError } from "../api.js";
 import * as f from "../fmt.js";
 import { bars } from "../bars.js";
 import * as router from "../router.js";
+import { explainPanel } from "../narrative.js";
 
 let year = new Date().getFullYear();
 
@@ -47,6 +48,7 @@ export async function render({ query }) {
   if (isError(data.allowance)) throw data.allowance;
 
   view.append(allowanceSection(data.allowance));
+  view.append(explainPanel("/api/tax/explain", { year }, "Explain my tax position"));
   view.append(lossSection(data.allowance));
   if (!isError(data.vap)) view.append(advanceChargeSection(data.vap));
   if (!isError(data.harvest)) view.append(harvestSection(data.harvest));

@@ -19,6 +19,7 @@ import { get, post, del, patch, all, isError } from "../api.js";
 import * as f from "../fmt.js";
 import { timeChart, toTs, palette, indexTo100 } from "../charts.js";
 import * as router from "../router.js";
+import { explainPanel } from "../narrative.js";
 
 export async function render() {
   const data = await all({
@@ -386,6 +387,9 @@ function scanPanel(scan) {
   if (scan.caveats?.length) {
     panel.append(el("ul.caveats", scan.caveats.map((x) => el("li", { text: x }))));
   }
+  panel.append(
+    explainPanel(`/api/peers/${encodeURIComponent(s.instrument)}`, {}, "Put this in words"),
+  );
   return panel;
 }
 

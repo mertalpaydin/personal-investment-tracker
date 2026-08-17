@@ -30,6 +30,7 @@ from portfolio_tracker.db.connection import transaction
 from portfolio_tracker.ingest.providers.base import ProviderUnavailable
 from portfolio_tracker.ingest.providers.market import YFinanceProvider
 from portfolio_tracker.jobs import update as job
+from portfolio_tracker.llm import tasks
 
 router = APIRouter(tags=["watchlist"])
 
@@ -337,17 +338,30 @@ def _scan_json(scan: peers.PeerScan) -> dict[str, Any]:
 @router.get("/api/peers/{import_key:path}")
 def peer_scan(
     import_key: str,
-    conn: sqlite3.Connection = Depends(get_db),
+    conn: sqlite3.Connection = Depends(get_writable_db),
     top: int = Query(5, ge=1, le=25),
     include_owned: bool = Query(False, alias="owned"),
+    narrate: bool = Query(False),
 ) -> dict[str, Any]:
-    """Instruments comparable to this one, ranked by how they actually did."""
+    """Instruments comparable to this one, ranked by how they actually did.
+
+    ``narrate`` is opt-in and off by default: the comparison is complete
+    without it, and each narration costs a call against a free tier.
+    """
     try:
-        return _scan_json(
-            peers.scan(conn, instrument=import_key, top=top, include_owned=include_owned)
-        )
+        found = peers.scan(conn, instrument=import_key, top=top, include_owned=include_owned)
     except peers.PeerError as exc:
         raise HTTPException(404, str(exc)) from exc
+
+    body = _scan_json(found)
+    if not narrate:
+        return {**body, "narrative": None, "narrative_status": "NOT_REQUESTED"}
+
+    with transaction(conn):
+        result = tasks.narrate(
+            conn, task="peer_scan", payload=body, subject=found.subject.import_key, max_sentences=6
+        )
+    return {**body, **result.as_dict()}
 
 
 @router.get("/api/peers")
