@@ -826,8 +826,8 @@ def test_a_name_that_is_only_a_legal_form_survives() -> None:
 def test_an_identifier_still_wins_over_the_name(db: sqlite3.Connection) -> None:
     """An ISIN is proof; a normalised name is a good guess. Two companies that
     happen to normalise alike must stay apart when the files identify them."""
-    assert look_through._underlying_key("XX0000000101", "Whatever Ltd") == "id:XX0000000101"
-    assert look_through._underlying_key(None, "Whatever Ltd") == "name:whatever"
+    assert look_through.underlying_key("XX0000000101", "Whatever Ltd") == "id:XX0000000101"
+    assert look_through.underlying_key(None, "Whatever Ltd") == "name:whatever"
 
 
 def test_concentration_merges_across_differently_spelled_files(

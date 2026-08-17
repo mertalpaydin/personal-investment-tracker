@@ -429,7 +429,7 @@ def concentration(
                 (row["id"], published.isoformat()),
             ):
                 contribution = value * line["weight"] / weight_sum
-                key = _underlying_key(line["identifier"], line["name"])
+                key = underlying_key(line["identifier"], line["name"])
                 values[key] = values.get(key, ZERO) + contribution
                 names.setdefault(key, str(line["name"]))
                 identifiers.setdefault(key, line["identifier"])
@@ -439,7 +439,7 @@ def concentration(
                 )
                 resolved += contribution
         elif basis == DIRECT:
-            key = _underlying_key(row["isin"], row["name"])
+            key = underlying_key(row["isin"], row["name"])
             values[key] = values.get(key, ZERO) + value
             names.setdefault(key, str(row["name"]))
             identifiers.setdefault(key, row["isin"])
@@ -611,7 +611,7 @@ def _merge_by_issuer(
     )
 
 
-def _underlying_key(identifier: object, name: object) -> str:
+def underlying_key(identifier: object, name: object) -> str:
     """Group on the identifier when there is one, otherwise the normalised name.
 
     An ISIN is proof; a name is a guess. When two files supply neither, the

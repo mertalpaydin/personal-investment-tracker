@@ -227,14 +227,45 @@ def xirr(
     return Decimal(str(round((low + high) / 2, 8)))
 
 
-def volatility(states: list[DayState]) -> Decimal | None:
-    """Annualised standard deviation of daily unit-price returns."""
-    daily = [float(s.daily_return) for s in states if s.daily_return is not None]
-    if len(daily) < 20:
+#: Fewest daily returns worth computing a volatility from. Below this the
+#: figure is noise wearing a statistic's clothes.
+MIN_VOLATILITY_OBSERVATIONS = 20
+
+
+def annualised_volatility(daily_returns: list[Decimal]) -> Decimal | None:
+    """Annualised standard deviation of a list of daily returns.
+
+    Split out from :func:`volatility` so an instrument's own price series can
+    be measured by the same code as the portfolio's. Two implementations of a
+    standard deviation is two chances to disagree about the divisor.
+    """
+    daily = [float(r) for r in daily_returns]
+    if len(daily) < MIN_VOLATILITY_OBSERVATIONS:
         return None
     mean = sum(daily) / len(daily)
     variance = sum((r - mean) ** 2 for r in daily) / (len(daily) - 1)
     return Decimal(str(round(variance**0.5 * TRADING_DAYS**0.5, 8)))
+
+
+def deepest_fall(levels: list[Decimal]) -> Decimal | None:
+    """Deepest peak-to-trough fall in a level series, as a negative fraction.
+
+    Split out from :func:`max_drawdown` for the same reason as above.
+    """
+    if len(levels) < 2:
+        return None
+    peak = levels[0]
+    worst = ZERO
+    for level in levels[1:]:
+        peak = max(peak, level)
+        if peak > ZERO:
+            worst = min(worst, level / peak - 1)
+    return worst
+
+
+def volatility(states: list[DayState]) -> Decimal | None:
+    """Annualised standard deviation of daily unit-price returns."""
+    return annualised_volatility([s.daily_return for s in states if s.daily_return is not None])
 
 
 def max_drawdown(states: list[DayState]) -> Decimal | None:
@@ -243,15 +274,7 @@ def max_drawdown(states: list[DayState]) -> Decimal | None:
     Measured on the unit price rather than on portfolio value, so a withdrawal
     is not mistaken for a loss.
     """
-    if len(states) < 2:
-        return None
-    peak = states[0].unit_price
-    worst = ZERO
-    for state in states[1:]:
-        peak = max(peak, state.unit_price)
-        if peak > ZERO:
-            worst = min(worst, state.unit_price / peak - 1)
-    return worst
+    return deepest_fall([s.unit_price for s in states])
 
 
 # ---------------------------------------------------------------------------
