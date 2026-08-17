@@ -249,10 +249,7 @@ def _run_locked(
 
         after = newest_price(conn)
         outcome.last_price_date = after
-        outcome.price_rows = conn.execute(
-            "SELECT count(*) AS n FROM price WHERE date > ?",
-            ((before or date(1970, 1, 1)).isoformat(),),
-        ).fetchone()["n"]
+        outcome.price_rows = sum(report.written for report in coverage)
         outcome.days_covered = business_days_between(before, after) if before and after else None
 
         if rebuild_after and conn.execute("SELECT 1 FROM transaction_ LIMIT 1").fetchone():

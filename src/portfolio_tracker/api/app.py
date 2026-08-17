@@ -24,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from portfolio_tracker import __version__
-from portfolio_tracker.api import admin, deps, transactions
+from portfolio_tracker.api import admin, deps, instruments, transactions
 from portfolio_tracker.api.deps import configure, get_db, get_writable_db
 from portfolio_tracker.api.render import render_dashboard
 from portfolio_tracker.core import (
@@ -1803,6 +1803,7 @@ def dashboard(
 # so the OpenAPI page lists reporting before recording.
 app.include_router(transactions.router)
 app.include_router(admin.router)
+app.include_router(instruments.router)
 
 
 # The app itself. Mounted last so nothing here can shadow an /api route, and

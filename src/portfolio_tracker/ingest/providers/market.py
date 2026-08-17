@@ -12,7 +12,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
-from datetime import date
+from dataclasses import dataclass
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -21,6 +22,26 @@ from portfolio_tracker.ingest.providers.base import (
     PriceObservation,
     ProviderUnavailable,
 )
+
+
+@dataclass(frozen=True)
+class InstrumentDescription:
+    """What a provider can say about a symbol that is not yet in the database.
+
+    Every field except ``symbol`` is optional, because every one of them comes
+    from a source that may simply not answer. The UI shows what came back and
+    lets the person correct it before anything is stored -- which is the right
+    shape anyway: they know what they typed and the feed is guessing.
+    """
+
+    symbol: str
+    name: str | None = None
+    currency: str | None = None
+    exchange: str | None = None
+    quote_type: str | None = None
+    last_close: Decimal | None = None
+    last_date: date | None = None
+    observations: int = 0
 
 
 class YFinanceProvider:
@@ -36,6 +57,97 @@ class YFinanceProvider:
 
     def supports(self, instrument: InstrumentRef) -> bool:
         return instrument.price_source == "yfinance"
+
+    def describe(self, symbol: str, *, probe_days: int = 14) -> InstrumentDescription:
+        """What a symbol appears to be, before anything is written.
+
+        Deliberately a *validation* step and not an autocomplete. yfinance has
+        no supported symbol search: the endpoint behind one is undocumented,
+        unversioned and aggressively rate-limited -- the same failure mode
+        `TefasProvider` already records. Promising a search box would mean
+        promising something that breaks without notice. Typing a ticker and
+        pressing Check is honest about what can actually be relied on.
+
+        The currency it returns is load-bearing rather than decorative: a
+        database trigger aborts any price whose currency differs from its
+        instrument's, so guessing it wrong makes every later fetch fail with
+        an error nobody could act on.
+        """
+        ticker = symbol.strip()
+        if not ticker:
+            raise ProviderUnavailable("Enter a ticker, for example IWDA.DE.")
+        try:
+            import yfinance
+        except ImportError as exc:  # pragma: no cover - depends on install extras
+            raise ProviderUnavailable(
+                "yfinance is not installed; run `uv sync --extra ingest`"
+            ) from exc
+
+        handle = yfinance.Ticker(ticker)
+
+        # `fast_info` is lazy: converting it to a dict, or reading a key an
+        # unknown symbol has no answer for, raises from inside the library.
+        # Each field is therefore fetched on its own and a failure means
+        # "not available" rather than taking the whole lookup down.
+        def field(name: str) -> Any:
+            try:
+                return getattr(handle.fast_info, name, None)
+            except Exception:
+                return None
+
+        currency = field("currency")
+        last = field("last_price")
+        exchange = field("exchange")
+
+        # The name needs the heavy `.info` call, which scrapes and is the first
+        # thing to break -- so it is attempted, never depended on. A blank name
+        # is a field the person fills in, not a failed lookup.
+        name: str | None = None
+        quote_type: str | None = None
+        try:
+            info: dict[str, Any] = handle.info or {}
+            name = info.get("shortName") or info.get("longName") or None
+            quote_type = info.get("quoteType") or None
+            currency = currency or info.get("currency")
+            exchange = exchange or info.get("exchange")
+        except Exception:
+            pass
+
+        end = date.today()
+        start = end - timedelta(days=probe_days)
+        observations: list[PriceObservation] = []
+        try:
+            observations = self.fetch(
+                InstrumentRef(
+                    instrument_id=0,
+                    import_key=ticker,
+                    currency=str(currency or "EUR"),
+                    price_source="yfinance",
+                    price_symbol=ticker,
+                    trading_calendar="XETRA",
+                ),
+                start,
+                end,
+            )
+        except ProviderUnavailable:
+            observations = []
+
+        if not observations and last is None:
+            raise ProviderUnavailable(
+                f"{ticker!r} returned no prices. Check the ticker -- Xetra listings "
+                "usually end in '.DE', and Yahoo is the naming this uses."
+            )
+
+        return InstrumentDescription(
+            symbol=ticker,
+            name=str(name) if name else None,
+            currency=str(currency) if currency else None,
+            exchange=str(exchange) if exchange else None,
+            quote_type=str(quote_type) if quote_type else None,
+            last_close=observations[-1].close if observations else None,
+            last_date=observations[-1].on if observations else None,
+            observations=len(observations),
+        )
 
     def fetch(self, instrument: InstrumentRef, start: date, end: date) -> list[PriceObservation]:
         symbol = instrument.price_symbol

@@ -19,9 +19,7 @@ const NAV = [
   { href: "#/holdings", pattern: "/holdings", label: "Holdings" },
   { href: "#/trades", pattern: "/trades", label: "Trades" },
   { href: "#/tax", pattern: "/tax", label: "Tax" },
-  // Watchlist and peer comparison are not built yet. Deliberately absent
-  // rather than present and empty: a nav entry that leads nowhere is worse
-  // than one that is not there.
+  { href: "#/watchlist", pattern: "/watchlist", label: "Watchlist" },
   { href: "#/inbox", pattern: "/inbox", label: "Inbox" },
   { href: "#/settings", pattern: "/settings", label: "Settings" },
 ];
@@ -32,6 +30,7 @@ const VIEWS = {
   "/holdings/:key": () => import("./views/holding.js"),
   "/trades": () => import("./views/trades.js"),
   "/tax": () => import("./views/tax.js"),
+  "/watchlist": () => import("./views/watchlist.js"),
   "/inbox": () => import("./views/inbox.js"),
   "/settings": () => import("./views/settings.js"),
 };

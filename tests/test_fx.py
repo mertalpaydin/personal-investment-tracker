@@ -227,11 +227,19 @@ def test_only_modules_permitted_to_convert_contain_fx_arithmetic() -> None:
         # been sold. Admitted deliberately rather than by reflex: the rule is
         # "a rate pinned to a date", and `as_of` is that date.
         "core/scenario.py",
+        # Converts an instrument's price series at each day's own rate -- the
+        # same operation valuation.py performs, but for an instrument nobody
+        # owns, so there is no position row to read it from. Admitted because
+        # the alternative is worse than the rule: a Turkish fund up 90% in lira
+        # has not returned 90% to somebody who spends euros, and ranking it
+        # against a euro-quoted ETF on local returns would put it top of every
+        # comparison for a reason that is not performance.
+        "core/performance.py",
     }
-    # The list is short because it is meant to be. If it needs a ninth entry,
+    # The list is short because it is meant to be. If it needs a tenth entry,
     # the question to answer first is why that module knows about currency at
     # all -- returns.py, tax.py and the whole API manage without.
-    assert len(allowed) == 8
+    assert len(allowed) == 9
     offenders = []
     for path in root.rglob("*.py"):
         rel = path.relative_to(root).as_posix()
