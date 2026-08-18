@@ -41,6 +41,7 @@ export async function render() {
     baseline: get("/api/projection", { paths: 600, years: 15 }),
     sensitivity: get("/api/projection/sensitivity", { paths: 300 }),
     pinned: get("/api/projection/scenarios", { paths: 300 }),
+    savings: get("/api/savings"),
   });
 
   if (isError(data.baseline)) throw data.baseline;
@@ -56,6 +57,10 @@ export async function render() {
 
   view.append(confidenceCards(base));
   view.append(fanChart(base, data.baseline));
+  // Before the levers, because the rate the projection assumes comes from
+  // here: a plan built on an aspirational savings rate is the commonest way
+  // a tool like this flatters its owner.
+  if (!isError(data.savings)) view.append(savingsSection(data.savings));
   view.append(leverForm(base));
   if (!isError(data.sensitivity)) view.append(sensitivitySection(data.sensitivity));
   if (!isError(data.pinned)) view.append(pinnedSection(data.pinned));
@@ -100,13 +105,28 @@ function confidenceCards(outcome) {
 /* ---------------------------------------------------------------- fan */
 
 function fanChart(outcome, body) {
-  const bands = outcome.bands || [];
-  if (bands.length < 2) return el("div");
+  const all = outcome.bands || [];
+  if (all.length < 2) return el("div");
+
+  /*
+   * Trimmed to the part of the horizon the target lives in.
+   *
+   * The simulation runs fifteen years because a scenario may need it, but
+   * drawing all of it puts a EUR 30M line at the top and squashes the target
+   * onto the axis — a chart about compounding, when the question was "when do
+   * I reach EUR 250,000". Cut a couple of years past the point where even the
+   * unluckiest tenth has arrived.
+   */
+  const target = outcome.target_eur;
+  const arrived = all.findIndex((b) => b.p05 >= target);
+  const cutoff =
+    arrived === -1 ? all.length : Math.min(all.length, arrived + Math.ceil(24 / 3) + 1);
+  const bands = all.slice(0, Math.max(cutoff, 8));
+  const trimmed = bands.length < all.length;
 
   const box = el("div.chart");
   const pal = palette();
   const x = bands.map((b) => toTs(b.date));
-  const target = outcome.target_eur;
 
   queueMicrotask(() =>
     timeChart(box, {
@@ -144,7 +164,11 @@ function fanChart(outcome, body) {
       text:
         "Each shaded band is a share of resampled histories: the outer covers 90 " +
         "of every 100, the inner covers half. The middle line is not a prediction " +
-        "— it is the middle of a spread, and the spread is the answer.",
+        "— it is the middle of a spread, and the spread is the answer." +
+        (trimmed
+          ? " Cut off shortly after the target is reached in every band; the " +
+            "simulation itself runs further."
+          : ""),
     }),
   );
 }
@@ -310,6 +334,23 @@ function sensitivitySection(body) {
   const steps = (body.steps || []).filter((s) => s.months_earlier_75 !== null);
   if (!steps.length) return el("div");
 
+  // A table of zeros is worse than no table: it looks like a broken feature
+  // rather than the real answer, which is that the target is close enough
+  // that saving more cannot bring it much closer.
+  if (steps.every((s) => s.months_earlier_75 === 0)) {
+    return el(
+      "section",
+      heading("What each extra hundred buys"),
+      el("p.note", {
+        text:
+          "Nothing measurable. You are close enough to the target, and already " +
+          "contributing enough, that saving more does not bring the date forward " +
+          "by a whole month. Raising the target on the form above will show where " +
+          "extra contributions start to matter again.",
+      }),
+    );
+  }
+
   return el(
     "section",
     heading("What each extra hundred buys"),
@@ -404,4 +445,81 @@ function forgetButton(scenario) {
 function caveats(list) {
   if (!list?.length) return el("div");
   return el("ul.caveats", list.map((c) => el("li", { text: c })));
+}
+
+
+/* ------------------------------------------------------------- savings */
+
+/*
+ * What you actually put aside, as opposed to what moved.
+ *
+ * The three-way split is the point. "You are worth EUR 176,733" says nothing
+ * about whether that came from saving or from markets, and the two have
+ * completely different implications for what to do next. Income sits outside
+ * the sum deliberately -- dividends land in cash, which the headline value
+ * excludes, and folding them in would double-count whatever was reinvested.
+ */
+function savingsSection(s) {
+  const made = s.made_of || {};
+  const months = (s.months || []).slice(-24);
+
+  const section = el(
+    "section",
+    heading("What you actually saved"),
+    el(
+      "div.cards",
+      card("Last 12 months", f.eur(s.trailing_12m_eur), {
+        cls: "total",
+        sub: `${f.eur(s.average_monthly_12m_eur)} a month`,
+      }),
+      card("This year", f.eur(s.year_to_date_eur)),
+      card("Since the start", f.eur(made.money_you_put_in_eur)),
+      card("Market growth", f.eur(made.market_growth_eur), {
+        valueCls: f.tone(made.market_growth_eur),
+      }),
+      card("Income received", f.eur(s.income_received_eur), {
+        cls: "aside",
+        sub: "held as cash, outside the total",
+      }),
+    ),
+    el("p.note", { text: s.definition }),
+  );
+
+  // The identity, shown rather than asserted. A gap means a movement was
+  // classified as something this does not account for.
+  const gap = f.num(made.gap_eur) ?? 0;
+  section.append(
+    el("p.note" + (Math.abs(gap) > 0.01 ? ".bad" : ""), {
+      text:
+        `${f.eur(made.money_you_put_in_eur)} put in plus ${f.eur(made.market_growth_eur)} of ` +
+        `market growth is ${f.eur(made.adds_to_eur)}, and the portfolio is worth ` +
+        `${f.eur(made.portfolio_value_eur)}.` +
+        (Math.abs(gap) > 0.01 ? ` They differ by ${f.eur(gap)}, which should not happen.` : ""),
+    }),
+  );
+
+  if (months.length > 1) {
+    const box = el("div.chart");
+    const pal = palette();
+    queueMicrotask(() =>
+      timeChart(box, {
+        x: months.map((m) => toTs(`${m.period}-01`)),
+        height: 200,
+        kind: "eur",
+        zero: true,
+        series: [
+          {
+            label: "New money that month",
+            data: months.map((m) => f.num(m.net_new_money_eur)),
+            colour: pal.series[1],
+            fill: 0.15,
+          },
+        ],
+      }),
+    );
+    section.append(el("h3", { text: "Month by month" }), box);
+  }
+
+  section.append(caveats(s.caveats));
+  return section;
 }

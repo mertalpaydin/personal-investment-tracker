@@ -38,6 +38,7 @@ DERIVED_TABLES: tuple[str, ...] = (
     "allowance_entry",
     "loss_pot",
     "vorabpauschale",
+    "savings_period",
 )
 
 

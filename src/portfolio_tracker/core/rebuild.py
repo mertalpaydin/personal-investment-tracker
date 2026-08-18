@@ -17,7 +17,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 
-from portfolio_tracker.core import cash, inbox, lots, returns, valuation
+from portfolio_tracker.core import cash, inbox, lots, returns, savings, valuation
 
 
 @dataclass
@@ -29,6 +29,11 @@ class RebuildResult:
     position_days: int = 0
     grid_days: int = 0
     cash_rows: int = 0
+    savings_periods: int = 0
+    transfers_paired: int = 0
+    #: Withdrawals matching more than one deposit. Left for a person, because
+    #: guessing would erase a real contribution or invent one.
+    ambiguous_transfers: list[str] = field(default_factory=list)
     stale: list[str] = field(default_factory=list)
     unvalued: list[str] = field(default_factory=list)
     #: Reconciliation failures in the unit series. Non-empty means a
@@ -78,9 +83,25 @@ def run(
         conn.commit()
 
     for person in conn.execute("SELECT id FROM person ORDER BY id"):
-        result.breaks.extend(
-            returns.build_portfolio_daily(conn, person_id=int(person["id"]), end=end)
-        )
+        person_id = int(person["id"])
+
+        # Before the unit series, not after. Classification decides which
+        # movements are external, and unit accounting issues units against
+        # exactly those -- so a transfer recognised afterwards would leave a
+        # return series that had already counted it as new money.
+        report = savings.classify(conn, person_id=person_id)
+        result.transfers_paired += report.paired
+        result.ambiguous_transfers.extend(report.ambiguous)
+        if commit:
+            conn.commit()
+
+        result.breaks.extend(returns.build_portfolio_daily(conn, person_id=person_id, end=end))
+        if commit:
+            conn.commit()
+
+        # After, because a month's market growth is the residual once the
+        # closing value is known.
+        result.savings_periods += savings.build_periods(conn, person_id=person_id)
         if commit:
             conn.commit()
 

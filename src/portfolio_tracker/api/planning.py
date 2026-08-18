@@ -27,7 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from portfolio_tracker.api.deps import get_db, get_writable_db
-from portfolio_tracker.core import projection, scenarios
+from portfolio_tracker.core import projection, savings, scenarios
 from portfolio_tracker.db.connection import transaction
 
 router = APIRouter(tags=["planning"])
@@ -256,4 +256,129 @@ def sensitivity(
             "months than the fifth."
         ),
         "disclosure": DISCLOSURE,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Savings
+# ---------------------------------------------------------------------------
+
+
+class FlowClassUpdate(BaseModel):
+    """A person's decision about what a movement was."""
+
+    flow_class: str = Field(
+        pattern="^(EXTERNAL_IN|EXTERNAL_OUT|INTERNAL_TRANSFER|INVESTMENT|INCOME|COST)$"
+    )
+    savings_label: str | None = Field(default=None, max_length=40)
+
+
+@router.get("/api/savings")
+def savings_history(
+    conn: sqlite3.Connection = Depends(get_db),
+    person_id: int = Query(1, alias="person"),
+) -> dict[str, Any]:
+    """Net new money by month, and the three parts of what you are worth."""
+    result = savings.summarise(conn, person_id=person_id)
+    return {
+        "as_of": result.as_of.isoformat(),
+        "this_month_eur": _num(result.this_month_eur),
+        "year_to_date_eur": _num(result.year_to_date_eur),
+        "trailing_12m_eur": _num(result.trailing_12m_eur),
+        "average_monthly_12m_eur": _num(result.average_monthly_12m_eur),
+        # The split that answers "where did the value come from". Income sits
+        # outside the sum on purpose -- see core/savings.py.
+        "made_of": {
+            "money_you_put_in_eur": _num(result.cumulative_eur),
+            "market_growth_eur": _num(result.market_growth_eur),
+            "adds_to_eur": _num(result.reconciles),
+            "portfolio_value_eur": _num(result.closing_value_eur),
+            "gap_eur": _num(result.reconciliation_gap),
+        },
+        "income_received_eur": _num(result.income_received_eur),
+        "months": [
+            {
+                "period": p.period,
+                "in_eur": _num(p.gross_in_eur),
+                "out_eur": _num(p.gross_out_eur),
+                "net_new_money_eur": _num(p.net_new_money_eur),
+                "cumulative_eur": _num(p.cumulative_net_eur),
+                "income_eur": _num(p.income_received_eur),
+                "market_growth_eur": _num(p.market_growth_eur),
+                "value_eur": _num(p.closing_value_eur),
+            }
+            for p in result.periods
+        ],
+        "caveats": result.caveats,
+        "definition": (
+            "New savings is money crossing into your accounts from outside them. "
+            "Moving money between your own accounts is not saving, and neither is "
+            "a reinvested dividend -- that is a return being compounded."
+        ),
+    }
+
+
+@router.get("/api/savings/unclear")
+def unclear(
+    conn: sqlite3.Connection = Depends(get_db),
+    person_id: int = Query(1, alias="person"),
+) -> dict[str, Any]:
+    """Withdrawals matching more than one deposit, awaiting a decision.
+
+    Never guessed. Two identical amounts on the same day are genuinely
+    ambiguous, and choosing wrongly either erases a real contribution or
+    invents one -- and both errors are invisible afterwards.
+    """
+    out = []
+    for withdrawal, matches in savings.candidates(conn, person_id=person_id):
+        if len(matches) < 2:
+            continue
+        out.append(
+            {
+                "out_txn_id": withdrawal["id"],
+                "date": withdrawal["trade_date"],
+                "amount_eur": _num(withdrawal["gross_amount_eur"]),
+                "could_pair_with": [
+                    {"id": m["id"], "date": m["trade_date"], "account_id": m["account_id"]}
+                    for m in matches
+                ],
+            }
+        )
+    return {"unclear": out}
+
+
+@router.patch("/api/transactions/{txn_id}/flow-class")
+def reclassify(
+    txn_id: int,
+    body: FlowClassUpdate,
+    conn: sqlite3.Connection = Depends(get_writable_db),
+    person_id: int = Query(1, alias="person"),
+) -> dict[str, Any]:
+    """Say what a movement really was. Sticky through re-imports.
+
+    Recomputes the derived layer afterwards, because flow classification feeds
+    unit accounting directly: a transfer counted as new money issues units and
+    attributes the return they earn to a contribution instead of to
+    performance. Changing it and not recomputing would leave the return series
+    disagreeing with the ledger it came from.
+    """
+    from datetime import date as _date
+
+    from portfolio_tracker.core import rebuild
+
+    try:
+        with transaction(conn):
+            savings.set_flow_class(
+                conn, txn_id, flow_class=body.flow_class, savings_label=body.savings_label
+            )
+            result = rebuild.run(conn, end=_date.today(), strict=False, commit=False)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    return {
+        "id": txn_id,
+        "flow_class": body.flow_class,
+        "savings_label": body.savings_label,
+        "recomputed": {"breaks": result.breaks, "ok": result.ok},
+        "note": "Recorded as your decision. Re-importing will not change it back.",
     }
