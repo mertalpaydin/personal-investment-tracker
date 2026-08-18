@@ -349,7 +349,12 @@ function goalSection(g) {
       card("Reached", f.pct(pct, { digits: 1 })),
       card("Still to go", f.eur((f.num(g.target_eur) ?? 0) - (f.num(g.current_eur) ?? 0), { compact: true })),
     ),
-    el("p.actions", el("a", { href: "#/settings", text: "Change the target" })),
+    el(
+      "p.actions",
+      el("a", { href: "#/plan", text: "When will I get there?" }),
+      el("span", { text: " · " }),
+      el("a", { href: "#/settings", text: "Change the target" }),
+    ),
     caveats(g.caveats),
   );
 }

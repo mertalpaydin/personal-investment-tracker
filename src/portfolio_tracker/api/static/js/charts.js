@@ -77,6 +77,8 @@ const LEGEND_VALUES = {
  * @param {Array} [opts.axes]          - extra y-axis specs for secondary scales
  * @param {string} [opts.sync]         - sync key; charts sharing one share a cursor
  * @param {boolean} [opts.zero=false]  - force the y-axis to include zero
+ * @param {Array} [opts.fillBetween]   - [[hiIndex, loIndex], …] shaded bands,
+ *                                       indices into `series` (0-based)
  * @returns {object} the uPlot instance
  */
 export function timeChart(container, opts) {
@@ -144,12 +146,20 @@ export function timeChart(container, opts) {
       });
     }
 
+    // A shaded band between two series -- the shape a range of outcomes
+    // wants, as opposed to five lines the reader has to mentally fill in.
+    const bands = (opts.fillBetween || []).map(([hi, lo], i) => ({
+      series: [hi + 1, lo + 1],
+      fill: fade(series[hi].colour || p.series[hi % p.series.length], i === 0 ? 0.1 : 0.16),
+    }));
+
     return {
       width: Math.max(container.clientWidth || 640, 240),
       height,
       scales,
       series: uSeries,
       axes,
+      bands,
       legend: { show: legend },
       cursor: sync ? { sync: { key: sync } } : {},
     };

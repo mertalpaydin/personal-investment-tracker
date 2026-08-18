@@ -60,7 +60,7 @@ import random
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 from itertools import pairwise
 
 from portfolio_tracker.core import fx, goal
@@ -474,6 +474,134 @@ def _monthly_from_block(factor: Decimal, block_days: int) -> Decimal:
     return (factor.ln() / months).exp() - ONE
 
 
+@dataclass
+class PathSet:
+    """Every simulated path, and when each first met the target.
+
+    Kept as first-hit months rather than a full value matrix, because that is
+    what every question here actually asks: "by when am I confident" and "how
+    much earlier does this lever get me there". ``bands`` is populated only
+    when a caller wants to draw the fan, since it costs one list per month.
+    """
+
+    reached: list[int | None]
+    horizon_months: int
+    paths: int
+    #: month -> the sorted end-of-month values across paths, for percentiles.
+    bands: dict[int, list[Decimal]] = field(default_factory=dict)
+
+    @property
+    def never_reached(self) -> int:
+        return sum(1 for m in self.reached if m is None)
+
+    @property
+    def hit_months(self) -> list[int]:
+        return sorted(m for m in self.reached if m is not None)
+
+
+def months_at_confidence(paths: PathSet, confidence: Decimal) -> int | None:
+    """Earliest month by which at least ``confidence`` of paths have arrived.
+
+    Cumulative first-hit rather than "value at month m is above target": a
+    path that reaches the target and later dips below it has still reached it,
+    and for somebody saving toward a purchase that is the answer they want.
+
+    Returns None when the horizon ends before that many paths arrive -- which
+    is a real answer, and must never be extrapolated into one.
+    """
+    if not paths.paths:
+        return None
+    needed = int((Decimal(paths.paths) * confidence).to_integral_value(rounding=ROUND_CEILING))
+    arrived = 0
+    counts: dict[int, int] = {}
+    for month in paths.reached:
+        if month is not None:
+            counts[month] = counts.get(month, 0) + 1
+    for month in range(1, paths.horizon_months + 1):
+        arrived += counts.get(month, 0)
+        if arrived >= needed:
+            return month
+    return None
+
+
+def simulate_paths(
+    *,
+    factors: list[Decimal],
+    block_days: int,
+    current: Decimal,
+    monthly_contribution: Decimal,
+    target: Decimal,
+    horizon_months: int,
+    paths: int,
+    seed: int,
+    lump_sums: tuple[tuple[int, Decimal], ...] = (),
+    contribution_growth_annual: Decimal = ZERO,
+    return_delta_monthly: Decimal = ZERO,
+    with_bands: bool = False,
+) -> PathSet:
+    """Resample the return history forward, one month at a time.
+
+    Every path runs the full horizon even after it has arrived, so a scenario
+    can be compared with the baseline at any month and the fan chart has
+    something to draw. The first-hit month is recorded rather than the loop
+    being cut short.
+
+    ``return_delta_monthly`` is added to each sampled monthly return rather
+    than scaling it, which preserves the volatility and the correlation
+    structure the block bootstrap exists to capture. It is an assumption about
+    a different world, not a property of this portfolio -- callers are expected
+    to label it as such.
+
+    The same ``seed`` reproduces the same draws, which is what makes a
+    scenario comparison meaningful: the difference between two runs is then
+    the lever, not the sampling.
+    """
+    monthly = [_monthly_from_block(f, block_days) for f in factors]
+    if not monthly:
+        return PathSet(reached=[], horizon_months=horizon_months, paths=0)
+
+    lumps: dict[int, Decimal] = {}
+    for month, amount in lump_sums:
+        if 1 <= month <= horizon_months:
+            lumps[month] = lumps.get(month, ZERO) + amount
+
+    # Compounded monthly, so "2% a year more each year" is the same statement
+    # however long the horizon is.
+    growth = (
+        (ONE + contribution_growth_annual) ** Decimal("0.0833333333") - ONE
+        if (contribution_growth_annual)
+        else ZERO
+    )
+
+    rng = random.Random(seed)
+    reached: list[int | None] = []
+    bands: dict[int, list[Decimal]] = (
+        {m: [] for m in range(1, horizon_months + 1)} if with_bands else {}
+    )
+
+    for _ in range(paths):
+        value = current
+        contribution = monthly_contribution
+        hit: int | None = None
+        for month in range(1, horizon_months + 1):
+            drawn = monthly[rng.randrange(len(monthly))] + return_delta_monthly
+            value = value * (ONE + drawn) + contribution
+            if month in lumps:
+                value += lumps[month]
+            if hit is None and value >= target:
+                hit = month
+            if with_bands:
+                bands[month].append(value)
+            if growth:
+                contribution *= ONE + growth
+        reached.append(hit)
+
+    if with_bands:
+        for month in bands:
+            bands[month].sort()
+    return PathSet(reached=reached, horizon_months=horizon_months, paths=paths, bands=bands)
+
+
 def _simulate(
     *,
     factors: list[Decimal],
@@ -485,23 +613,18 @@ def _simulate(
     paths: int,
     seed: int,
 ) -> tuple[list[int], int]:
-    monthly = [_monthly_from_block(f, block_days) for f in factors]
-    rng = random.Random(seed)
-    reached: list[int] = []
-    never = 0
-    for _ in range(paths):
-        value = current
-        hit: int | None = None
-        for month in range(1, horizon_months + 1):
-            value = value * (ONE + monthly[rng.randrange(len(monthly))]) + monthly_contribution
-            if value >= target:
-                hit = month
-                break
-        if hit is None:
-            never += 1
-        else:
-            reached.append(hit)
-    return sorted(reached), never
+    """The shape `project()` has always used, over the shared simulation."""
+    result = simulate_paths(
+        factors=factors,
+        block_days=block_days,
+        current=current,
+        monthly_contribution=monthly_contribution,
+        target=target,
+        horizon_months=horizon_months,
+        paths=paths,
+        seed=seed,
+    )
+    return result.hit_months, result.never_reached
 
 
 def _percentile(sorted_months: list[int], fraction: Decimal) -> int | None:
