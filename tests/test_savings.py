@@ -80,14 +80,21 @@ def _txn(
     return int(cursor.lastrowid or 0)
 
 
-def _value(conn: sqlite3.Connection, when: str, value: str) -> None:
+def _value(conn: sqlite3.Connection, when: str, value: str, cash: str = "0") -> None:
+    """A day's valuation. `cash` is uninvested brokerage money.
+
+    It matters because `total_value_eur` deliberately excludes it while
+    `valuation_basis_eur` includes it -- and the savings split reconciles
+    against the second, or every purchase reads as market growth.
+    """
+    basis = str(Decimal(value) + Decimal(cash))
     conn.execute(
         "INSERT INTO portfolio_daily (date, person_id, market_value_eur, total_value_eur, "
         "cost_basis_eur, units_outstanding, unit_price, cash_eur, deposits_eur, "
         "realized_gain_eur, valuation_basis_eur, income_cash_eur, income_received_eur, "
-        "completeness, drawdown_pct) VALUES (?, 1, ?, ?, ?, '1', '100', '0', '0', '0', "
+        "completeness, drawdown_pct) VALUES (?, 1, ?, ?, ?, '1', '100', ?, '0', '0', "
         "?, '0', '0', 'FULL', '0')",
-        (when, value, value, value, value),
+        (when, value, value, value, cash, basis),
     )
     conn.commit()
 
@@ -491,3 +498,48 @@ def test_the_owner_can_change_their_mind(db: sqlite3.Connection) -> None:
         ]
         == 1
     )
+
+
+def test_cash_being_invested_is_not_market_growth(db: sqlite3.Connection) -> None:
+    """The bug that claimed EUR 137,022 of growth against EUR 25,438 earned.
+
+    `total_value_eur` excludes uninvested brokerage cash on purpose. Growth
+    here is a residual, so measuring it against that column books every
+    purchase as performance: the money leaves a series the sum cannot see and
+    arrives in one it can. On the real ledger a EUR 110,921 opening balance
+    was spent into holdings over two years and every euro was reported as
+    market growth, on a portfolio whose own time-weighted return said +20%.
+    """
+    # Day one: nothing invested, EUR 100,000 sitting in cash.
+    _value(db, "2026-01-31", "0", cash="100000")
+    # Then it is invested, with no money entering or leaving.
+    _value(db, "2026-02-28", "100000", cash="0")
+
+    savings.classify(db, person_id=1)
+    savings.build_periods(db, person_id=1)
+    result = savings.summarise(db, person_id=1)
+
+    assert result.market_growth_eur == ZERO_MONEY, "buying things is not earning"
+    assert result.opening_value_eur == Decimal("100000.00")
+    assert result.reconciliation_gap == ZERO_MONEY
+
+
+def test_the_split_reconciles_against_holdings_plus_uninvested_cash(
+    db: sqlite3.Connection,
+) -> None:
+    """Two value columns exist, and the identity must name which one it uses."""
+    _txn(db, account=1, kind="DEPOSIT", when="2026-01-05", amount="1000", flow="EXTERNAL_IN")
+    _value(db, "2026-01-31", "600", cash="400")
+    _value(db, "2026-02-28", "700", cash="400")
+
+    savings.classify(db, person_id=1)
+    savings.build_periods(db, person_id=1)
+    result = savings.summarise(db, person_id=1)
+
+    assert result.closing_basis_eur == Decimal("1100.00")
+    assert result.closing_value_eur == Decimal("700.00")
+    assert result.uninvested_cash_eur == Decimal("400.00")
+    # EUR 1,000 in, EUR 100 earned, and nothing left over.
+    assert result.cumulative_eur == Decimal("1000.00")
+    assert result.market_growth_eur == Decimal("100.00")
+    assert result.reconciliation_gap == ZERO_MONEY

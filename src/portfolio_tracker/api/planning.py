@@ -345,9 +345,21 @@ def savings_history(
         # outside the sum on purpose -- see core/savings.py.
         "made_of": {
             "money_you_put_in_eur": _num(result.cumulative_eur),
-            "money_you_already_had_eur": _num(result.opening_transfer_eur),
+            # One bucket to read, two sources: what the accounts already held
+            # on day one, and later statements arriving with a balance behind
+            # them. Both are "money you already had" to the person reading it.
+            "money_you_already_had_eur": _num(
+                result.opening_transfer_eur + result.opening_value_eur
+            ),
+            "already_held_on_day_one_eur": _num(result.opening_value_eur),
+            "brought_in_later_eur": _num(result.opening_transfer_eur),
             "market_growth_eur": _num(result.market_growth_eur),
             "adds_to_eur": _num(result.reconciles),
+            # The identity closes on the basis, which includes uninvested
+            # cash; the headline figure does not. Both are sent so the page
+            # can show a sum that adds up and still lead with what is held.
+            "accounts_hold_eur": _num(result.closing_basis_eur),
+            "uninvested_cash_eur": _num(result.uninvested_cash_eur),
             "portfolio_value_eur": _num(result.closing_value_eur),
             "gap_eur": _num(result.reconciliation_gap),
         },

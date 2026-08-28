@@ -903,6 +903,7 @@ function savingsSection(s) {
   // classified as something this does not account for.
   const gap = f.num(made.gap_eur) ?? 0;
   const already = f.num(made.money_you_already_had_eur) ?? 0;
+  const cash = f.num(made.uninvested_cash_eur) ?? 0;
   section.append(
     el("p.note" + (Math.abs(gap) > 0.01 ? ".bad" : ""), {
       text:
@@ -912,9 +913,15 @@ function savingsSection(s) {
         // the very line whose job is to prove there is not one.
         (already ? `, plus ${f.eur(made.money_you_already_had_eur)} you already had` : "") +
         `, plus ${f.eur(made.market_growth_eur)} of market growth, is ` +
-        `${f.eur(made.adds_to_eur)}, and the portfolio is worth ` +
-        `${f.eur(made.portfolio_value_eur)}.` +
-        (Math.abs(gap) > 0.01 ? ` They differ by ${f.eur(gap)}, which should not happen.` : ""),
+        `${f.eur(made.adds_to_eur)}.` +
+        // The sum closes on holdings *and* uninvested cash. Naming the cash
+        // is what makes the two figures reconcile on the page instead of
+        // looking like a rounding error nobody explained.
+        (Math.abs(cash) > 0.01
+          ? ` That is ${f.eur(made.portfolio_value_eur)} of holdings and deposits, ` +
+            `plus ${f.eur(made.uninvested_cash_eur)} of cash not yet invested.`
+          : ` That is what the accounts hold.`) +
+        (Math.abs(gap) > 0.01 ? ` A gap of ${f.eur(gap)} remains, which should not happen.` : ""),
     }),
   );
 

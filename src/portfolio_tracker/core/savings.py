@@ -83,6 +83,13 @@ class Period:
     income_received_eur: Decimal = ZERO
     market_growth_eur: Decimal = ZERO
     closing_value_eur: Decimal = ZERO
+    #: The same day's value *including* uninvested cash. The identity closes
+    #: on this, because ``closing_value_eur`` deliberately leaves cash out and
+    #: a residual computed against an incomplete series books every purchase
+    #: as performance.
+    closing_basis_eur: Decimal = ZERO
+    #: What the accounts were already worth on the first day of any record.
+    opening_value_eur: Decimal = ZERO
     #: Money the owner already had, arriving in this ledger for the first
     #: time. Real money that really entered the portfolio -- so it is not
     #: growth -- but not something set aside this month, so it is not saving.
@@ -104,6 +111,10 @@ class Summary:
     closing_value_eur: Decimal = ZERO
     #: Everything ever brought in that was already the owner's.
     opening_transfer_eur: Decimal = ZERO
+    #: What the accounts held on day one, before any of this was recorded.
+    opening_value_eur: Decimal = ZERO
+    #: Closing value including uninvested cash -- what the identity closes on.
+    closing_basis_eur: Decimal = ZERO
     periods: list[Period] = field(default_factory=list)
     caveats: list[str] = field(default_factory=list)
 
@@ -119,13 +130,26 @@ class Summary:
         `/api/portfolio` gives uninvested cash.
         """
         return quantize_money(
-            self.cumulative_eur + self.opening_transfer_eur + self.market_growth_eur
+            self.cumulative_eur
+            + self.opening_transfer_eur
+            + self.opening_value_eur
+            + self.market_growth_eur
         )
 
     @property
     def reconciliation_gap(self) -> Decimal:
         """Zero, by construction. Non-zero means a flow went unclassified."""
-        return quantize_money(self.reconciles - self.closing_value_eur)
+        return quantize_money(self.reconciles - self.closing_basis_eur)
+
+    @property
+    def uninvested_cash_eur(self) -> Decimal:
+        """The gap between what the identity closes on and what is shown.
+
+        Sale proceeds and distributions the tracker has not seen spent. Small
+        on a tidy ledger, and worth naming rather than hiding: it is the whole
+        reason two value columns exist.
+        """
+        return quantize_money(self.closing_basis_eur - self.closing_value_eur)
 
 
 # ---------------------------------------------------------------------------
@@ -365,15 +389,16 @@ def build_periods(conn: sqlite3.Connection, *, person_id: int = 1) -> int:
         """,
         (person_id,),
     ).fetchall()
-    if not flows:
-        return 0
 
-    # Closing value per month, from the last valuation in each.
-    values = {
-        str(r["period"]): Decimal(str(r["v"]))
+    # Closing figures per month, from the last valuation in each. Both
+    # columns: the headline one to show, the basis one to reconcile against.
+    values: dict[str, tuple[Decimal, Decimal]] = {
+        str(r["period"]): (Decimal(str(r["v"])), Decimal(str(r["basis"])))
         for r in conn.execute(
             """
-            SELECT substr(date, 1, 7) AS period, total_value_eur AS v FROM portfolio_daily
+            SELECT substr(date, 1, 7) AS period, total_value_eur AS v,
+                   valuation_basis_eur AS basis
+            FROM portfolio_daily
             WHERE person_id = ? AND date IN (
                 SELECT max(date) FROM portfolio_daily WHERE person_id = ?
                 GROUP BY substr(date, 1, 7))
@@ -382,32 +407,74 @@ def build_periods(conn: sqlite3.Connection, *, person_id: int = 1) -> int:
         )
     }
 
+    # What the accounts were already worth on the first day of any record.
+    # Everything before it is outside what this tool claims to know, so it
+    # belongs in "already yours" -- not in a residual that would call it
+    # performance the portfolio never earned.
+    opening_row = conn.execute(
+        "SELECT date, valuation_basis_eur FROM portfolio_daily WHERE person_id = ? "
+        "ORDER BY date LIMIT 1",
+        (person_id,),
+    ).fetchone()
+    opening_value = ZERO
+    if opening_row is not None:
+        # Net of anything already recorded by the close of that first day.
+        # The column is an end-of-day figure, so a deposit made that morning
+        # is inside it; counting both would put the same money in the sum
+        # twice and drive growth negative by exactly that amount.
+        already = conn.execute(
+            """
+            SELECT total(CASE WHEN t.flow_class = 'EXTERNAL_IN'
+                              THEN CAST(t.gross_amount_eur AS REAL)
+                              WHEN t.flow_class = 'EXTERNAL_OUT'
+                              THEN -CAST(t.gross_amount_eur AS REAL) ELSE 0 END) AS net
+            FROM transaction_ t JOIN account a ON a.id = t.account_id
+            WHERE a.person_id = ? AND a.in_perimeter = 1 AND t.trade_date <= ?
+            """,
+            (person_id, str(opening_row["date"])),
+        ).fetchone()["net"]
+        opening_value = quantize_money(
+            Decimal(str(opening_row["valuation_basis_eur"])) - Decimal(str(already or 0))
+        )
+
+    # Every month that has either a movement or a valuation. Driving this off
+    # the flows alone skipped months where nothing was paid in, which left the
+    # last row -- and so the headline value the identity closes on -- stale
+    # whenever the most recent month happened to be a quiet one.
+    by_period = {str(r["period"]): r for r in flows}
+    if not by_period and not values:
+        return 0
+
     written = 0
     cumulative = ZERO
     previous_value = ZERO
-    for row in flows:
-        period = str(row["period"])
-        gross_in = quantize_money(Decimal(str(row["gross_in"])))
-        gross_out = quantize_money(Decimal(str(row["gross_out"])))
-        opening_in = quantize_money(Decimal(str(row["opening_in"])))
-        income = quantize_money(Decimal(str(row["income"])))
+    first = True
+    for period in sorted(set(by_period) | set(values)):
+        row = by_period.get(period)
+        gross_in = quantize_money(Decimal(str(row["gross_in"]))) if row else ZERO
+        gross_out = quantize_money(Decimal(str(row["gross_out"]))) if row else ZERO
+        opening_in = quantize_money(Decimal(str(row["opening_in"]))) if row else ZERO
+        income = quantize_money(Decimal(str(row["income"]))) if row else ZERO
         net = gross_in - gross_out
         cumulative += net
-        closing = values.get(period, previous_value)
+        opening_here = opening_value if first else ZERO
+        first = False
+        closing, basis = values.get(period, (previous_value, previous_value))
         # The residual: whatever the value did that was not money moving in or
         # out. Derived rather than summed from prices, so the parts add up to
         # the value by construction -- which is also why an opening transfer
         # has to be subtracted here. Leave it in and a lifetime of saving
         # arriving in one month is reported as a month of market growth.
-        growth = quantize_money(closing - previous_value - net - opening_in)
+        growth = quantize_money(basis - previous_value - net - opening_in - opening_here)
 
         conn.execute(
             """
             INSERT INTO savings_period (
                 person_id, period, gross_in_eur, gross_out_eur, net_new_money_eur,
                 cumulative_net_eur, income_received_eur, market_growth_eur,
-                closing_value_eur, opening_transfer_eur
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                closing_value_eur, opening_transfer_eur, closing_basis_eur,
+                opening_value_eur
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 person_id,
@@ -420,9 +487,13 @@ def build_periods(conn: sqlite3.Connection, *, person_id: int = 1) -> int:
                 str(growth),
                 str(closing),
                 str(opening_in),
+                str(basis),
+                str(opening_here),
             ),
         )
-        previous_value = closing
+        # The basis, not the headline: the next month's growth is measured
+        # against a complete series or it inherits the same error.
+        previous_value = basis
         written += 1
     return written
 
@@ -446,6 +517,8 @@ def summarise(conn: sqlite3.Connection, *, person_id: int = 1) -> Summary:
             market_growth_eur=Decimal(str(r["market_growth_eur"])),
             closing_value_eur=Decimal(str(r["closing_value_eur"])),
             opening_transfer_eur=Decimal(str(r["opening_transfer_eur"])),
+            closing_basis_eur=Decimal(str(r["closing_basis_eur"])),
+            opening_value_eur=Decimal(str(r["opening_value_eur"])),
         )
         for r in rows
     ]
@@ -466,6 +539,8 @@ def summarise(conn: sqlite3.Connection, *, person_id: int = 1) -> Summary:
         market_growth_eur=quantize_money(sum((p.market_growth_eur for p in periods), ZERO)),
         closing_value_eur=latest.closing_value_eur,
         opening_transfer_eur=quantize_money(sum((p.opening_transfer_eur for p in periods), ZERO)),
+        opening_value_eur=quantize_money(sum((p.opening_value_eur for p in periods), ZERO)),
+        closing_basis_eur=latest.closing_basis_eur,
         periods=periods,
     )
     out.average_monthly_12m_eur = (
@@ -509,8 +584,8 @@ def summarise(conn: sqlite3.Connection, *, person_id: int = 1) -> Summary:
         # something the sum does not account for.
         out.caveats.append(
             f"BREAK: money in plus market growth comes to EUR "
-            f"{out.reconciles:,.2f}, and the portfolio is worth EUR "
-            f"{out.closing_value_eur:,.2f}. The difference is a flow this "
+            f"{out.reconciles:,.2f}, and the accounts hold EUR "
+            f"{out.closing_basis_eur:,.2f}. The difference is a flow this "
             "does not account for."
         )
     return out
