@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
@@ -28,9 +30,27 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from portfolio_tracker.api import cache
 from portfolio_tracker.api.deps import get_db, get_writable_db
 from portfolio_tracker.core import cash, projection, rebuild, savings, scenarios
-from portfolio_tracker.db.connection import transaction
+from portfolio_tracker.db.connection import transaction as _transaction
+
+
+@contextmanager
+def transaction(conn: sqlite3.Connection) -> Iterator[None]:
+    """A write, plus the cache invalidation that has to accompany it.
+
+    Wrapping the import rather than calling `cache.clear()` in each endpoint,
+    because that is a rule that holds only until somebody adds the next one --
+    and a plan page showing figures from before the trade you just entered is
+    worse than a slow one. `get_writable_db` clears too; this layer is what
+    still works when a test overrides that dependency, and what makes the
+    guarantee visible at the point of the write.
+    """
+    with _transaction(conn):
+        yield
+    cache.clear()
+
 
 router = APIRouter(tags=["planning"])
 
@@ -204,6 +224,11 @@ def baseline(
     and has never shown: a fan of where the portfolio could be, and the dates
     by which the target is met at three levels of confidence.
     """
+    key = ("projection", cache.fingerprint(conn), person_id, paths, years)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+
     result = _run(
         conn,
         scenarios.Levers(),
@@ -222,7 +247,7 @@ def baseline(
     body["contributions"] = _contribution_context_json(
         scenarios.contribution_context(conn, person_id=person_id)
     )
-    return body
+    return cache.put(key, body)
 
 
 @router.post("/api/projection/scenario")
@@ -300,20 +325,28 @@ def sensitivity(
     decision-useful output this tool produces: it is the only figure that
     makes two different changes comparable.
     """
+    key = ("sensitivity", cache.fingerprint(conn), person_id, paths)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+
     try:
         steps = scenarios.sweep(conn, person_id=person_id, paths=paths)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
-    return {
-        "steps": steps,
-        "measured_at_confidence": str(scenarios.HEADLINE_CONFIDENCE),
-        "note": (
-            "Each row is a separate simulation on the same draws as the baseline. "
-            "Diminishing returns are real: the first hundred usually buys more "
-            "months than the fifth."
-        ),
-        "disclosure": DISCLOSURE,
-    }
+    return cache.put(
+        key,
+        {
+            "steps": steps,
+            "measured_at_confidence": str(scenarios.HEADLINE_CONFIDENCE),
+            "note": (
+                "Each row is a separate simulation on the same draws as the baseline. "
+                "Diminishing returns are real: the first hundred usually buys more "
+                "months than the fifth."
+            ),
+            "disclosure": DISCLOSURE,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -453,6 +486,11 @@ def mark_opening_transfer(
         raise HTTPException(404, f"no transaction {txn_id}")
     with transaction(conn):
         savings.set_opening_transfer(conn, txn_id=txn_id, is_opening=already_had)
+        # `is_new_savings` is derived from the flag, and the projection reads
+        # that derived column. Rebuilding the periods without re-deriving it
+        # would leave the savings page and the plan page disagreeing again --
+        # which is the exact fault this whole flag exists to remove.
+        savings.classify(conn)
         savings.build_periods(conn)
     return {"txn_id": txn_id, "already_had": already_had}
 

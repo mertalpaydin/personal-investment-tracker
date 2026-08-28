@@ -500,6 +500,17 @@ details.assumptions td.muted { color: var(--muted); }
    the number, they just need to notice it. */
 td.warn { color: var(--warn); }
 
+/* The assumptions every figure on the plan page rests on, stated above the
+   figures rather than in the form below them. Quiet by design: it frames the
+   answer, it is not the answer. */
+section.standing {
+  border-left: 3px solid var(--line-strong);
+  padding-left: .9rem;
+  margin-bottom: 1.2rem;
+}
+section.standing .card { background: none; border: none; padding-left: 0; }
+section.standing .v.warn { color: var(--warn); }
+
 /* A German statutory term shown beside its plain-English name. Never bold,
    never alone -- it is there so a figure can be matched against a bank
    document, not because the reader is expected to know it. */

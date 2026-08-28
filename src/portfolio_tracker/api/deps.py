@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from portfolio_tracker.api import cache
 from portfolio_tracker.core import incoming
 from portfolio_tracker.db.connection import DEFAULT_DB_PATH, connect
 
@@ -67,4 +68,13 @@ def get_writable_db() -> Iterator[Any]:
     try:
         yield conn
     finally:
+        # Anything that asked for a writable connection may have changed an
+        # answer, so cached ones are dropped here rather than at each call
+        # site. The alternative -- remembering to invalidate in every write
+        # endpoint -- is a rule that holds until the day somebody adds one,
+        # and a plan page showing figures from before the trade you just
+        # entered is worse than a slow one. An in-place edit is also
+        # invisible to the content fingerprint, which makes this the only
+        # place that reliably notices.
+        cache.clear()
         conn.close()

@@ -271,3 +271,51 @@ def test_the_fee_lever_is_gone(client: TestClient) -> None:
     assert "ter_delta_bps" not in body["levers"]
     assert "return_delta_annual_pct" not in body["levers"]
     assert "monthly_contribution_delta_eur" not in body["levers"]
+
+
+# ---------------------------------------------------------------------------
+# Cached answers, and the writes that must discard them
+# ---------------------------------------------------------------------------
+
+
+def test_the_same_question_is_not_simulated_twice(client: TestClient) -> None:
+    """The projection is deterministic, so the second answer is free."""
+    from portfolio_tracker.api import cache
+
+    cache.clear()
+    first = client.get("/api/projection", params={"paths": 400, "years": 15}).json()
+    second = client.get("/api/projection", params={"paths": 400, "years": 15}).json()
+    assert first == second
+
+    # Different parameters are a different question, and must not be served
+    # the first answer.
+    other = client.get("/api/projection", params={"paths": 400, "years": 10}).json()
+    assert other["baseline"]["horizon_months"] == 120
+    assert first["baseline"]["horizon_months"] == 180
+
+
+def test_a_write_discards_every_cached_answer(client: TestClient, db: sqlite3.Connection) -> None:
+    """A plan showing figures from before your last trade is worse than a slow one.
+
+    The cache key carries a fingerprint of the ledger, but an in-place edit
+    changes no count and no maximum -- so `get_writable_db` clears the cache
+    on the way out instead. This test is what stops that being quietly
+    removed as redundant.
+    """
+    from portfolio_tracker.api import cache
+
+    cache.clear()
+    before = client.get("/api/projection", params={"paths": 400, "years": 15}).json()
+    measured = before["baseline"]["monthly_contribution_eur"]
+    assert measured > 0
+
+    # An edit that changes an answer without changing any row count: the last
+    # deposit was money already held, so it is no longer saving.
+    last = db.execute(
+        "SELECT id FROM transaction_ WHERE flow_class = 'EXTERNAL_IN' ORDER BY trade_date DESC"
+    ).fetchone()["id"]
+    posted = client.post(f"/api/savings/opening-transfers/{last}", params={"already_had": "true"})
+    assert posted.status_code == 200
+
+    after = client.get("/api/projection", params={"paths": 400, "years": 15}).json()
+    assert after["baseline"]["monthly_contribution_eur"] < measured

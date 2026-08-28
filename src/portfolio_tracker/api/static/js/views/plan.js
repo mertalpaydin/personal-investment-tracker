@@ -69,6 +69,7 @@ export async function render() {
     }),
   );
 
+  view.append(standingAssumptions(base, data.baseline));
   view.append(confidenceCards(base, data.baseline));
   view.append(fanChart(base, data.baseline));
   // Before the levers, because the rate the projection assumes comes from
@@ -81,6 +82,45 @@ export async function render() {
   view.append(el("p.note", { text: data.baseline.disclosure }));
   view.append(caveats(data.baseline.caveats));
   return view;
+}
+
+/* --------------------------------------------------------- assumptions */
+
+/*
+ * The two numbers every date below rests on, stated before the dates.
+ *
+ * They were previously findable only by scrolling past the answer into the
+ * form that produced it, which is the wrong way round: a reader who takes the
+ * headline date and leaves has taken a conditional figure without its
+ * conditions. Each says where it came from, because "measured from your
+ * deposits" and "assumed, because there is not enough history" are different
+ * kinds of claim and the difference is the whole point.
+ */
+function standingAssumptions(base, body) {
+  const returns = body.returns;
+  const stated = returns && returns.from_history === false;
+
+  return el(
+    "section.standing",
+    el(
+      "div.cards",
+      card("Saving per month", f.eur(base.monthly_contribution_eur), {
+        sub: "measured from your last 12 months",
+      }),
+      card("Return a year", returns ? f.pct(returns.implied_annual) : f.DASH, {
+        sub: stated ? "assumed — not enough history to measure" : "resampled from your holdings",
+        valueCls: stated ? "warn" : "",
+      }),
+      card("Target", f.eur(base.target_eur, { compact: true }), {
+        sub: "what the dates below are measured against",
+      }),
+    ),
+    el("p.note", {
+      text:
+        "Every date on this page follows from these three. Change any of them " +
+        "in “What if” below.",
+    }),
+  );
 }
 
 /* ------------------------------------------------------------ headline */
@@ -453,20 +493,25 @@ function leverForm(base, body) {
    */
   const target = el("input", {
     type: "number",
-    step: "1000",
+    step: "any",
+    min: "0",
     value: String(Math.round(base.target_eur)),
   });
   const monthly = el("input", {
+    // step="any", not 50. A stepped number input silently refuses anything
+    // off the grid, so "1281" was rejected while "1281" is exactly the sort
+    // of figure a real savings rate is.
     type: "number",
-    step: "50",
+    step: "any",
+    min: "0",
     value: String(Math.round(base.monthly_contribution_eur)),
   });
-  const lumpAmount = el("input", { type: "number", step: "100", placeholder: "5000" });
+  const lumpAmount = el("input", { type: "number", step: "any", min: "0", placeholder: "5000" });
   const lumpWhen = el("input", { type: "month", min: monthAfter(asOf, 1) });
-  const growth = el("input", { type: "number", step: "0.5", placeholder: "2" });
+  const growth = el("input", { type: "number", step: "any", placeholder: "2" });
   const ret = el("input", {
     type: "number",
-    step: "0.5",
+    step: "any",
     value: returns ? (returns.implied_annual * 100).toFixed(1) : "",
   });
   const name = el("input", { type: "text", placeholder: "Saving more" });
