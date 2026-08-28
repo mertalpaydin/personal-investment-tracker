@@ -576,3 +576,26 @@ abbr[title] { text-decoration: underline dotted; cursor: help; }
 .entry .wide { grid-column: 1 / -1; }
 label.check { display: flex; gap: .45rem; align-items: baseline; font-size: .92rem; }
 label.check input { width: auto; }
+
+/* ------------------------------------------- what else was going on */
+
+/*
+ * Sales and income near a purchase, listed under the explanation so a
+ * two-year-old question ("did money arrive?") becomes an answerable one
+ * ("did this sale pay for it?").
+ */
+.nearby { margin-top: .4rem; }
+.nearby .near {
+  display: flex;
+  gap: .5rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+  font-size: .88rem;
+  padding: .12rem 0 .12rem .8rem;
+  border-left: 2px solid color-mix(in srgb, var(--warn) 45%, transparent);
+}
+.nearby .near .when {
+  color: var(--muted);
+  min-width: 6.5rem;
+  font-variant-numeric: tabular-nums;
+}

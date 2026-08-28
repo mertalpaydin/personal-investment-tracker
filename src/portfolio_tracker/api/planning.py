@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -363,7 +364,6 @@ def reclassify(
     performance. Changing it and not recomputing would leave the return series
     disagreeing with the ledger it came from.
     """
-    from datetime import date as _date
 
     from portfolio_tracker.core import rebuild
 
@@ -372,7 +372,7 @@ def reclassify(
             savings.set_flow_class(
                 conn, txn_id, flow_class=body.flow_class, savings_label=body.savings_label
             )
-            result = rebuild.run(conn, end=_date.today(), strict=False, commit=False)
+            result = rebuild.run(conn, end=date.today(), strict=False, commit=False)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 
@@ -440,7 +440,7 @@ def inferred(
     rows = conn.execute(
         """
         SELECT d.id, d.trade_date, d.currency, d.gross_amount_local, d.gross_amount_eur,
-               d.note, a.name AS account,
+               d.note, d.account_id, a.name AS account,
                b.trade_date AS bought_on, b.quantity AS bought_qty,
                b.gross_amount_local AS bought_local, b.currency AS bought_currency,
                b.gross_amount_eur AS bought_eur,
@@ -488,6 +488,11 @@ def inferred(
                     else None
                 ),
                 "cash_before_eur": _cash_before(r["note"]),
+                # What else was going on around that date. Without it the only
+                # question the screen can ask is "did money arrive?", which is
+                # unanswerable two years later; with it the question becomes
+                # "did this sale pay for it?", which is a memory.
+                "money_around_it": _money_around(conn, person_id, r),
             }
             for r in rows
         ],
@@ -498,6 +503,76 @@ def inferred(
             "those were funded by something this tool cannot see."
         ),
     }
+
+
+#: How far back to look for a sale that might have funded a purchase.
+NEARBY_DAYS_BEFORE = 120
+
+#: And a little forward, because settlement takes a few days and a sale dated
+#: after a purchase can still be the money that paid for it.
+NEARBY_DAYS_AFTER = 5
+
+
+def _money_around(
+    conn: sqlite3.Connection, person_id: int, deposit: sqlite3.Row
+) -> list[dict[str, Any]]:
+    """Sales and income near the purchase, and whether they were already used.
+
+    The distinction is the whole point, and it is not obvious. `core/cash.py`
+    tracks a balance per account **and currency**, so a euro sale cannot offset
+    a lira purchase in its model even when the broker converted the money for
+    you. On this ledger every sale is in Depot/EUR while fourteen purchases are
+    in Depot/TRY -- so for those, the sales were never applied and are exactly
+    the candidates worth looking at.
+
+    ``already_counted`` says which is which. A sale marked true was spent
+    before the shortfall was worked out, so it cannot explain what is left; one
+    marked false could not be applied and might be the answer.
+    """
+    when = deposit["bought_on"] or deposit["trade_date"]
+    if not when:
+        return []
+    on = date.fromisoformat(str(when))
+
+    rows = conn.execute(
+        """
+        SELECT t.trade_date, t.type, t.currency, t.gross_amount_local, t.gross_amount_eur,
+               t.account_id, a.name AS account, i.import_key, i.name AS instrument_name
+        FROM transaction_ t
+        JOIN account a ON a.id = t.account_id
+        LEFT JOIN instrument i ON i.id = t.instrument_id
+        WHERE a.person_id = ?
+          AND t.type IN ('SELL', 'DIVIDEND', 'INTEREST')
+          AND t.trade_date BETWEEN ? AND ?
+        ORDER BY t.trade_date
+        """,
+        (
+            person_id,
+            (on - timedelta(days=NEARBY_DAYS_BEFORE)).isoformat(),
+            (on + timedelta(days=NEARBY_DAYS_AFTER)).isoformat(),
+        ),
+    ).fetchall()
+
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        same_pot = r["account_id"] == deposit["account_id"] and r["currency"] == deposit["currency"]
+        out.append(
+            {
+                "date": r["trade_date"],
+                "type": r["type"],
+                "instrument": r["import_key"],
+                "name": r["instrument_name"],
+                "amount_local": _num(r["gross_amount_local"]),
+                "amount_eur": _num(r["gross_amount_eur"]),
+                "currency": r["currency"],
+                "account": r["account"],
+                # Spent before the shortfall was computed, so it cannot explain
+                # what is left over.
+                "already_counted": bool(same_pot and str(r["trade_date"]) <= str(when)),
+                "days_before": (on - date.fromisoformat(str(r["trade_date"]))).days,
+            }
+        )
+    return out
 
 
 def _cash_before(note: str | None) -> float | None:
@@ -525,7 +600,6 @@ def keep_inferred(
     conn: sqlite3.Connection = Depends(get_writable_db),
 ) -> dict[str, Any]:
     """This one really was new money. Optionally correct the amount."""
-    from datetime import date as _date
 
     from portfolio_tracker.core import rebuild
 
@@ -549,7 +623,7 @@ def keep_inferred(
             "is_new_savings = 1, savings_label = ?, note = ? WHERE id = ?",
             (body.label, "confirmed as money you paid in", txn_id),
         )
-        result = rebuild.run(conn, end=_date.today(), strict=False, commit=False)
+        result = rebuild.run(conn, end=date.today(), strict=False, commit=False)
 
     return {"id": txn_id, "kept": True, "recomputed_ok": result.ok}
 
@@ -565,7 +639,6 @@ def discard_inferred(
     have to be honoured by lots, cash, returns, tax and attribution alike, and
     one missed filter is a quietly wrong figure rather than a visible bug.
     """
-    from datetime import date as _date
 
     from portfolio_tracker.core import rebuild
 
@@ -578,7 +651,7 @@ def discard_inferred(
     with transaction(conn):
         _release_proposals(conn, [txn_id])
         conn.execute("DELETE FROM transaction_ WHERE id = ?", (txn_id,))
-        result = rebuild.run(conn, end=_date.today(), strict=False, commit=False)
+        result = rebuild.run(conn, end=date.today(), strict=False, commit=False)
 
     return {"id": txn_id, "deleted": True, "recomputed_ok": result.ok}
 
@@ -594,7 +667,6 @@ def discard_all_inferred(
     claim": keep the few you recognise, then clear the rest in one action
     rather than thirty.
     """
-    from datetime import date as _date
 
     from portfolio_tracker.core import rebuild
 
@@ -615,6 +687,6 @@ def discard_all_inferred(
             doomed,
         )
         removed = cursor.rowcount
-        result = rebuild.run(conn, end=_date.today(), strict=False, commit=False)
+        result = rebuild.run(conn, end=date.today(), strict=False, commit=False)
 
     return {"deleted": removed, "recomputed_ok": result.ok}

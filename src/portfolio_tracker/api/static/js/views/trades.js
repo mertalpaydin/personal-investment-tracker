@@ -84,7 +84,11 @@ function fundingReview(body) {
       f.date(d.date),
       { text: d.account, cls: "muted" },
       f.eur(d.amount_eur),
-      { node: whyItWasGuessed(d), cls: "prose", title: plainReason(d) },
+      {
+        node: el("div", whyItWasGuessed(d), nearbyMoney(d)),
+        cls: "prose",
+        title: plainReason(d),
+      },
       {
         node: el(
           "span.actions",
@@ -189,6 +193,86 @@ function whyItWasGuessed(d) {
     el("span", { text: ` on ${f.date(b.date)}.` }),
     el("span.muted", { text: cash }),
   );
+}
+
+
+/*
+ * Sales and income around the same date, so the question is answerable.
+ *
+ * "Did money arrive two years ago" is not something anybody remembers. "Did
+ * this sale pay for it" is. The distinction that makes the list worth reading:
+ * `core/cash.py` tracks a balance per account **and currency**, so a euro sale
+ * cannot offset a lira purchase in its model even when the broker converted
+ * the money for you. Those sales were never applied, and they are exactly the
+ * ones that might explain the shortfall.
+ */
+function nearbyMoney(d) {
+  const near = d.money_around_it || [];
+  const usable = near.filter((n) => !n.already_counted);
+  const spent = near.filter((n) => n.already_counted);
+
+  if (!near.length) {
+    return el("p.note", { text: "Nothing was sold or paid out near this date." });
+  }
+
+  const box = el("div.nearby");
+
+  if (usable.length) {
+    box.append(
+      el("p.note.warn", {
+        text:
+          usable.length === 1
+            ? "This could have paid for it, and was not counted:"
+            : `${usable.length} of these could have paid for it, and were not counted:`,
+      }),
+    );
+    for (const n of usable) {
+      box.append(
+        el(
+          "div.near",
+          el("span.when", {
+            text:
+              n.days_before > 0
+                ? `${n.days_before}d before`
+                : n.days_before === 0
+                  ? "same day"
+                  : `${-n.days_before}d after`,
+          }),
+          el("span", {
+            text:
+              `${n.type.toLowerCase()} ${n.instrument || ""} ` +
+              `${f.money(n.amount_local, n.currency)}`.trim(),
+          }),
+          // Why it was not counted. Three different reasons, and the reader
+          // needs the right one to judge whether it really paid for this.
+          el("span.tag", { text: whyNotCounted(n, d) }),
+        ),
+      );
+    }
+  }
+
+  if (spent.length) {
+    box.append(
+      el("p.note", {
+        text: `${spent.length} other sale${spent.length === 1 ? " was" : "s were"} already counted before this figure was worked out.`,
+      }),
+    );
+  }
+  return box;
+}
+
+
+/** Why the tool could not apply this sale to that purchase. */
+function whyNotCounted(n, d) {
+  const bought = d.bought || {};
+  if (n.currency !== bought.currency) {
+    // The one that matters most here: cash is tracked per currency, so a euro
+    // sale never offsets a lira purchase even when the broker converted it.
+    return `${n.currency} cash, the purchase was ${bought.currency}`;
+  }
+  if (n.days_before < 0) return "settled after the purchase";
+  if (n.account !== d.account) return `different account (${n.account})`;
+  return "not applied";
 }
 
 
