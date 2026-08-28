@@ -1171,6 +1171,15 @@ instruments:
     is_fund: true
     ter_bps: 40
     risk_bucket: EQ_SECTOR
+  2B7K.DE:
+    name: 'iShares Digitalisation UCITS ETF'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: 2B7K.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 40
+    risk_bucket: EQ_SECTOR
   4GLD.DE:
     name: 'Xetra-Gold'
     asset_class: ETF
@@ -1189,6 +1198,33 @@ instruments:
     is_fund: true
     ter_bps: 10
     risk_bucket: BOND
+  AYEM.DE:
+    name: 'Amundi MSCI Emerging Markets'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: AYEM.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 20
+    risk_bucket: EQ_EM
+  BNXG.DE:
+    name: 'VanEck Semiconductor UCITS ETF'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: BNXG.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 35
+    risk_bucket: EQ_SECTOR
+  CEUU.AS:
+    name: 'iShares Core MSCI Europe UCITS ETF'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: CEUU.AS
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 12
+    risk_bucket: EQ_EUROPE
   CNDX.AS:
     name: 'iShares Nasdaq 100 UCITS ETF (AMS)'
     asset_class: ETF
@@ -1212,6 +1248,15 @@ instruments:
     asset_class: ETF
     currency: EUR
     price_symbol: DBXD.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 9
+    risk_bucket: EQ_EUROPE
+  DBXP.DE:
+    name: 'Xtrackers Euro Stoxx 50'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: DBXP.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 9
@@ -1270,6 +1315,15 @@ instruments:
     is_fund: true
     ter_bps: 46
     risk_bucket: EQ_SECTOR
+  EXH7.DE:
+    name: 'iShares STOXX Europe 600 Utilities'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: EXH7.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 46
+    risk_bucket: EQ_SECTOR
   EXS1.DE:
     name: 'iShares Core DAX UCITS ETF'
     asset_class: ETF
@@ -1288,6 +1342,42 @@ instruments:
     is_fund: true
     ter_bps: 20
     risk_bucket: EQ_EUROPE
+  EXSB.DE:
+    name: 'iShares TecDAX UCITS ETF'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: EXSB.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 51
+    risk_bucket: EQ_EUROPE
+  EXSD.DE:
+    name: 'iShares STOXX Europe Mid 200'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: EXSD.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 20
+    risk_bucket: EQ_EUROPE
+  EXSE.DE:
+    name: 'iShares STOXX Europe Small 200'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: EXSE.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 20
+    risk_bucket: EQ_EUROPE
+  EXSI.DE:
+    name: 'iShares STOXX Europe Select Dividend 30'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: EXSI.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 31
+    risk_bucket: EQ_EUROPE
   EXV1.DE:
     name: 'iShares STOXX Europe 600 Banks'
     asset_class: ETF
@@ -1297,6 +1387,42 @@ instruments:
     is_fund: true
     ter_bps: 46
     risk_bucket: EQ_SECTOR
+  EXV3.DE:
+    name: 'iShares STOXX Europe 600 Technology'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: EXV3.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 46
+    risk_bucket: EQ_SECTOR
+  EXV4.DE:
+    name: 'iShares STOXX Europe 600 Health Care'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: EXV4.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 46
+    risk_bucket: EQ_SECTOR
+  EXV6.DE:
+    name: 'iShares STOXX Europe 600 Industrial'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: EXV6.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 46
+    risk_bucket: EQ_SECTOR
+  EXX5.DE:
+    name: 'iShares MDAX UCITS ETF'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: EXX5.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 51
+    risk_bucket: EQ_EUROPE
   HEAL.DE:
     name: 'iShares Healthcare Innovation'
     asset_class: ETF
@@ -1306,11 +1432,47 @@ instruments:
     is_fund: true
     ter_bps: 40
     risk_bucket: EQ_SECTOR
+  IBCI.DE:
+    name: 'iShares Euro Inflation Linked Government Bond'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: IBCI.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 9
+    risk_bucket: BOND
+  IBCX.DE:
+    name: 'iShares Euro Corporate Bond Large Cap'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: IBCX.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 20
+    risk_bucket: BOND
   IBGL.AS:
     name: 'iShares Euro Government Bond 15-30yr'
     asset_class: ETF
     currency: EUR
     price_symbol: IBGL.AS
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 20
+    risk_bucket: BOND
+  IBGM.AS:
+    name: 'iShares Euro Government Bond 7-10yr'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: IBGM.AS
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 20
+    risk_bucket: BOND
+  IBGX.AS:
+    name: 'iShares Euro Government Bond 3-5yr'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: IBGX.AS
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 20
@@ -1351,6 +1513,24 @@ instruments:
     is_fund: true
     ter_bps: 50
     risk_bucket: BOND
+  IJPA.AS:
+    name: 'iShares MSCI Japan UCITS ETF'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: IJPA.AS
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 12
+    risk_bucket: EQ_GLOBAL_BROAD
+  IMEU.AS:
+    name: 'iShares MSCI Europe UCITS ETF'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: IMEU.AS
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 12
+    risk_bucket: EQ_EUROPE
   INRG.L:
     name: 'iShares Global Clean Energy'
     asset_class: ETF
@@ -1369,11 +1549,29 @@ instruments:
     is_fund: true
     ter_bps: 40
     risk_bucket: EQ_SECTOR
+  IQQ6.DE:
+    name: 'iShares Developed Markets Property Yield'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: IQQ6.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 59
+    risk_bucket: EQ_SECTOR
   IQQH.DE:
     name: 'iShares Global Clean Energy (Xetra)'
     asset_class: ETF
     currency: EUR
     price_symbol: IQQH.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 65
+    risk_bucket: EQ_SECTOR
+  IQQQ.DE:
+    name: 'iShares Global Infrastructure'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: IQQQ.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 65
@@ -1396,6 +1594,15 @@ instruments:
     is_fund: true
     ter_bps: 46
     risk_bucket: EQ_GLOBAL_BROAD
+  ISPY.DE:
+    name: 'L&G Cyber Security UCITS ETF'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: ISPY.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 69
+    risk_bucket: EQ_SECTOR
   IUHC.L:
     name: 'iShares S&P 500 Health Care'
     asset_class: ETF
@@ -1414,6 +1621,15 @@ instruments:
     is_fund: true
     ter_bps: 15
     risk_bucket: EQ_SECTOR
+  IUSA.DE:
+    name: 'iShares S&P 500 UCITS ETF Dist'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: IUSA.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 7
+    risk_bucket: EQ_US_LARGE
   IUSN.DE:
     name: 'iShares MSCI World Small Cap UCITS ETF'
     asset_class: ETF
@@ -1450,6 +1666,15 @@ instruments:
     is_fund: true
     ter_bps: 30
     risk_bucket: EQ_GLOBAL_BROAD
+  LYPS.DE:
+    name: 'Amundi S&P 500 UCITS ETF'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: LYPS.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 15
+    risk_bucket: EQ_US_LARGE
   MEUD.PA:
     name: 'Lyxor Core STOXX Europe 600'
     asset_class: ETF
@@ -1459,6 +1684,51 @@ instruments:
     is_fund: true
     ter_bps: 7
     risk_bucket: EQ_EUROPE
+  QDVC.DE:
+    name: 'iShares S&P 500 Consumer Discretionary'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: QDVC.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 15
+    risk_bucket: EQ_SECTOR
+  QDVE.DE:
+    name: 'iShares S&P 500 Information Technology'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: QDVE.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 15
+    risk_bucket: EQ_SECTOR
+  QDVF.DE:
+    name: 'iShares S&P 500 Financials'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: QDVF.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 15
+    risk_bucket: EQ_SECTOR
+  QDVG.DE:
+    name: 'iShares S&P 500 Health Care'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: QDVG.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 15
+    risk_bucket: EQ_SECTOR
+  RBOT.L:
+    name: 'iShares Automation & Robotics (LSE)'
+    asset_class: ETF
+    currency: GBP
+    price_symbol: RBOT.L
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 40
+    risk_bucket: EQ_SECTOR
   SGLN.L:
     name: 'iShares Physical Gold ETC'
     asset_class: ETF
@@ -1468,6 +1738,33 @@ instruments:
     is_fund: true
     ter_bps: 12
     risk_bucket: COMMODITY
+  SJPA.AS:
+    name: 'iShares Core MSCI Japan IMI'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: SJPA.AS
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 15
+    risk_bucket: EQ_GLOBAL_BROAD
+  SMH.AS:
+    name: 'VanEck Semiconductor (AMS)'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: SMH.AS
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 35
+    risk_bucket: EQ_SECTOR
+  SPY5.DE:
+    name: 'SPDR S&P 500 UCITS ETF'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: SPY5.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 3
+    risk_bucket: EQ_US_LARGE
   SPYY.DE:
     name: 'SPDR MSCI ACWI UCITS ETF'
     asset_class: ETF
@@ -1531,6 +1828,24 @@ instruments:
     is_fund: true
     ter_bps: 10
     risk_bucket: BOND
+  VDEV.AS:
+    name: 'Vanguard FTSE Developed World'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: VDEV.AS
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 12
+    risk_bucket: EQ_GLOBAL_BROAD
+  VEUR.AS:
+    name: 'Vanguard FTSE Developed Europe'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: VEUR.AS
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 10
+    risk_bucket: EQ_EUROPE
   VFEM.AS:
     name: 'Vanguard FTSE Emerging Markets UCITS ETF'
     asset_class: ETF
@@ -1540,6 +1855,15 @@ instruments:
     is_fund: true
     ter_bps: 22
     risk_bucket: EQ_EM
+  VGEA.DE:
+    name: 'Vanguard EUR Eurozone Government Bond'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: VGEA.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 7
+    risk_bucket: BOND
   VHYL.AS:
     name: 'Vanguard FTSE All-World High Div Yield'
     asset_class: ETF
@@ -1549,6 +1873,24 @@ instruments:
     is_fund: true
     ter_bps: 29
     risk_bucket: EQ_GLOBAL_BROAD
+  VJPN.AS:
+    name: 'Vanguard FTSE Japan UCITS ETF'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: VJPN.AS
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 15
+    risk_bucket: EQ_GLOBAL_BROAD
+  VNRT.AS:
+    name: 'Vanguard FTSE North America'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: VNRT.AS
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 10
+    risk_bucket: EQ_US_LARGE
   VUAA.DE:
     name: 'Vanguard S&P 500 UCITS ETF Acc'
     asset_class: ETF
@@ -1572,6 +1914,15 @@ instruments:
     asset_class: ETF
     currency: EUR
     price_symbol: VUSA.AS
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 7
+    risk_bucket: EQ_US_LARGE
+  VUSD.AS:
+    name: 'Vanguard S&P 500 UCITS ETF USD Dist'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: VUSD.AS
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 7
@@ -1603,6 +1954,15 @@ instruments:
     is_fund: true
     ter_bps: 40
     risk_bucket: EQ_SECTOR
+  WNRG.DE:
+    name: 'iShares Global Water UCITS ETF'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: WNRG.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 65
+    risk_bucket: EQ_SECTOR
   WSML.AS:
     name: 'iShares MSCI World Small Cap (AMS)'
     asset_class: ETF
@@ -1612,6 +1972,24 @@ instruments:
     is_fund: true
     ter_bps: 35
     risk_bucket: EQ_GLOBAL_BROAD
+  WTAI.DE:
+    name: 'WisdomTree Artificial Intelligence'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: WTAI.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 40
+    risk_bucket: EQ_SECTOR
+  XAIX.DE:
+    name: 'Xtrackers AI & Big Data'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: XAIX.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 35
+    risk_bucket: EQ_SECTOR
   XDEM.DE:
     name: 'Xtrackers MSCI World Momentum'
     asset_class: ETF
@@ -1639,6 +2017,15 @@ instruments:
     is_fund: true
     ter_bps: 25
     risk_bucket: EQ_GLOBAL_BROAD
+  XDPU.DE:
+    name: 'Xtrackers S&P 500 Swap UCITS ETF'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: XDPU.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 15
+    risk_bucket: EQ_US_LARGE
   XDWD.DE:
     name: 'Xtrackers MSCI World UCITS ETF'
     asset_class: ETF
@@ -1666,3 +2053,12 @@ instruments:
     is_fund: true
     ter_bps: 25
     risk_bucket: EQ_SECTOR
+  XMME.DE:
+    name: 'Xtrackers MSCI Emerging Markets'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: XMME.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 18
+    risk_bucket: EQ_EM

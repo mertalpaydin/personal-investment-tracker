@@ -23,6 +23,18 @@ class ProviderUnavailable(RuntimeError):
     """
 
 
+class RateLimited(ProviderUnavailable):
+    """The source is refusing us for asking too often.
+
+    Its own subclass because it needs the opposite response to every other
+    failure. A bad ticker should be recorded and the run continued; being
+    rate-limited means the next request is *more* likely to fail than the
+    last, and continuing turns a pause into a block. So the caller waits,
+    retries a few times, and then stops the whole run -- keeping everything
+    already stored, and resuming from there next time.
+    """
+
+
 @dataclass(frozen=True)
 class PriceObservation:
     on: date
@@ -45,6 +57,9 @@ class InstrumentRef:
     price_source: str
     price_symbol: str | None
     trading_calendar: str
+    #: OWNED / WATCH / UNIVERSE. Only what is owned is valued daily; the rest
+    #: exists to be compared against, and can be sampled less often.
+    status: str = "OWNED"
 
 
 @runtime_checkable
@@ -54,5 +69,13 @@ class PriceProvider(Protocol):
     def supports(self, instrument: InstrumentRef) -> bool: ...
 
     def fetch(
-        self, instrument: InstrumentRef, start: date, end: date
+        self, instrument: InstrumentRef, start: date, end: date, *, weekly: bool = False
     ) -> list[PriceObservation]: ...
+
+    """Prices for the window.
+
+    ``weekly`` asks for one observation a week instead of one a day. Used for
+    instruments that are only ever compared against, never valued: a daily
+    series for two hundred of them is a great deal of somebody else's
+    bandwidth to answer a question about three-year returns.
+    """

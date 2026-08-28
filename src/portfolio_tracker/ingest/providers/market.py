@@ -21,6 +21,7 @@ from portfolio_tracker.ingest.providers.base import (
     InstrumentRef,
     PriceObservation,
     ProviderUnavailable,
+    RateLimited,
 )
 
 
@@ -149,7 +150,9 @@ class YFinanceProvider:
             observations=len(observations),
         )
 
-    def fetch(self, instrument: InstrumentRef, start: date, end: date) -> list[PriceObservation]:
+    def fetch(
+        self, instrument: InstrumentRef, start: date, end: date, *, weekly: bool = False
+    ) -> list[PriceObservation]:
         symbol = instrument.price_symbol
         if not symbol:
             raise ProviderUnavailable(
@@ -169,11 +172,22 @@ class YFinanceProvider:
                 symbol,
                 start=start.isoformat(),
                 end=end.isoformat(),
+                interval="1wk" if weekly else "1d",
                 auto_adjust=False,
                 progress=False,
                 threads=False,
             )
         except Exception as exc:
+            # Being throttled needs the opposite response to a bad ticker, so
+            # it is raised as its own type. yfinance surfaces this several
+            # ways depending on version -- a named exception, an HTTP 429, or
+            # prose -- and none of them is stable enough to match on alone.
+            if _looks_rate_limited(exc):
+                raise RateLimited(
+                    f"{instrument.import_key}: Yahoo is rate-limiting this client "
+                    f"({exc}). Already-fetched prices are kept; run the update again "
+                    "in a few minutes and it will carry on from here."
+                ) from exc
             raise ProviderUnavailable(
                 f"{instrument.import_key}: yfinance request failed ({exc}). "
                 f"Fall back to data/prices_manual/{instrument.import_key}.csv"
@@ -290,7 +304,9 @@ class TefasProvider:
             observations.append(PriceObservation(on, price))
         return observations
 
-    def fetch(self, instrument: InstrumentRef, start: date, end: date) -> list[PriceObservation]:
+    def fetch(
+        self, instrument: InstrumentRef, start: date, end: date, *, weekly: bool = False
+    ) -> list[PriceObservation]:
         code = instrument.price_symbol or instrument.import_key
         payload = urllib.parse.urlencode(
             {
@@ -381,7 +397,9 @@ class FintablesProvider:
         # so total_return_close stays None rather than being faked from NAV.
         return [PriceObservation(date.fromisoformat(day), value)]
 
-    def fetch(self, instrument: InstrumentRef, start: date, end: date) -> list[PriceObservation]:
+    def fetch(
+        self, instrument: InstrumentRef, start: date, end: date, *, weekly: bool = False
+    ) -> list[PriceObservation]:
         code = instrument.price_symbol or instrument.import_key
         try:
             text = self._fetch(self.url_template.format(code=code))
@@ -396,6 +414,30 @@ class FintablesProvider:
                 f"Use data/prices_manual/{instrument.import_key}.csv instead."
             ) from exc
         return [o for o in self.parse(text, instrument.import_key) if start <= o.on <= end]
+
+
+#: Substrings that mean "you are asking too often" rather than "no such
+#: ticker". Matched case-insensitively against the exception and its type.
+_RATE_LIMIT_MARKERS = (
+    "ratelimit",
+    "rate limit",
+    "rate-limit",
+    "too many requests",
+    "429",
+)
+
+
+def _looks_rate_limited(exc: BaseException) -> bool:
+    """Whether a yfinance failure is throttling rather than a bad symbol.
+
+    Deliberately a substring match, and deliberately admitted as such. There
+    is no stable exception type across yfinance versions, and the cost of the
+    two mistakes is very different: treating throttling as a normal error
+    hammers a source that is already refusing us, while treating an odd error
+    as throttling only costs a wait.
+    """
+    text = f"{type(exc).__name__} {exc}".lower()
+    return any(marker in text for marker in _RATE_LIMIT_MARKERS)
 
 
 class SyntheticProvider:
@@ -413,7 +455,9 @@ class SyntheticProvider:
     def supports(self, instrument: InstrumentRef) -> bool:
         return instrument.price_source == "synthetic"
 
-    def fetch(self, instrument: InstrumentRef, start: date, end: date) -> list[PriceObservation]:
+    def fetch(
+        self, instrument: InstrumentRef, start: date, end: date, *, weekly: bool = False
+    ) -> list[PriceObservation]:
         from portfolio_tracker.core.calendars import grid_days
 
         one = Decimal(1)

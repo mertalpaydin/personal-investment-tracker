@@ -224,6 +224,29 @@ def _daily_returns(points: list[Point]) -> list[Decimal]:
     return out
 
 
+def _periods_per_year(points: list[Point]) -> float:
+    """Observations a year, from the median gap between them.
+
+    The median rather than the mean, because a series that starts weekly and
+    becomes daily -- which is exactly what happens when a watched instrument
+    is bought -- would otherwise be scaled by neither.
+    """
+    if len(points) < 3:
+        return float(TRADING_DAYS_PER_YEAR)
+    gaps = sorted(
+        (points[i].on - points[i - 1].on).days
+        for i in range(1, len(points))
+        if (points[i].on - points[i - 1].on).days > 0
+    )
+    if not gaps:
+        return float(TRADING_DAYS_PER_YEAR)
+    median = gaps[len(gaps) // 2]
+    # A daily series has a median gap of 1 (weekends land in the tail), and
+    # 252 is the right divisor for it. Anything sparser is scaled by calendar
+    # days, which is what a weekly series actually is.
+    return float(TRADING_DAYS_PER_YEAR) if median <= 1 else 365.25 / median
+
+
 def metrics(
     conn: sqlite3.Connection,
     instrument_id: int,
@@ -266,11 +289,16 @@ def metrics(
     if five is not None:
         result.ret_5y_ann = returns.annualise(five, WINDOWS["5y"])
 
+    # Scaled by how far apart the observations actually are. A weekly series
+    # annualised as if it were daily reports about 2.2x the real volatility,
+    # which lands the instrument in the wrong band with no sign anything is
+    # wrong -- the number is plausible, precise, and 120% too big.
+    per_year = _periods_per_year(points)
     result.vol_1y = returns.annualised_volatility(
-        _daily_returns(_window(points, horizon, WINDOWS["1y"]))
+        _daily_returns(_window(points, horizon, WINDOWS["1y"])), periods_per_year=per_year
     )
     result.vol_3y = returns.annualised_volatility(
-        _daily_returns(_window(points, horizon, WINDOWS["3y"]))
+        _daily_returns(_window(points, horizon, WINDOWS["3y"])), periods_per_year=per_year
     )
     result.max_dd_3y = returns.deepest_fall(
         [p.level for p in _window(points, horizon, WINDOWS["3y"])]

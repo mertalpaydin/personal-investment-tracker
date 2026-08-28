@@ -9,6 +9,8 @@ able to tell a quiet market from a broken downloader.
 from __future__ import annotations
 
 import sqlite3
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -19,6 +21,7 @@ from portfolio_tracker.ingest.providers.base import (
     PriceObservation,
     PriceProvider,
     ProviderUnavailable,
+    RateLimited,
 )
 from portfolio_tracker.ingest.providers.manual import ManualProvider
 from portfolio_tracker.ingest.providers.market import (
@@ -73,7 +76,7 @@ def priced_instruments(
     rows = conn.execute(
         f"""
         SELECT i.id, i.import_key, i.currency, i.price_source,
-               i.price_symbol, i.trading_calendar
+               i.price_symbol, i.trading_calendar, i.status
         FROM instrument i
         WHERE EXISTS (SELECT 1 FROM transaction_ t WHERE t.instrument_id = i.id){clause}
         ORDER BY i.import_key
@@ -88,6 +91,7 @@ def priced_instruments(
             price_source=r["price_source"],
             price_symbol=r["price_symbol"],
             trading_calendar=r["trading_calendar"],
+            status=str(r["status"] or "OWNED"),
         )
         for r in rows
     ]
@@ -257,6 +261,34 @@ def window_for(
     return min(stored - timedelta(days=REFETCH_OVERLAP_DAYS), end) if stored else full
 
 
+#: How many times to wait and try again when a source says we are asking too
+#: often, and how long the first wait is. Doubling from there: 5s, 10s, 20s.
+#: Three attempts is enough to ride out a short throttle without turning a
+#: batch of two hundred into an afternoon.
+RATE_LIMIT_RETRIES = 3
+RATE_LIMIT_BACKOFF_SECONDS = 5.0
+
+
+@dataclass
+class FetchRun:
+    """What a fetch achieved, and whether it finished.
+
+    ``stopped_early`` is the field that matters. A run cut short by throttling
+    has still stored everything it got -- each instrument is committed as it
+    lands -- so the honest report is "this much, and there is more to come",
+    not a failure and not a success.
+    """
+
+    coverage: list[InstrumentCoverage] = field(default_factory=list)
+    stopped_early: bool = False
+    reason: str | None = None
+    remaining: int = 0
+
+    @property
+    def written(self) -> int:
+        return sum(c.written for c in self.coverage)
+
+
 def fetch_all(
     conn: sqlite3.Connection,
     *,
@@ -266,6 +298,8 @@ def fetch_all(
     allow_manual_fallback: bool = True,
     incremental: bool = False,
     only: list[int] | None = None,
+    weekly_for_watched: bool = False,
+    sleeper: Callable[[float], None] = time.sleep,
 ) -> list[InstrumentCoverage]:
     """Fetch prices for every priced instrument, then report coverage.
 
@@ -277,13 +311,77 @@ def fetch_all(
     from every provider on every run. ``only`` restricts to given instrument
     ids, for backfilling a single newly added ticker.
     """
+    return run_fetch(
+        conn,
+        end=end,
+        start=start,
+        providers=providers,
+        allow_manual_fallback=allow_manual_fallback,
+        incremental=incremental,
+        only=only,
+        weekly_for_watched=weekly_for_watched,
+        sleeper=sleeper,
+    ).coverage
+
+
+def _fetch_with_backoff(
+    provider: PriceProvider,
+    instrument: InstrumentRef,
+    window_start: date,
+    end: date,
+    *,
+    weekly: bool,
+    sleeper: Callable[[float], None],
+) -> list[PriceObservation]:
+    """One instrument, waiting and retrying if the source is throttling.
+
+    Backs off before retrying rather than after failing, because the whole
+    point is to stop asking for a moment. If it is still refusing after the
+    last wait, the `RateLimited` escapes and the caller stops the run -- there
+    is nothing to be gained by putting the same question to a source that has
+    said no four times.
+    """
+    delay = RATE_LIMIT_BACKOFF_SECONDS
+    for attempt in range(RATE_LIMIT_RETRIES):
+        try:
+            return provider.fetch(instrument, window_start, end, weekly=weekly)
+        except RateLimited:
+            if attempt == RATE_LIMIT_RETRIES - 1:
+                raise
+            sleeper(delay)
+            delay *= 2
+    return []  # unreachable; the loop either returns or raises
+
+
+def run_fetch(
+    conn: sqlite3.Connection,
+    *,
+    end: date,
+    start: date | None = None,
+    providers: dict[str, PriceProvider] | None = None,
+    allow_manual_fallback: bool = True,
+    incremental: bool = False,
+    only: list[int] | None = None,
+    weekly_for_watched: bool = False,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> FetchRun:
+    """Fetch prices, and report whether throttling cut the run short.
+
+    ``weekly_for_watched`` asks for one observation a week for instruments
+    that are only ever compared against, never valued. Two hundred candidates
+    at daily resolution is a great deal of somebody else's bandwidth to answer
+    a question about three-year returns.
+    """
     registry = providers or default_providers()
     manual = registry.get("manual")
-    results: list[InstrumentCoverage] = []
+    run = FetchRun()
+    results = run.coverage
 
-    for instrument in priced_instruments(conn):
-        if only is not None and instrument.instrument_id not in only:
-            continue
+    queue = [i for i in priced_instruments(conn) if only is None or i.instrument_id in only]
+    for position, instrument in enumerate(queue):
+        # Only what is owned is valued daily. Everything else exists to be
+        # compared against, and a weekly series answers that question.
+        weekly = weekly_for_watched and instrument.status != "OWNED"
         # Coverage is reported from the first trade for something owned, and
         # from whatever was actually requested for something merely watched --
         # a watchlist entry has no trade date to be measured against.
@@ -299,9 +397,21 @@ def fetch_all(
             error = f"no provider registered for source {instrument.price_source!r}"
         else:
             try:
-                observations = provider.fetch(instrument, window_start, end)
+                observations = _fetch_with_backoff(
+                    provider, instrument, window_start, end, weekly=weekly, sleeper=sleeper
+                )
                 added_any += store(conn, instrument, observations, provider.name)
                 used = provider.name
+            except RateLimited as exc:
+                # Stop the whole run rather than work through the rest. Being
+                # throttled means the next request is more likely to fail than
+                # the last, and continuing turns a pause into a block. What is
+                # already stored stays stored, and `incremental` picks up here.
+                conn.commit()
+                run.stopped_early = True
+                run.reason = str(exc)
+                run.remaining = len(queue) - position
+                return run
             except ProviderUnavailable as exc:
                 error = str(exc)
 
@@ -335,4 +445,4 @@ def fetch_all(
         report.written = added_any
         results.append(report)
 
-    return results
+    return run

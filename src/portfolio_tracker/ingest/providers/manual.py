@@ -131,7 +131,11 @@ class ManualProvider:
     def supports(self, instrument: InstrumentRef) -> bool:
         return True
 
-    def fetch(self, instrument: InstrumentRef, start: date, end: date) -> list[PriceObservation]:
+    def fetch(
+        self, instrument: InstrumentRef, start: date, end: date, *, weekly: bool = False
+    ) -> list[PriceObservation]:
+        # `weekly` is accepted and ignored: a file holds whatever the person
+        # put in it, and thinning that out would discard data they typed.
         path = self.path_for(instrument)
         if not path.exists():
             raise ProviderUnavailable(

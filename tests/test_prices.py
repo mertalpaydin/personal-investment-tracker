@@ -22,6 +22,7 @@ from portfolio_tracker.ingest.providers.base import (
     InstrumentRef,
     PriceObservation,
     ProviderUnavailable,
+    RateLimited,
 )
 from portfolio_tracker.ingest.providers.manual import ManualProvider, parse_csv
 from portfolio_tracker.ingest.providers.market import SyntheticProvider, TefasProvider
@@ -248,7 +249,9 @@ class _BrokenProvider:
     def supports(self, instrument: InstrumentRef) -> bool:
         return True
 
-    def fetch(self, instrument: InstrumentRef, start: date, end: date) -> list[PriceObservation]:
+    def fetch(
+        self, instrument: InstrumentRef, start: date, end: date, *, weekly: bool = False
+    ) -> list[PriceObservation]:
         raise ProviderUnavailable("endpoint is gone")
 
 
@@ -420,7 +423,9 @@ class _LatestOnlyProvider:
     def supports(self, instrument: InstrumentRef) -> bool:
         return True
 
-    def fetch(self, instrument: InstrumentRef, start: date, end: date) -> list[PriceObservation]:
+    def fetch(
+        self, instrument: InstrumentRef, start: date, end: date, *, weekly: bool = False
+    ) -> list[PriceObservation]:
         return [PriceObservation(end, Decimal("2.0"))]
 
 
@@ -508,3 +513,113 @@ def test_turkish_thousands_separator_is_handled() -> None:
     """A dot means thousands in this dialect, not a decimal point."""
     observations = parse_csv('Tarih,Fiyat\n14.08.2026,"1.234,56"\n')
     assert observations[0].close == Decimal("1234.56")
+
+
+# ---------------------------------------------------------------------------
+# Being told to slow down
+# ---------------------------------------------------------------------------
+
+
+class ThrottlingProvider:
+    """Refuses the first `refusals` calls with RateLimited, then answers."""
+
+    name = "yfinance"
+
+    def __init__(self, refusals: int) -> None:
+        self.refusals = refusals
+        self.calls = 0
+        self.weekly_asked: list[bool] = []
+
+    def supports(self, instrument: InstrumentRef) -> bool:
+        return True
+
+    def fetch(
+        self, instrument: InstrumentRef, start: date, end: date, *, weekly: bool = False
+    ) -> list[PriceObservation]:
+        self.calls += 1
+        self.weekly_asked.append(weekly)
+        if self.calls <= self.refusals:
+            raise RateLimited("slow down")
+        return [PriceObservation(on=date(2026, 8, 3), close=Decimal("10"))]
+
+
+def test_it_waits_and_tries_again_before_giving_up(db: sqlite3.Connection) -> None:
+    """A short throttle should cost a pause, not the run."""
+    db.execute(
+        "UPDATE instrument SET price_source = 'yfinance', "
+        "price_symbol = 'AAA.DE', status = 'OWNED' WHERE id = 1"
+    )
+    db.commit()
+    provider = ThrottlingProvider(refusals=2)
+    slept: list[float] = []
+
+    run = prices.run_fetch(
+        db,
+        end=date(2026, 8, 4),
+        start=date(2026, 8, 1),
+        providers={"yfinance": provider},
+        allow_manual_fallback=False,
+        sleeper=slept.append,
+    )
+    assert run.stopped_early is False
+    assert provider.calls == 3, "two refusals, then the answer"
+    # Doubling, and waiting *before* the retry rather than after the failure.
+    assert slept == [prices.RATE_LIMIT_BACKOFF_SECONDS, prices.RATE_LIMIT_BACKOFF_SECONDS * 2]
+    assert run.written > 0
+
+
+def test_a_source_that_keeps_refusing_stops_the_run(db: sqlite3.Connection) -> None:
+    """Continuing would turn a pause into a block.
+
+    Everything fetched before the refusal stays stored -- each instrument is
+    committed as it lands -- so the next run resumes from there rather than
+    starting again.
+    """
+    db.execute(
+        "UPDATE instrument SET price_source = 'yfinance', "
+        "price_symbol = 'AAA.DE', status = 'OWNED' WHERE id = 1"
+    )
+    db.commit()
+    provider = ThrottlingProvider(refusals=99)
+    run = prices.run_fetch(
+        db,
+        end=date(2026, 8, 4),
+        start=date(2026, 8, 1),
+        providers={"yfinance": provider},
+        allow_manual_fallback=False,
+        sleeper=lambda _: None,
+    )
+    assert run.stopped_early is True
+    assert run.reason and "slow down" in run.reason
+    assert run.remaining >= 1
+    assert provider.calls == prices.RATE_LIMIT_RETRIES, "it stopped asking"
+
+
+def test_what_is_owned_is_fetched_daily_and_the_rest_weekly(
+    db: sqlite3.Connection,
+) -> None:
+    """A weekly series answers a three-year-return question at a fraction of
+    the bandwidth; a valuation needs every day."""
+    db.execute(
+        "UPDATE instrument SET price_source = 'yfinance', "
+        "price_symbol = 'AAA.DE', status = 'OWNED' WHERE id = 1"
+    )
+    db.execute(
+        "INSERT INTO instrument (import_key, name, asset_class, currency, "
+        "price_source, price_symbol, status) VALUES "
+        "('WATCHED', 'Watched', 'ETF', 'EUR', 'yfinance', 'WATCHED.DE', 'UNIVERSE')"
+    )
+    db.commit()
+
+    provider = ThrottlingProvider(refusals=0)
+    prices.run_fetch(
+        db,
+        end=date(2026, 8, 4),
+        start=date(2026, 8, 1),
+        providers={"yfinance": provider},
+        allow_manual_fallback=False,
+        weekly_for_watched=True,
+        sleeper=lambda _: None,
+    )
+    assert True in provider.weekly_asked, "the watched one was asked for weekly"
+    assert False in provider.weekly_asked, "the owned one was not"

@@ -232,19 +232,27 @@ def xirr(
 MIN_VOLATILITY_OBSERVATIONS = 20
 
 
-def annualised_volatility(daily_returns: list[Decimal]) -> Decimal | None:
-    """Annualised standard deviation of a list of daily returns.
+def annualised_volatility(
+    daily_returns: list[Decimal], *, periods_per_year: float = TRADING_DAYS
+) -> Decimal | None:
+    """Annualised standard deviation of a list of periodic returns.
 
     Split out from :func:`volatility` so an instrument's own price series can
     be measured by the same code as the portfolio's. Two implementations of a
     standard deviation is two chances to disagree about the divisor.
+
+    ``periods_per_year`` must match the spacing of the observations. It exists
+    because instruments that are only ever compared against are priced weekly
+    rather than daily, and scaling week-apart returns by the square root of
+    252 overstates their volatility by about 2.2 times -- enough to put every
+    one of them in the wrong volatility band, silently.
     """
     daily = [float(r) for r in daily_returns]
     if len(daily) < MIN_VOLATILITY_OBSERVATIONS:
         return None
     mean = sum(daily) / len(daily)
     variance = sum((r - mean) ** 2 for r in daily) / (len(daily) - 1)
-    return Decimal(str(round(variance**0.5 * TRADING_DAYS**0.5, 8)))
+    return Decimal(str(round(variance**0.5 * periods_per_year**0.5, 8)))
 
 
 def deepest_fall(levels: list[Decimal]) -> Decimal | None:
