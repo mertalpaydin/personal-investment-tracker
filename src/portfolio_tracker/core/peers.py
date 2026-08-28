@@ -47,7 +47,7 @@ from datetime import date
 from decimal import Decimal
 from typing import cast
 
-from portfolio_tracker.core import look_through, performance
+from portfolio_tracker.core import fx, look_through, performance
 from portfolio_tracker.money import ZERO
 
 #: Volatility cut points. Stated constants, not fitted to whatever is in the
@@ -131,6 +131,10 @@ class PeerScan:
     candidates: list[Candidate] = field(default_factory=list)
     universe_size: int = 0
     considered: int = 0
+    #: (key, why) for candidates that could not be measured at all. Named
+    #: rather than silently dropped: a shorter list with no explanation looks
+    #: like a smaller universe.
+    excluded: list[tuple[str, str]] = field(default_factory=list)
     caveats: list[str] = field(default_factory=list)
 
 
@@ -364,13 +368,27 @@ def scan(
         if row_bucket != subject_bucket:
             continue
 
-        m = performance.metrics(
-            conn,
-            int(row["id"]),
-            import_key=row["import_key"],
-            currency=row["currency"],
-            as_of=horizon,
-        )
+        try:
+            m = performance.metrics(
+                conn,
+                int(row["id"]),
+                import_key=row["import_key"],
+                currency=row["currency"],
+                as_of=horizon,
+            )
+        except fx.FxUnavailable:
+            # A candidate priced in a currency the tool has no rates for
+            # cannot be put on a euro footing, so it is dropped from the
+            # comparison rather than compared in its own currency -- that
+            # would report a sterling return against a euro one and call the
+            # difference performance.
+            #
+            # Dropped, emphatically not raised. One unconvertible instrument
+            # in a two-hundred-name catalogue used to take down the whole
+            # panel with a 500, which is a far worse answer than a list one
+            # shorter.
+            result.excluded.append((str(row["import_key"]), "no exchange rate for its currency"))
+            continue
         if m.observations < min_observations:
             continue
         result.considered += 1
