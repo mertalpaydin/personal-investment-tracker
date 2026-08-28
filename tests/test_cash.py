@@ -247,12 +247,23 @@ def test_only_the_uncovered_part_is_unfunded(db: sqlite3.Connection) -> None:
     assert events[0].amount == D("500.00")
 
 
-def test_an_unfunded_purchase_shows_its_arithmetic(db: sqlite3.Connection) -> None:
-    """A figure somebody has to explain must show what produced it."""
+def test_an_unfunded_purchase_says_what_it_bought(db: sqlite3.Connection) -> None:
+    """A figure somebody has to explain must say what produced it.
+
+    The first version wrote "purchase of 40015.36 against a cash balance of
+    0.00" -- no separators, no currency, and no clue what was bought. On a lira
+    fund that figure then sat beside a euro one, unlabelled.
+    """
     trade(db, "SELL", "2026-01-05", "1000")
     trade(db, "BUY", "2026-01-08", "1500", instrument=2)
     note = cash.unfunded_purchases(db)[0].note or ""
-    assert "1500" in note and "1000" in note
+
+    assert "1,500.00" in note, "thousands separated"
+    assert "EUR" in note, "the currency is named"
+    assert "no recorded cash" in note or "recorded cash" in note
+    # And which holding the money went into.
+    bought = db.execute("SELECT import_key FROM instrument WHERE id = 2").fetchone()
+    assert str(bought["import_key"]) in note
 
 
 # ---------------------------------------------------------------------------

@@ -84,7 +84,7 @@ function fundingReview(body) {
       f.date(d.date),
       { text: d.account, cls: "muted" },
       f.eur(d.amount_eur),
-      { text: d.why_it_was_guessed, cls: "name muted" },
+      { node: whyItWasGuessed(d), cls: "name" },
       {
         node: el(
           "span.actions",
@@ -139,6 +139,43 @@ function fundingReview(body) {
     ),
   );
 }
+
+/*
+ * What the money was assumed to be for.
+ *
+ * The old explanation was "purchase of 40015.36 against a cash balance of
+ * 0.00": no separators, no currency, and no clue what was bought. Worse, on a
+ * lira fund that 40,015.36 was lira while the deposit beside it was 1,114.44
+ * euro -- two currencies in one sentence, neither of them labelled.
+ */
+function whyItWasGuessed(d) {
+  const b = d.bought;
+  if (!b) {
+    return el("span.muted", { text: "No purchase is linked to this one." });
+  }
+
+  const cash =
+    d.cash_before_eur === null || d.cash_before_eur === undefined
+      ? ""
+      : d.cash_before_eur > 0
+        ? ` You had ${f.eur(d.cash_before_eur)} of recorded cash, so the rest was assumed to have arrived.`
+        : " No cash was recorded, so the whole amount was assumed to have arrived.";
+
+  return el(
+    "span",
+    el("span", { text: "To buy " }),
+    el("strong", { text: `${f.qty(b.quantity)} ${b.instrument}` }),
+    el("span.muted", { text: b.name ? ` (${b.name})` : "" }),
+    el("span", { text: ` for ${f.money(b.amount_local, b.currency)}` }),
+    // Only worth showing when it differs from the amount already in the row.
+    b.currency !== "EUR" && b.amount_eur
+      ? el("span.muted", { text: ` — about ${f.eur(b.amount_eur)}` })
+      : null,
+    el("span", { text: ` on ${f.date(b.date)}.` }),
+    el("span.muted", { text: cash }),
+  );
+}
+
 
 async function decide(method, path, body) {
   try {

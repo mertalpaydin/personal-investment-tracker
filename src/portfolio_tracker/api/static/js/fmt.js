@@ -52,6 +52,28 @@ export function eur(value, { sign = false, compact = false } = {}) {
   return sign && v > 0 ? `+${text}` : text;
 }
 
+/**
+ * An amount in whatever currency it was dealt in.
+ *
+ * Separate from `eur()` because a lira figure shown with a euro sign is not a
+ * formatting slip, it is a wrong number by a factor of forty. Falls back to
+ * the code when a currency has no symbol the browser knows.
+ */
+export function money(value, currency) {
+  const v = num(value);
+  if (v === null) return DASH;
+  if (!currency) return numFmt.format(v);
+  try {
+    return new Intl.NumberFormat("en-IE", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 2,
+    }).format(v);
+  } catch {
+    return `${numFmt.format(v)} ${currency}`;
+  }
+}
+
 export function pct(value, { digits = 2, sign = false } = {}) {
   const v = num(value);
   if (v === null) return DASH;

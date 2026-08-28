@@ -127,8 +127,10 @@ def compute_flows(conn: sqlite3.Connection, *, account_id: int | None = None) ->
     rows = conn.execute(
         f"""
         SELECT t.id, t.account_id, t.type, t.trade_date, t.currency,
-               t.gross_amount_local, t.fees_local, t.quantity, t.proceeds_disposition
+               t.gross_amount_local, t.fees_local, t.quantity, t.proceeds_disposition,
+               i.import_key, i.name AS instrument_name
         FROM transaction_ t
+        LEFT JOIN instrument i ON i.id = t.instrument_id
         {scope}
         ORDER BY t.account_id, t.currency, t.trade_date,
                  CASE t.type WHEN 'DEPOSIT' THEN 0 WHEN 'SELL' THEN 1
@@ -242,14 +244,23 @@ def compute_flows(conn: sqlite3.Connection, *, account_id: int | None = None) ->
                 # account this tool cannot see, or a sale it has no record of.
                 # Guessing "deposit" was how 85% of the savings figure came to
                 # be invented.
+                # Written to be read. "purchase of 40015.36 against a cash
+                # balance of 0.00" said neither what was bought nor in which
+                # currency -- and on a lira fund that figure sat next to a
+                # euro one, unlabelled, which reads as nonsense.
+                bought = row["import_key"] or "something"
+                held = (
+                    f"{quantize_money(balance):,.2f} {key[1]} of recorded cash"
+                    if balance > DUST
+                    else "no recorded cash"
+                )
                 unfunded = record(
                     "UNFUNDED",
                     quantize_money(shortfall),
                     ZERO,
                     ZERO,
                     received,
-                    f"purchase of {quantize_money(value)} against a cash balance of "
-                    f"{quantize_money(balance)}",
+                    f"buying {quantize_money(value):,.2f} {key[1]} of {bought} against {held}",
                 )
                 report.unfunded.append(unfunded)
                 balance, income = ZERO, ZERO

@@ -19,6 +19,7 @@ they are the difference between a range and a forecast:
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from decimal import Decimal
 from typing import Any
@@ -438,12 +439,24 @@ def inferred(
     """
     rows = conn.execute(
         """
-        SELECT t.id, t.trade_date, t.currency, t.gross_amount_local, t.gross_amount_eur,
-               t.note, a.name AS account
-        FROM transaction_ t JOIN account a ON a.id = t.account_id
-        WHERE a.person_id = ? AND t.flow_class = 'EXTERNAL_IN'
-          AND t.confidence = 'RECONSTRUCTED'
-        ORDER BY t.trade_date
+        SELECT d.id, d.trade_date, d.currency, d.gross_amount_local, d.gross_amount_eur,
+               d.note, a.name AS account,
+               b.trade_date AS bought_on, b.quantity AS bought_qty,
+               b.gross_amount_local AS bought_local, b.currency AS bought_currency,
+               b.gross_amount_eur AS bought_eur,
+               i.import_key, i.name AS instrument_name
+        FROM transaction_ d
+        JOIN account a ON a.id = d.account_id
+        -- The proposal that produced this row still points at the purchase
+        -- that triggered it, which is the only thing that makes the guess
+        -- reviewable: "money must have arrived" is unanswerable, "money must
+        -- have arrived to buy this" is a question somebody can settle.
+        LEFT JOIN pending_entry pe ON pe.resulting_txn_id = d.id
+        LEFT JOIN transaction_ b ON b.id = pe.source_txn_id
+        LEFT JOIN instrument i ON i.id = b.instrument_id
+        WHERE a.person_id = ? AND d.flow_class = 'EXTERNAL_IN'
+          AND d.confidence = 'RECONSTRUCTED'
+        ORDER BY d.trade_date
         """,
         (person_id,),
     ).fetchall()
@@ -455,22 +468,54 @@ def inferred(
                 "id": r["id"],
                 "date": r["trade_date"],
                 "account": r["account"],
-                "currency": r["currency"],
-                "amount_local": _num(r["gross_amount_local"]),
                 "amount_eur": _num(r["gross_amount_eur"]),
-                "why_it_was_guessed": r["note"],
+                # What the money was needed for. The old explanation was a
+                # bare "purchase of 40015.36 against a cash balance of 0.00":
+                # no separators, no currency, and no clue what was bought --
+                # and on a lira fund that 40,015.36 was lira while the deposit
+                # beside it was 1,114.44 euro, which reads as nonsense.
+                "bought": (
+                    {
+                        "instrument": r["import_key"],
+                        "name": r["instrument_name"],
+                        "date": r["bought_on"],
+                        "quantity": _num(r["bought_qty"]),
+                        "amount_local": _num(r["bought_local"]),
+                        "currency": r["bought_currency"],
+                        "amount_eur": _num(r["bought_eur"]),
+                    }
+                    if r["import_key"]
+                    else None
+                ),
+                "cash_before_eur": _cash_before(r["note"]),
             }
             for r in rows
         ],
         "count": len(rows),
         "total_eur": float(total),
         "what_to_do": (
-            "Keep the ones that really were money you paid in. Discard the rest "
-            "— those were funded by something this tool cannot see, and counting "
-            "them makes your savings look larger and your return smaller than "
-            "they were."
+            "Keep the ones that were money you paid in. Discard the rest — "
+            "those were funded by something this tool cannot see."
         ),
     }
+
+
+def _cash_before(note: str | None) -> float | None:
+    """The recorded cash balance at the moment of the purchase.
+
+    Parsed out of the note the old inference wrote, because that is the only
+    place it was ever stored. Best effort: a row whose note has been edited
+    simply loses this one field rather than breaking the review.
+    """
+    if not note:
+        return None
+    found = re.search(r"cash balance of ([\d.]+)", note)
+    if not found:
+        return None
+    try:
+        return float(found.group(1))
+    except ValueError:
+        return None
 
 
 @router.post("/api/savings/inferred/{txn_id}/keep")
