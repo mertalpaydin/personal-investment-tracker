@@ -83,6 +83,10 @@ class Period:
     income_received_eur: Decimal = ZERO
     market_growth_eur: Decimal = ZERO
     closing_value_eur: Decimal = ZERO
+    #: Money the owner already had, arriving in this ledger for the first
+    #: time. Real money that really entered the portfolio -- so it is not
+    #: growth -- but not something set aside this month, so it is not saving.
+    opening_transfer_eur: Decimal = ZERO
 
 
 @dataclass
@@ -98,6 +102,8 @@ class Summary:
     income_received_eur: Decimal = ZERO
     market_growth_eur: Decimal = ZERO
     closing_value_eur: Decimal = ZERO
+    #: Everything ever brought in that was already the owner's.
+    opening_transfer_eur: Decimal = ZERO
     periods: list[Period] = field(default_factory=list)
     caveats: list[str] = field(default_factory=list)
 
@@ -112,7 +118,9 @@ class Summary:
         identity rather than inside it, which is the same treatment
         `/api/portfolio` gives uninvested cash.
         """
-        return quantize_money(self.cumulative_eur + self.market_growth_eur)
+        return quantize_money(
+            self.cumulative_eur + self.opening_transfer_eur + self.market_growth_eur
+        )
 
     @property
     def reconciliation_gap(self) -> Decimal:
@@ -167,16 +175,36 @@ def classify(conn: sqlite3.Connection, *, person_id: int = 1) -> ClassifyReport:
 
 
 def _mark_new_savings(conn: sqlite3.Connection, *, person_id: int) -> None:
-    """``is_new_savings`` is EXTERNAL_IN that is not half of a transfer."""
+    """``is_new_savings`` is EXTERNAL_IN that is neither half of a transfer
+    nor money the owner already had.
+
+    An opening transfer stays EXTERNAL_IN on purpose -- the money did enter
+    the portfolio, and hiding the flow would make it read as return -- so it
+    has to be excluded here rather than by its flow class.
+    """
     conn.execute(
         """
         UPDATE transaction_ SET is_new_savings = CASE
             WHEN flow_class = 'EXTERNAL_IN'
+             AND is_opening_transfer = 0
              AND id NOT IN (SELECT in_txn_id FROM internal_transfer_link)
             THEN 1 ELSE 0 END
         WHERE account_id IN (SELECT id FROM account WHERE person_id = ?)
         """,
         (person_id,),
+    )
+
+
+def set_opening_transfer(conn: sqlite3.Connection, *, txn_id: int, is_opening: bool = True) -> None:
+    """Mark a deposit as money that was already the owner's.
+
+    Only the owner knows. A statement's first line looks identical whether it
+    is a lifetime of saving arriving at once or a genuinely new payment, and
+    the tool guessing wrong in either direction is what this exists to stop.
+    """
+    conn.execute(
+        "UPDATE transaction_ SET is_opening_transfer = ? WHERE id = ?",
+        (1 if is_opening else 0, txn_id),
     )
 
 
@@ -323,7 +351,10 @@ def build_periods(conn: sqlite3.Connection, *, person_id: int = 1) -> int:
         """
         SELECT substr(t.trade_date, 1, 7) AS period,
                total(CASE WHEN t.flow_class = 'EXTERNAL_IN'
+                           AND t.is_opening_transfer = 0
                           THEN CAST(t.gross_amount_eur AS REAL) ELSE 0 END) AS gross_in,
+               total(CASE WHEN t.is_opening_transfer = 1
+                          THEN CAST(t.gross_amount_eur AS REAL) ELSE 0 END) AS opening_in,
                total(CASE WHEN t.flow_class = 'EXTERNAL_OUT'
                           THEN CAST(t.gross_amount_eur AS REAL) ELSE 0 END) AS gross_out,
                total(CASE WHEN t.flow_class = 'INCOME'
@@ -358,21 +389,25 @@ def build_periods(conn: sqlite3.Connection, *, person_id: int = 1) -> int:
         period = str(row["period"])
         gross_in = quantize_money(Decimal(str(row["gross_in"])))
         gross_out = quantize_money(Decimal(str(row["gross_out"])))
+        opening_in = quantize_money(Decimal(str(row["opening_in"])))
         income = quantize_money(Decimal(str(row["income"])))
         net = gross_in - gross_out
         cumulative += net
         closing = values.get(period, previous_value)
         # The residual: whatever the value did that was not money moving in or
-        # out. Derived rather than summed from prices, so the three parts add
-        # up to the value by construction.
-        growth = quantize_money(closing - previous_value - net)
+        # out. Derived rather than summed from prices, so the parts add up to
+        # the value by construction -- which is also why an opening transfer
+        # has to be subtracted here. Leave it in and a lifetime of saving
+        # arriving in one month is reported as a month of market growth.
+        growth = quantize_money(closing - previous_value - net - opening_in)
 
         conn.execute(
             """
             INSERT INTO savings_period (
                 person_id, period, gross_in_eur, gross_out_eur, net_new_money_eur,
-                cumulative_net_eur, income_received_eur, market_growth_eur, closing_value_eur
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                cumulative_net_eur, income_received_eur, market_growth_eur,
+                closing_value_eur, opening_transfer_eur
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 person_id,
@@ -384,6 +419,7 @@ def build_periods(conn: sqlite3.Connection, *, person_id: int = 1) -> int:
                 str(income),
                 str(growth),
                 str(closing),
+                str(opening_in),
             ),
         )
         previous_value = closing
@@ -409,6 +445,7 @@ def summarise(conn: sqlite3.Connection, *, person_id: int = 1) -> Summary:
             income_received_eur=Decimal(str(r["income_received_eur"])),
             market_growth_eur=Decimal(str(r["market_growth_eur"])),
             closing_value_eur=Decimal(str(r["closing_value_eur"])),
+            opening_transfer_eur=Decimal(str(r["opening_transfer_eur"])),
         )
         for r in rows
     ]
@@ -428,6 +465,7 @@ def summarise(conn: sqlite3.Connection, *, person_id: int = 1) -> Summary:
         income_received_eur=quantize_money(sum((p.income_received_eur for p in periods), ZERO)),
         market_growth_eur=quantize_money(sum((p.market_growth_eur for p in periods), ZERO)),
         closing_value_eur=latest.closing_value_eur,
+        opening_transfer_eur=quantize_money(sum((p.opening_transfer_eur for p in periods), ZERO)),
         periods=periods,
     )
     out.average_monthly_12m_eur = (
@@ -452,6 +490,14 @@ def summarise(conn: sqlite3.Connection, *, person_id: int = 1) -> Summary:
         out.caveats.append(
             f"{linked} pair(s) of movements were recognised as one transfer between "
             "your own accounts, and are not counted as new money."
+        )
+    if out.opening_transfer_eur:
+        months = sorted({p.period for p in periods if p.opening_transfer_eur})
+        out.caveats.append(
+            f"EUR {out.opening_transfer_eur:,.2f} arriving in {', '.join(months)} was "
+            "money you already had, brought into this tool when the account joined it. "
+            "It is counted in what you are worth, and not counted as saving -- you set "
+            "it aside before any of this was being recorded."
         )
     out.caveats.append(
         "Dividends and interest are shown separately and are never counted as "

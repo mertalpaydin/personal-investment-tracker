@@ -250,6 +250,8 @@ class DepositBookResult:
     interest: int = 0
     unchanged: int = 0
     account_updated: bool = False
+    #: Capital rows booked as "money you already had" rather than as saving.
+    opening_transfers: int = 0
     findings: list[str] = field(default_factory=list)
 
 
@@ -294,16 +296,33 @@ def book(
     currency = account["currency"]
     instrument_id = ensure_cash_instrument(conn, account_id)
 
+    # Whether this account already has a capital row. The *first* one a
+    # statement ever brings is the balance the account joined with, not a
+    # month's saving -- see `opening` below.
+    had_capital = bool(
+        conn.execute(
+            "SELECT 1 FROM transaction_ WHERE account_id = ? AND type = 'DEPOSIT' LIMIT 1",
+            (account_id,),
+        ).fetchone()
+    )
+
     def insert(
-        kind: str, on: date, gross: Decimal, *, quantity: Decimal, tax: Decimal, note: str
+        kind: str,
+        on: date,
+        gross: Decimal,
+        *,
+        quantity: Decimal,
+        tax: Decimal,
+        note: str,
+        opening: bool = False,
     ) -> bool:
         cursor = conn.execute(
             """
             INSERT OR IGNORE INTO transaction_
                 (account_id, instrument_id, type, trade_date, currency, quantity,
                  gross_amount_local, tax_withheld_local, fx_rate, source, confidence,
-                 fees_known, flow_class, external_id, note)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'MANUAL', 'ACTUAL', 1, ?, ?, ?)
+                 fees_known, flow_class, external_id, note, is_opening_transfer)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'MANUAL', 'ACTUAL', 1, ?, ?, ?, ?)
             """,
             (
                 account_id,
@@ -317,22 +336,44 @@ def book(
                 "INCOME" if kind == "INTEREST" else "EXTERNAL_IN",
                 _external_id(account_id, kind, on, gross),
                 note,
+                1 if opening else 0,
             ),
         )
         return bool(cursor.rowcount)
 
     for payment in parsed.payments:
         if payment.added_capital > ZERO:
+            # The balance an account joins with is not a month's saving. A
+            # Tagesgeld export opens with the whole balance on its first
+            # line, and booking that as new money made one April worth
+            # fourteen normal months. Flagged rather than dropped: the money
+            # really did enter the portfolio, so the flow has to stay or its
+            # arrival reads as investment return.
+            opening = not had_capital
+            had_capital = True
             added = insert(
                 "DEPOSIT",
                 payment.on,
                 payment.added_capital,
                 quantity=payment.added_capital,
                 tax=ZERO,
-                note="capital added, from the account statement",
+                note=(
+                    "the balance this account joined with, from its statement"
+                    if opening
+                    else "capital added, from the account statement"
+                ),
+                opening=opening,
             )
             result.deposits += added
+            result.opening_transfers += added and opening
             result.unchanged += not added
+            if added and opening:
+                result.findings.append(
+                    f"{currency} {quantize_money(payment.added_capital):,.2f} on "
+                    f"{payment.on} is treated as the balance this account already "
+                    "held, not as saving. Say so on the Trades page if it really "
+                    "was money newly put aside."
+                )
         if payment.gross_interest > ZERO:
             # A statement that shows a net figure and no capital movement has
             # capitalised it; one whose balance did not move paid it away. The
@@ -354,6 +395,10 @@ def book(
 
     term = parsed.term
     if term is not None:
+        # Same reasoning as the instant-access opening row: a term deposit's
+        # principal is what was moved into the contract, and unless this
+        # account has funded one before, that money existed beforehand.
+        opening = not had_capital
         added = insert(
             "DEPOSIT",
             term.start,
@@ -361,9 +406,17 @@ def book(
             quantity=term.principal,
             tax=ZERO,
             note="term deposit principal",
+            opening=opening,
         )
         result.deposits += added
+        result.opening_transfers += added and opening
         result.unchanged += not added
+        if added and opening:
+            result.findings.append(
+                f"{currency} {quantize_money(term.principal):,.2f} of principal is "
+                "treated as money you already had, not as saving. Say so on the "
+                "Trades page if it really was newly put aside."
+            )
         # The contract's own terms, taken from the statement rather than typed
         # twice. Interest is projected from these until the payout is imported.
         # `annual_rate` is already a fraction -- the parser divides the

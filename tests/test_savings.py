@@ -29,6 +29,7 @@ from portfolio_tracker.db import migrate as M
 from portfolio_tracker.db.connection import connect
 
 AS_OF = date(2026, 6, 30)
+ZERO_MONEY = Decimal("0.00")
 
 
 @pytest.fixture
@@ -384,3 +385,109 @@ def test_the_measured_rate_covers_a_year(db: sqlite3.Connection) -> None:
 
     assert summary.trailing_12m_eur == Decimal("6000.00")
     assert summary.average_monthly_12m_eur == Decimal("500.00")
+
+
+# ---------------------------------------------------------------------------
+# Money you already had
+# ---------------------------------------------------------------------------
+
+
+def test_the_balance_an_account_joins_with_is_not_this_month_s_saving(
+    db: sqlite3.Connection,
+) -> None:
+    """The failure that made one April worth fourteen normal months.
+
+    A savings account joins the tool part-way through its life and its
+    statement opens with the whole balance. That money was set aside over
+    years; only its arrival in *this ledger* happened in one month.
+    """
+    _txn(db, account=2, kind="DEPOSIT", when="2026-01-05", amount="20000", flow="EXTERNAL_IN")
+    _txn(db, account=1, kind="DEPOSIT", when="2026-02-05", amount="1000", flow="EXTERNAL_IN")
+    _value(db, "2026-01-31", "20000")
+    _value(db, "2026-02-28", "21000")
+
+    opening = db.execute("SELECT id FROM transaction_ WHERE trade_date = '2026-01-05'").fetchone()[
+        "id"
+    ]
+    savings.set_opening_transfer(db, txn_id=opening, is_opening=True)
+    savings.classify(db, person_id=1)
+    savings.build_periods(db, person_id=1)
+
+    result = savings.summarise(db, person_id=1)
+    assert result.opening_transfer_eur == Decimal("20000.00")
+    # January saved nothing; the money was already his.
+    january = next(p for p in result.periods if p.period == "2026-01")
+    assert january.net_new_money_eur == ZERO_MONEY
+    assert january.opening_transfer_eur == Decimal("20000.00")
+    assert result.cumulative_eur == Decimal("1000.00")
+
+
+def test_an_opening_transfer_is_not_reported_as_market_growth(
+    db: sqlite3.Connection,
+) -> None:
+    """Growth is the residual, so anything not subtracted becomes performance.
+
+    This is the trap that makes the flag worth a column of its own: leave the
+    money in the "in" bucket and the savings rate lies; take it out without
+    accounting for it and the portfolio appears to have earned it.
+    """
+    _txn(db, account=2, kind="DEPOSIT", when="2026-01-05", amount="20000", flow="EXTERNAL_IN")
+    _value(db, "2026-01-31", "20000")
+
+    opening = db.execute("SELECT id FROM transaction_").fetchone()["id"]
+    savings.set_opening_transfer(db, txn_id=opening, is_opening=True)
+    savings.classify(db, person_id=1)
+    savings.build_periods(db, person_id=1)
+
+    result = savings.summarise(db, person_id=1)
+    assert result.market_growth_eur == ZERO_MONEY
+    # And the identity still closes, which is the only real proof.
+    assert result.reconciliation_gap == ZERO_MONEY
+    assert result.reconciles == result.closing_value_eur
+
+
+def test_an_opening_transfer_stays_an_external_flow(db: sqlite3.Connection) -> None:
+    """Or its arrival reads as investment return.
+
+    The money did enter the portfolio. Hiding the flow to fix the savings
+    figure would re-create the disease that once turned a 49% return into a
+    13,000% one -- so the row keeps its flow class and only `is_new_savings`
+    changes.
+    """
+    txn_id = _txn(
+        db, account=2, kind="DEPOSIT", when="2026-01-05", amount="20000", flow="EXTERNAL_IN"
+    )
+    savings.set_opening_transfer(db, txn_id=txn_id, is_opening=True)
+    savings.classify(db, person_id=1)
+
+    row = db.execute(
+        "SELECT flow_class, is_new_savings, is_opening_transfer FROM transaction_ WHERE id = ?",
+        (txn_id,),
+    ).fetchone()
+    assert row["flow_class"] == "EXTERNAL_IN"
+    assert row["is_opening_transfer"] == 1
+    assert row["is_new_savings"] == 0
+
+
+def test_the_owner_can_change_their_mind(db: sqlite3.Connection) -> None:
+    """It really may have been new saving. Only the owner knows."""
+    txn_id = _txn(
+        db, account=2, kind="DEPOSIT", when="2026-01-05", amount="20000", flow="EXTERNAL_IN"
+    )
+    savings.set_opening_transfer(db, txn_id=txn_id, is_opening=True)
+    savings.classify(db, person_id=1)
+    assert (
+        db.execute("SELECT is_new_savings FROM transaction_ WHERE id = ?", (txn_id,)).fetchone()[
+            "is_new_savings"
+        ]
+        == 0
+    )
+
+    savings.set_opening_transfer(db, txn_id=txn_id, is_opening=False)
+    savings.classify(db, person_id=1)
+    assert (
+        db.execute("SELECT is_new_savings FROM transaction_ WHERE id = ?", (txn_id,)).fetchone()[
+            "is_new_savings"
+        ]
+        == 1
+    )

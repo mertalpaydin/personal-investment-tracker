@@ -336,3 +336,63 @@ def test_a_term_deposit_projects_to_maturity(db: sqlite3.Connection) -> None:
 
 def test_an_instant_access_account_has_no_maturity_projection(db: sqlite3.Connection) -> None:
     assert accounts.project_maturity(db, account_id=1) is None
+
+
+# ---------------------------------------------------------------------------
+# The balance an account joins with
+# ---------------------------------------------------------------------------
+
+
+def test_the_first_capital_row_is_not_booked_as_saving(db: sqlite3.Connection) -> None:
+    """A Tagesgeld export opens with the whole balance on its first line.
+
+    Booked as new money it made one April worth EUR 22,686 against a normal
+    month of about EUR 1,500, and the projection then assumed that pace for
+    fifteen years. The flow itself must stay -- the money really did enter the
+    portfolio -- so only its status as *saving* changes.
+    """
+    result = deposits.book(db, deposits.parse_interest_statement(GERMAN_STATEMENT), account_id=1)
+    assert result.opening_transfers == 1
+    assert any("not as saving" in f for f in result.findings)
+
+    row = db.execute(
+        "SELECT flow_class, is_opening_transfer, gross_amount_local FROM transaction_ "
+        "WHERE type = 'DEPOSIT'"
+    ).fetchone()
+    assert row["gross_amount_local"] == D("20186.08")
+    assert row["is_opening_transfer"] == 1
+    assert row["flow_class"] == "EXTERNAL_IN"
+
+    # The balance still counts it, or the account would appear empty.
+    assert accounts.balance_on(db, 1, date(2026, 4, 1)) == D("20186.08")
+
+
+def test_a_later_capital_row_is_ordinary_saving(db: sqlite3.Connection) -> None:
+    """Only the *first* one is the balance the account arrived with."""
+    deposits.book(db, deposits.parse_interest_statement(GERMAN_STATEMENT), account_id=1)
+    later = "date, added capital, interest gain, tax, net\n01/10/2026, 500, 0, 0, 0\n"
+    result = deposits.book(db, deposits.parse_interest_statement(later), account_id=1)
+    assert result.opening_transfers == 0
+
+    row = db.execute(
+        "SELECT is_opening_transfer FROM transaction_ WHERE trade_date = '2026-10-01'"
+    ).fetchone()
+    assert row["is_opening_transfer"] == 0
+
+
+def test_a_term_deposit_principal_is_money_you_already_had(db: sqlite3.Connection) -> None:
+    db.execute(
+        """INSERT INTO account
+           (id, person_id, name, kind, currency, interest_day_count, withholding_rate,
+            rollover_policy)
+           VALUES (2, 1, 'Term', 'FESTGELD', 'TRY', 'ACT/365', '0.175', 'PAYOUT')"""
+    )
+    result = deposits.book(db, deposits.parse_term_deposit(TURKISH_STATEMENT), account_id=2)
+    assert result.opening_transfers == 1
+
+    row = db.execute(
+        "SELECT is_opening_transfer, gross_amount_local FROM transaction_ "
+        "WHERE account_id = 2 AND type = 'DEPOSIT'"
+    ).fetchone()
+    assert row["gross_amount_local"] == D("176177.00")
+    assert row["is_opening_transfer"] == 1
