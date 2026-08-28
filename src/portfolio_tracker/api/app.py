@@ -29,6 +29,7 @@ from portfolio_tracker.api import (
     deps,
     instruments,
     narrative,
+    overview,
     planning,
     transactions,
 )
@@ -465,6 +466,8 @@ def _attribution(conn: sqlite3.Connection, person_id: int) -> dict[str, Any] | N
 def series(
     conn: sqlite3.Connection = Depends(get_db),
     person_id: int = Query(1, alias="person"),
+    since: date | None = Query(None, alias="from"),
+    until: date | None = Query(None, alias="to"),
 ) -> dict[str, Any]:
     """The daily unit-price index, base 100 at inception.
 
@@ -478,6 +481,9 @@ def series(
     column that already exists, and a stored copy is one more thing a rebuild
     could leave disagreeing with its source.
     """
+    # The running contribution total has to be summed from inception even when
+    # a window is asked for, or the first point of a one-month view would show
+    # a month's deposits as the whole of what was ever put in.
     rows = conn.execute(
         "SELECT date, unit_price, total_value_eur, cash_eur, deposits_eur, "
         "income_cash_eur, income_received_eur, drawdown_pct, net_external_flow_eur "
@@ -502,6 +508,11 @@ def series(
                 "drawdown_pct": _decimal(r["drawdown_pct"]),
             }
         )
+
+    if since is not None:
+        points = [p for p in points if p["date"] >= since.isoformat()]
+    if until is not None:
+        points = [p for p in points if p["date"] <= until.isoformat()]
 
     return {
         "person_id": person_id,
@@ -722,6 +733,11 @@ def pending(
         "status": status,
         "counts": inbox.counts(conn),
         "rebuild_required": inbox.stale_after_decision(conn),
+        # What can actually be acted on today. An advance tax charge forecast
+        # for January 2027 is a real proposal and a useless alert: it would sit
+        # on every page for eighteen months, teaching the reader to ignore the
+        # strip that also carries the urgent things.
+        "due_now": inbox.due_now(conn),
         "entries": [_pending_json(e) for e in inbox.listing(conn, status=status)],
     }
 
@@ -1866,6 +1882,7 @@ app.include_router(admin.router)
 app.include_router(instruments.router)
 app.include_router(narrative.router)
 app.include_router(planning.router)
+app.include_router(overview.router)
 
 
 # The app itself. Mounted last so nothing here can shadow an /api route, and

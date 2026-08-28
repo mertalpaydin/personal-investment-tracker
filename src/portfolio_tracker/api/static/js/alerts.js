@@ -47,6 +47,21 @@ export async function refreshAlerts() {
       if (stamp) stamp.textContent = `Priced to ${ago(h.as_of)}`;
     }
 
+    // The one that changes what every other figure means: money that funded a
+    // purchase but was never recorded is read as investment return.
+    const unexplained = h.data_quality?.unexplained_purchases ?? 0;
+    if (unexplained > 0) {
+      items.push(
+        alert(
+          "bad",
+          `${unexplained} purchases were made with money this tool has no record of. ` +
+            "Your return is overstated until you say where it came from.",
+          "Sort it out",
+          "#/trades?review=funding",
+        ),
+      );
+    }
+
     // Stale prices. The number that makes every other number on the page a
     // little bit wrong, and the one thing the app used to be silent about.
     const stale = h.data_quality?.stale_or_missing_prices ?? 0;
@@ -54,9 +69,7 @@ export async function refreshAlerts() {
       items.push(
         alert(
           "warn",
-          stale === 1
-            ? "One holding is being valued at a carried-forward price."
-            : `${stale} holdings are being valued at carried-forward prices.`,
+          stale === 1 ? "1 holding has a stale price." : `${stale} holdings have stale prices.`,
           "Update prices",
           "#/settings",
         ),
@@ -67,7 +80,7 @@ export async function refreshAlerts() {
       items.push(
         alert(
           "warn",
-          "Some figures are computed from incomplete data for the latest day.",
+          "Latest day is incomplete.",
           "What is missing",
           "#/settings",
         ),
@@ -79,8 +92,7 @@ export async function refreshAlerts() {
       items.push(
         alert(
           "warn",
-          `${unresolved} ${unresolved === 1 ? "fund has" : "funds have"} no partial tax ` +
-            "exemption rate set, so their tax figures are incomplete.",
+          `${unresolved} ${unresolved === 1 ? "fund is" : "funds are"} missing a tax exemption rate.`,
           "Set the rates",
           "#/settings",
         ),
@@ -96,21 +108,21 @@ export async function refreshAlerts() {
       items.unshift(
         alert(
           "warn",
-          "Figures on this page are older than your most recent decision.",
+          "Figures are older than your last change.",
           "Recompute now",
           "#/settings",
         ),
       );
     }
 
-    const open = (data.pending.entries || []).length;
+    // Only what is actionable today. Anything dated in the future is on the
+    // Inbox page and does not nag from here.
+    const open = data.pending.due_now ?? 0;
     if (open > 0) {
       items.push(
         alert(
           "",
-          open === 1
-            ? "One inferred entry is waiting for you to confirm or reject it."
-            : `${open} inferred entries are waiting for you to confirm or reject them.`,
+          open === 1 ? "1 entry needs a decision." : `${open} entries need a decision.`,
           "Review them",
           "#/inbox",
         ),

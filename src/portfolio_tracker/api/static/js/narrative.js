@@ -26,6 +26,13 @@ export function explainPanel(path, params = {}, label = "Explain this in words")
   const out = el("div");
   const button = el("button", {
     text: label,
+    // What it does, before it is pressed. It costs an API call and sends
+    // figures off the machine, so "find out by clicking" is the wrong shape.
+    title:
+      "Sends the figures on this page to the AI model you configured in " +
+      "Settings, and shows a short written summary of them. It cannot compute " +
+      "anything — it only puts these numbers into sentences. Off unless you " +
+      "have set it up.",
     onclick: async () => {
       button.disabled = true;
       button.textContent = "Writing…";

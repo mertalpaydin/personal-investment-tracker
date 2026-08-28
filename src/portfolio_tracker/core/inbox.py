@@ -97,15 +97,36 @@ def get(conn: sqlite3.Connection, pending_id: int) -> PendingEntry:
 
 
 def listing(
-    conn: sqlite3.Connection, *, status: str = "PROPOSED", limit: int = 200
+    conn: sqlite3.Connection,
+    *,
+    status: str = "PROPOSED",
+    limit: int = 200,
+    due_by: date | None = None,
 ) -> list[PendingEntry]:
-    return [
-        _row_to_entry(row)
-        for row in conn.execute(
-            "SELECT * FROM pending_entry WHERE status = ? ORDER BY proposed_date, id LIMIT ?",
-            (status, limit),
-        )
-    ]
+    """Proposals awaiting a decision.
+
+    ``due_by`` hides anything dated later than that day. An advance tax charge
+    forecast for January 2027 is a real proposal and worth keeping, but it is
+    not something anybody can act on today -- and an alert counting it sits on
+    every page for months, teaching the reader that the alert strip is noise.
+    Callers that nag pass today; callers that list everything do not.
+    """
+    query = "SELECT * FROM pending_entry WHERE status = ?"
+    params: list[object] = [status]
+    if due_by is not None:
+        query += " AND proposed_date <= ?"
+        params.append(due_by.isoformat())
+    query += " ORDER BY proposed_date, id LIMIT ?"
+    params.append(limit)
+    return [_row_to_entry(row) for row in conn.execute(query, params)]
+
+
+def due_now(conn: sqlite3.Connection, *, on: date | None = None) -> int:
+    """How many proposals are actually actionable today.
+
+    What the alert strip counts. Everything else waits until its date.
+    """
+    return len(listing(conn, due_by=on or date.today()))
 
 
 def confirm(

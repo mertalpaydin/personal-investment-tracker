@@ -35,7 +35,10 @@
 
   --radius: .55rem;
   --gap: 1rem;
-  --maxw: 76rem;
+  /* Wide, because this is a data tool opened on a desktop: a 76rem column on
+     a 1440px screen wasted a third of the width on margins. Tables and charts
+     are the content here, and both want room. */
+  --maxw: 108rem;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -69,7 +72,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+  font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
         "Helvetica Neue", Arial, sans-serif;
   font-variant-numeric: tabular-nums;
 }
@@ -170,18 +173,18 @@ a:hover { text-decoration: underline; }
 
 /* ------------------------------------------------------------- headings */
 
-h1 { font-size: 1.5rem; margin: 0 0 .2rem; letter-spacing: -.015em; }
+h1 { font-size: 1.7rem; margin: 0 0 .2rem; letter-spacing: -.015em; }
 h2 {
-  font-size: .78rem;
+  font-size: .84rem;
   text-transform: uppercase;
   letter-spacing: .07em;
   color: var(--muted);
   font-weight: 650;
   margin: 2.5rem 0 .8rem;
 }
-h3 { font-size: 1rem; margin: 1.5rem 0 .5rem; }
+h3 { font-size: 1.08rem; margin: 1.5rem 0 .5rem; }
 
-.sub { color: var(--muted); margin: 0 0 1.75rem; font-size: .92rem; }
+.sub { color: var(--muted); margin: 0 0 1.75rem; font-size: .96rem; }
 
 section { margin-bottom: .5rem; }
 
@@ -202,13 +205,13 @@ section { margin-bottom: .5rem; }
 }
 .card .k {
   color: var(--muted);
-  font-size: .74rem;
+  font-size: .8rem;
   text-transform: uppercase;
   letter-spacing: .05em;
   display: block;
 }
-.card .v { font-size: 1.4rem; margin-top: .15rem; letter-spacing: -.02em; }
-.card .sub2 { color: var(--muted); font-size: .8rem; margin-top: .1rem; }
+.card .v { font-size: 1.6rem; margin-top: .15rem; letter-spacing: -.02em; }
+.card .sub2 { color: var(--muted); font-size: .85rem; margin-top: .1rem; }
 .card.total { border-width: 2px; border-color: var(--line-strong); }
 .card.aside { border-style: dashed; opacity: .8; }
 
@@ -227,7 +230,7 @@ th:first-child, td:first-child { text-align: left; }
 th {
   color: var(--muted);
   font-weight: 650;
-  font-size: .74rem;
+  font-size: .78rem;
   text-transform: uppercase;
   letter-spacing: .05em;
 }
@@ -299,7 +302,7 @@ th.sortable:hover { color: var(--fg); }
   margin: 2rem 0 .2rem;
 }
 .chart-head h3 { margin: 0; font-size: .95rem; }
-.chart-note { color: var(--muted); font-size: .82rem; }
+.chart-note { color: var(--muted); font-size: .86rem; }
 
 .legend { display: flex; gap: 1rem; flex-wrap: wrap; font-size: .85rem; margin: .1rem 0 .4rem; }
 .legend .item { display: inline-flex; align-items: center; gap: .35rem; color: var(--muted); }
@@ -412,11 +415,11 @@ button.danger { border-color: color-mix(in srgb, var(--loss) 60%, var(--line)); 
 
 /* --------------------------------------------------------------- notes */
 
-.note { color: var(--muted); font-size: .87rem; }
+.note { color: var(--muted); font-size: .9rem; }
 .note.warn { color: var(--warn); }
 .note.bad { color: var(--loss); }
 
-ul.caveats { padding-left: 1.05rem; color: var(--muted); font-size: .86rem; margin: .5rem 0; }
+ul.caveats { padding-left: 1.05rem; color: var(--muted); font-size: .88rem; margin: .5rem 0; }
 ul.caveats li { margin-bottom: .3rem; }
 
 .tag {
@@ -467,3 +470,83 @@ abbr[title] { text-decoration: underline dotted; cursor: help; }
   .view { max-width: none; padding: 0; }
   .card, .panel { break-inside: avoid; }
 }
+
+/* ------------------------------------------------------- time ranges */
+
+/*
+ * The window every figure on a page is measured over. One control, at the
+ * top, driving every card, chart and table below it -- a page where the
+ * headline says "today" and the chart says "everything" is a page that
+ * invites the two to be read together.
+ */
+.ranges {
+  display: flex;
+  gap: .25rem;
+  flex-wrap: wrap;
+  margin: 0 0 1.5rem;
+  align-items: center;
+}
+.ranges button {
+  font: inherit;
+  font-size: .88rem;
+  padding: .25rem .7rem;
+  border-radius: 2rem;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.ranges button:hover { border-color: var(--line-strong); color: var(--fg); }
+.ranges button[aria-pressed="true"] {
+  background: var(--fg);
+  border-color: var(--fg);
+  color: var(--bg);
+  font-weight: 600;
+}
+.ranges .over { color: var(--muted); font-size: .85rem; margin-left: .5rem; }
+
+/* --------------------------------------------------------- layout */
+
+/*
+ * Two or three columns on a wide screen. A single 108rem-wide bar chart of
+ * six rows is mostly whitespace with a label at each end; side by side they
+ * read as one comparison.
+ */
+.cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(26rem, 1fr));
+  gap: 1.5rem 2.5rem;
+  align-items: start;
+}
+.cols > section { margin-bottom: 0; }
+
+/* For prose and bar lists, which get unreadable past about 90 characters. */
+.narrow { max-width: 46rem; }
+
+/* ------------------------------------------------------- tooltips */
+
+/*
+ * A short label with the explanation on hover, so a card can say what it
+ * means without a paragraph under it. `title` alone is invisible on touch,
+ * hence the dotted underline telling the reader there is something there.
+ */
+.hint {
+  border-bottom: 1px dotted currentColor;
+  cursor: help;
+}
+.card .k .hint { border-bottom-color: color-mix(in srgb, currentColor 45%, transparent); }
+
+/* Two lines under a figure, when one would run past the card. */
+.card .sub2.stack { display: grid; gap: .05rem; }
+
+/* --------------------------------------------------------- forms */
+
+.entry {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: .75rem 1rem;
+  align-items: end;
+}
+.entry .wide { grid-column: 1 / -1; }
+label.check { display: flex; gap: .45rem; align-items: baseline; font-size: .92rem; }
+label.check input { width: auto; }
