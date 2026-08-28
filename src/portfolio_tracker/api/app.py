@@ -1946,11 +1946,41 @@ app.include_router(planning.router)
 app.include_router(overview.router)
 
 
+class RevalidatingStatics(StaticFiles):
+    """Static files a browser must check before reusing.
+
+    Starlette sends `ETag` and `Last-Modified` but no `Cache-Control`. With no
+    explicit directive a browser is free to apply *heuristic* caching -- a
+    fraction of the file's age -- and serve a stale copy without asking. For a
+    page assembled from a dozen ES modules that is not a stale stylesheet, it
+    is one module from yesterday calling a function that only exists in
+    today's: `f.money is not a function`, on a page that works perfectly for
+    whoever shipped it.
+
+    `no-cache` does not mean "do not store". It means "revalidate first", and
+    the ETag already there turns that into a 304 with no body. On a server
+    running on the same machine the cost is not measurable, and the failure it
+    prevents is invisible until somebody reports a broken page.
+
+    The vendored library is exempt: its name carries its version, its bytes are
+    checksummed, and it is the one file here big enough for caching to matter.
+    """
+
+    def file_response(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        response = super().file_response(*args, **kwargs)
+        path = str(response.path) if hasattr(response, "path") else ""
+        immutable = "vendor" in path.replace("\\", "/").split("/")
+        response.headers["Cache-Control"] = (
+            "public, max-age=31536000, immutable" if immutable else "no-cache"
+        )
+        return response
+
+
 # The app itself. Mounted last so nothing here can shadow an /api route, and
 # deliberately not `html=True` on a root mount: that would make StaticFiles
 # answer every unmatched path, turning a typo in an endpoint name into a
 # silent 200 with an HTML body.
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/static", RevalidatingStatics(directory=STATIC_DIR), name="static")
 
 
 @app.get("/", include_in_schema=False)

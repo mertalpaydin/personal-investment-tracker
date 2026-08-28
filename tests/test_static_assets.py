@@ -190,3 +190,48 @@ def test_the_vendored_library_is_small_enough_to_commit() -> None:
     for path in VENDOR.iterdir():
         if path.is_file():
             assert path.stat().st_size <= 256 * 1024, f"{path.name} exceeds the 256 KB limit"
+
+
+# ---------------------------------------------------------------------------
+# Caching
+# ---------------------------------------------------------------------------
+
+
+def test_modules_must_be_revalidated_before_reuse() -> None:
+    """A stale module is a broken page, not a stale stylesheet.
+
+    Starlette sends ETag and Last-Modified but no Cache-Control, which leaves a
+    browser free to apply heuristic caching and serve yesterday's copy without
+    asking. On a page assembled from a dozen ES modules that surfaces as one
+    file calling a function that only exists in a newer one -- and it works
+    perfectly for whoever shipped it, which is what makes it worth a test.
+    """
+    from fastapi.testclient import TestClient
+
+    from portfolio_tracker.api.app import app
+
+    with TestClient(app) as client:
+        for path in ("/static/js/main.js", "/static/js/fmt.js", "/static/app.css"):
+            response = client.get(path)
+            assert response.status_code == 200, path
+            assert response.headers.get("cache-control") == "no-cache", path
+
+        # Revalidation has to be cheap, or "check every time" is a real cost.
+        first = client.get("/static/js/fmt.js")
+        again = client.get("/static/js/fmt.js", headers={"If-None-Match": first.headers["etag"]})
+        assert again.status_code == 304
+
+
+def test_the_vendored_library_is_cached_hard() -> None:
+    """Its name carries its version and its bytes are checksummed.
+
+    The one file here large enough for caching to be worth anything, and the
+    one that cannot silently change underneath a page.
+    """
+    from fastapi.testclient import TestClient
+
+    from portfolio_tracker.api.app import app
+
+    with TestClient(app) as client:
+        cached = client.get("/static/vendor/uPlot.iife.js").headers.get("cache-control", "")
+    assert "immutable" in cached
