@@ -56,7 +56,6 @@ export async function render() {
     sensitivity: get("/api/projection/sensitivity", { paths: 300 }),
     pinned: get("/api/projection/scenarios", { paths: 300 }),
     savings: get("/api/savings"),
-    alreadyHad: get("/api/savings/opening-transfers"),
   });
 
   if (isError(data.baseline)) throw data.baseline;
@@ -75,7 +74,7 @@ export async function render() {
   // Before the levers, because the rate the projection assumes comes from
   // here: a plan built on an aspirational savings rate is the commonest way
   // a tool like this flatters its owner.
-  if (!isError(data.savings)) view.append(savingsSection(data.savings, data.alreadyHad));
+  if (!isError(data.savings)) view.append(savingsSection(data.savings));
   view.append(leverForm(base, data.baseline));
   if (!isError(data.sensitivity)) view.append(sensitivitySection(data.sensitivity));
   if (!isError(data.pinned)) view.append(pinnedSection(data.pinned));
@@ -868,75 +867,7 @@ function caveats(list) {
  * the sum deliberately -- dividends land in cash, which the headline value
  * excludes, and folding them in would double-count whatever was reinvested.
  */
-/*
- * The deposits that are money you already had, and the ones that might be.
- *
- * Every deposit account's first capital row is listed whether it is marked or
- * not, because that is the row the question always turns on: a statement's
- * opening line looks identical whether it is a lifetime of saving arriving at
- * once or a genuinely new payment. Only the owner can tell, so the tool asks
- * rather than decides -- and shows what it currently believes so a wrong
- * belief is visible instead of buried in an average.
- */
-function alreadyHadPanel(body) {
-  if (isError(body) || !body.entries?.length) return null;
-
-  const rows = body.entries.map((e) =>
-    row([
-      { text: f.date(e.on), cls: "name" },
-      { text: e.account },
-      { text: f.money(e.amount_local, e.currency) },
-      {
-        node: el("span", {
-          class: e.already_had ? "tag ok" : "tag warn",
-          text: e.already_had ? "already yours" : "counted as saving",
-        }),
-      },
-      {
-        node: el("button.small", {
-          type: "button",
-          text: e.already_had ? "No — I saved this" : "I already had this",
-          onclick: async (event) => {
-            event.target.disabled = true;
-            try {
-              await post(
-                `/api/savings/opening-transfers/${e.txn_id}`,
-                {},
-                { already_had: e.already_had ? "false" : "true" },
-              );
-              router.refresh();
-            } catch (err) {
-              window.alert(err.message);
-              event.target.disabled = false;
-            }
-          },
-        }),
-      },
-    ]),
-  );
-
-  return el(
-    "details.assumptions",
-    el("summary", { text: "Which deposits were money you already had" }),
-    el("p.note", { text: body.what_this_is }),
-    el(
-      "div.wrap",
-      el(
-        "table",
-        el(
-          "thead",
-          el(
-            "tr",
-            ["When", "Account", "Amount", "Treated as", ""].map((h) => el("th", { text: h })),
-          ),
-        ),
-        el("tbody", rows),
-      ),
-    ),
-  );
-}
-
-function savingsSection(s, alreadyHad) {
+function savingsSection(s) {
   const made = s.made_of || {};
   const months = (s.months || []).slice(-24);
 
@@ -1009,8 +940,6 @@ function savingsSection(s, alreadyHad) {
     section.append(el("h3", { text: "Month by month" }), box);
   }
 
-  const panel = alreadyHadPanel(alreadyHad);
-  if (panel) section.append(panel);
   section.append(caveats(s.caveats));
   return section;
 }
