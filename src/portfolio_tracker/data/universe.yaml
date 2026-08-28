@@ -18,2046 +18,2046 @@
 version: 1
 
 instruments:
-  AAPL:
+  "AAPL":
     name: 'Apple'
     asset_class: STOCK
     currency: USD
-    price_symbol: AAPL
+    price_symbol: "AAPL"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  ABNB:
+  "ABNB":
     name: 'Airbnb'
     asset_class: STOCK
     currency: USD
-    price_symbol: ABNB
+    price_symbol: "ABNB"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  ADBE:
+  "ADBE":
     name: 'Adobe'
     asset_class: STOCK
     currency: USD
-    price_symbol: ADBE
+    price_symbol: "ADBE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  ADI:
+  "ADI":
     name: 'Analog Devices'
     asset_class: STOCK
     currency: USD
-    price_symbol: ADI
+    price_symbol: "ADI"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  ADP:
+  "ADP":
     name: 'ADP'
     asset_class: STOCK
     currency: USD
-    price_symbol: ADP
+    price_symbol: "ADP"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  ADSK:
+  "ADSK":
     name: 'Autodesk'
     asset_class: STOCK
     currency: USD
-    price_symbol: ADSK
+    price_symbol: "ADSK"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  AEP:
+  "AEP":
     name: 'American Electric Power'
     asset_class: STOCK
     currency: USD
-    price_symbol: AEP
+    price_symbol: "AEP"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  AMAT:
+  "AMAT":
     name: 'Applied Materials'
     asset_class: STOCK
     currency: USD
-    price_symbol: AMAT
+    price_symbol: "AMAT"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  AMD:
+  "AMD":
     name: 'AMD'
     asset_class: STOCK
     currency: USD
-    price_symbol: AMD
+    price_symbol: "AMD"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  AMGN:
+  "AMGN":
     name: 'Amgen'
     asset_class: STOCK
     currency: USD
-    price_symbol: AMGN
+    price_symbol: "AMGN"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  AMZN:
+  "AMZN":
     name: 'Amazon'
     asset_class: STOCK
     currency: USD
-    price_symbol: AMZN
+    price_symbol: "AMZN"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  ANSS:
-    name: 'Ansys'
-    asset_class: STOCK
-    currency: USD
-    price_symbol: ANSS
-    trading_calendar: XETRA
-    is_fund: false
-    risk_bucket: EQ_SINGLE_STOCK
-  APP:
+  "APP":
     name: 'AppLovin'
     asset_class: STOCK
     currency: USD
-    price_symbol: APP
+    price_symbol: "APP"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  ARM:
+  "ARM":
     name: 'Arm Holdings'
     asset_class: STOCK
     currency: USD
-    price_symbol: ARM
+    price_symbol: "ARM"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  ASML:
+  "ASML":
     name: 'ASML (US listing)'
     asset_class: STOCK
     currency: USD
-    price_symbol: ASML
+    price_symbol: "ASML"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  AVGO:
+  "AVGO":
     name: 'Broadcom'
     asset_class: STOCK
     currency: USD
-    price_symbol: AVGO
+    price_symbol: "AVGO"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  AZN:
+  "AZN":
     name: 'AstraZeneca (US listing)'
     asset_class: STOCK
     currency: USD
-    price_symbol: AZN
+    price_symbol: "AZN"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  BIIB:
+  "BIIB":
     name: 'Biogen'
     asset_class: STOCK
     currency: USD
-    price_symbol: BIIB
+    price_symbol: "BIIB"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  BKNG:
+  "BKNG":
     name: 'Booking Holdings'
     asset_class: STOCK
     currency: USD
-    price_symbol: BKNG
+    price_symbol: "BKNG"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  CCEP:
+  "CCEP":
     name: 'Coca-Cola Europacific'
     asset_class: STOCK
     currency: USD
-    price_symbol: CCEP
+    price_symbol: "CCEP"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  CDNS:
+  "CDNS":
     name: 'Cadence Design'
     asset_class: STOCK
     currency: USD
-    price_symbol: CDNS
+    price_symbol: "CDNS"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  CDW:
+  "CDW":
     name: 'CDW'
     asset_class: STOCK
     currency: USD
-    price_symbol: CDW
+    price_symbol: "CDW"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  CHTR:
+  "CEG":
+    name: 'Constellation Energy'
+    asset_class: STOCK
+    currency: USD
+    price_symbol: "CEG"
+    trading_calendar: XETRA
+    is_fund: false
+    risk_bucket: EQ_SINGLE_STOCK
+  "CHTR":
     name: 'Charter'
     asset_class: STOCK
     currency: USD
-    price_symbol: CHTR
+    price_symbol: "CHTR"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  CMCSA:
+  "CMCSA":
     name: 'Comcast'
     asset_class: STOCK
     currency: USD
-    price_symbol: CMCSA
+    price_symbol: "CMCSA"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  COST:
+  "COST":
     name: 'Costco'
     asset_class: STOCK
     currency: USD
-    price_symbol: COST
+    price_symbol: "COST"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  CPRT:
+  "CPRT":
     name: 'Copart'
     asset_class: STOCK
     currency: USD
-    price_symbol: CPRT
+    price_symbol: "CPRT"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  CRWD:
+  "CRWD":
     name: 'CrowdStrike'
     asset_class: STOCK
     currency: USD
-    price_symbol: CRWD
+    price_symbol: "CRWD"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  CSCO:
+  "CSCO":
     name: 'Cisco'
     asset_class: STOCK
     currency: USD
-    price_symbol: CSCO
+    price_symbol: "CSCO"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  CSGP:
+  "CSGP":
     name: 'CoStar Group'
     asset_class: STOCK
     currency: USD
-    price_symbol: CSGP
+    price_symbol: "CSGP"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  CSX:
+  "CSX":
     name: 'CSX'
     asset_class: STOCK
     currency: USD
-    price_symbol: CSX
+    price_symbol: "CSX"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  CTAS:
+  "CTAS":
     name: 'Cintas'
     asset_class: STOCK
     currency: USD
-    price_symbol: CTAS
+    price_symbol: "CTAS"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  CTSH:
+  "CTSH":
     name: 'Cognizant'
     asset_class: STOCK
     currency: USD
-    price_symbol: CTSH
+    price_symbol: "CTSH"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  DASH:
+  "DASH":
     name: 'DoorDash'
     asset_class: STOCK
     currency: USD
-    price_symbol: DASH
+    price_symbol: "DASH"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  DDOG:
+  "DDOG":
     name: 'Datadog'
     asset_class: STOCK
     currency: USD
-    price_symbol: DDOG
+    price_symbol: "DDOG"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  DXCM:
+  "DXCM":
     name: 'DexCom'
     asset_class: STOCK
     currency: USD
-    price_symbol: DXCM
+    price_symbol: "DXCM"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  EA:
+  "EA":
     name: 'Electronic Arts'
     asset_class: STOCK
     currency: USD
-    price_symbol: EA
+    price_symbol: "EA"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  EXC:
+  "EXC":
     name: 'Exelon'
     asset_class: STOCK
     currency: USD
-    price_symbol: EXC
+    price_symbol: "EXC"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  FAST:
+  "FAST":
     name: 'Fastenal'
     asset_class: STOCK
     currency: USD
-    price_symbol: FAST
+    price_symbol: "FAST"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  FTNT:
+  "FTNT":
     name: 'Fortinet'
     asset_class: STOCK
     currency: USD
-    price_symbol: FTNT
+    price_symbol: "FTNT"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  GEHC:
+  "GEHC":
     name: 'GE HealthCare'
     asset_class: STOCK
     currency: USD
-    price_symbol: GEHC
+    price_symbol: "GEHC"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  GFS:
+  "GFS":
     name: 'GlobalFoundries'
     asset_class: STOCK
     currency: USD
-    price_symbol: GFS
+    price_symbol: "GFS"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  GILD:
+  "GILD":
     name: 'Gilead Sciences'
     asset_class: STOCK
     currency: USD
-    price_symbol: GILD
+    price_symbol: "GILD"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  GOOG:
+  "GOOG":
     name: 'Alphabet C'
     asset_class: STOCK
     currency: USD
-    price_symbol: GOOG
+    price_symbol: "GOOG"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  GOOGL:
+  "GOOGL":
     name: 'Alphabet A'
     asset_class: STOCK
     currency: USD
-    price_symbol: GOOGL
+    price_symbol: "GOOGL"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  HON:
+  "HON":
     name: 'Honeywell'
     asset_class: STOCK
     currency: USD
-    price_symbol: HON
+    price_symbol: "HON"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  IDXX:
+  "IDXX":
     name: 'IDEXX Laboratories'
     asset_class: STOCK
     currency: USD
-    price_symbol: IDXX
+    price_symbol: "IDXX"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  ILMN:
+  "ILMN":
     name: 'Illumina'
     asset_class: STOCK
     currency: USD
-    price_symbol: ILMN
+    price_symbol: "ILMN"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  INTC:
+  "INTC":
     name: 'Intel'
     asset_class: STOCK
     currency: USD
-    price_symbol: INTC
+    price_symbol: "INTC"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  INTU:
+  "INTU":
     name: 'Intuit'
     asset_class: STOCK
     currency: USD
-    price_symbol: INTU
+    price_symbol: "INTU"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  ISRG:
+  "ISRG":
     name: 'Intuitive Surgical'
     asset_class: STOCK
     currency: USD
-    price_symbol: ISRG
+    price_symbol: "ISRG"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  KDP:
+  "KDP":
     name: 'Keurig Dr Pepper'
     asset_class: STOCK
     currency: USD
-    price_symbol: KDP
+    price_symbol: "KDP"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  KHC:
+  "KHC":
     name: 'Kraft Heinz'
     asset_class: STOCK
     currency: USD
-    price_symbol: KHC
+    price_symbol: "KHC"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  KLAC:
+  "KLAC":
     name: 'KLA'
     asset_class: STOCK
     currency: USD
-    price_symbol: KLAC
+    price_symbol: "KLAC"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  LIN:
+  "LIN":
     name: 'Linde'
     asset_class: STOCK
     currency: USD
-    price_symbol: LIN
+    price_symbol: "LIN"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  LRCX:
+  "LRCX":
     name: 'Lam Research'
     asset_class: STOCK
     currency: USD
-    price_symbol: LRCX
+    price_symbol: "LRCX"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  LULU:
+  "LULU":
     name: 'Lululemon'
     asset_class: STOCK
     currency: USD
-    price_symbol: LULU
+    price_symbol: "LULU"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  MAR:
+  "MAR":
     name: 'Marriott'
     asset_class: STOCK
     currency: USD
-    price_symbol: MAR
+    price_symbol: "MAR"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  MDB:
+  "MDB":
     name: 'MongoDB'
     asset_class: STOCK
     currency: USD
-    price_symbol: MDB
+    price_symbol: "MDB"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  MDLZ:
+  "MDLZ":
     name: 'Mondelez'
     asset_class: STOCK
     currency: USD
-    price_symbol: MDLZ
+    price_symbol: "MDLZ"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  MELI:
+  "MELI":
     name: 'MercadoLibre'
     asset_class: STOCK
     currency: USD
-    price_symbol: MELI
+    price_symbol: "MELI"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  META:
+  "META":
     name: 'Meta Platforms'
     asset_class: STOCK
     currency: USD
-    price_symbol: META
+    price_symbol: "META"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  MNST:
+  "MNST":
     name: 'Monster Beverage'
     asset_class: STOCK
     currency: USD
-    price_symbol: MNST
+    price_symbol: "MNST"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  MRNA:
+  "MRNA":
     name: 'Moderna'
     asset_class: STOCK
     currency: USD
-    price_symbol: MRNA
+    price_symbol: "MRNA"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  MRVL:
+  "MRVL":
     name: 'Marvell'
     asset_class: STOCK
     currency: USD
-    price_symbol: MRVL
+    price_symbol: "MRVL"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  MSFT:
+  "MSFT":
     name: 'Microsoft'
     asset_class: STOCK
     currency: USD
-    price_symbol: MSFT
+    price_symbol: "MSFT"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  MU:
+  "MU":
     name: 'Micron'
     asset_class: STOCK
     currency: USD
-    price_symbol: MU
+    price_symbol: "MU"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  NFLX:
+  "NFLX":
     name: 'Netflix'
     asset_class: STOCK
     currency: USD
-    price_symbol: NFLX
+    price_symbol: "NFLX"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  NVDA:
+  "NVDA":
     name: 'NVIDIA'
     asset_class: STOCK
     currency: USD
-    price_symbol: NVDA
+    price_symbol: "NVDA"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  NXPI:
+  "NXPI":
     name: 'NXP Semiconductors'
     asset_class: STOCK
     currency: USD
-    price_symbol: NXPI
+    price_symbol: "NXPI"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  ODFL:
+  "ODFL":
     name: 'Old Dominion'
     asset_class: STOCK
     currency: USD
-    price_symbol: ODFL
+    price_symbol: "ODFL"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  ON:
+  "ON":
     name: 'ON Semiconductor'
     asset_class: STOCK
     currency: USD
-    price_symbol: ON
+    price_symbol: "ON"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  ORLY:
+  "ORLY":
     name: "O'Reilly Automotive"
     asset_class: STOCK
     currency: USD
-    price_symbol: ORLY
+    price_symbol: "ORLY"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  PANW:
+  "PANW":
     name: 'Palo Alto Networks'
     asset_class: STOCK
     currency: USD
-    price_symbol: PANW
+    price_symbol: "PANW"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  PAYX:
+  "PAYX":
     name: 'Paychex'
     asset_class: STOCK
     currency: USD
-    price_symbol: PAYX
+    price_symbol: "PAYX"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  PCAR:
+  "PCAR":
     name: 'PACCAR'
     asset_class: STOCK
     currency: USD
-    price_symbol: PCAR
+    price_symbol: "PCAR"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  PEP:
+  "PEP":
     name: 'PepsiCo'
     asset_class: STOCK
     currency: USD
-    price_symbol: PEP
+    price_symbol: "PEP"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  PLTR:
+  "PLTR":
     name: 'Palantir'
     asset_class: STOCK
     currency: USD
-    price_symbol: PLTR
+    price_symbol: "PLTR"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  PYPL:
+  "PYPL":
     name: 'PayPal'
     asset_class: STOCK
     currency: USD
-    price_symbol: PYPL
+    price_symbol: "PYPL"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  QCOM:
+  "QCOM":
     name: 'Qualcomm'
     asset_class: STOCK
     currency: USD
-    price_symbol: QCOM
+    price_symbol: "QCOM"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  REGN:
+  "REGN":
     name: 'Regeneron'
     asset_class: STOCK
     currency: USD
-    price_symbol: REGN
+    price_symbol: "REGN"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  ROP:
+  "ROP":
     name: 'Roper Technologies'
     asset_class: STOCK
     currency: USD
-    price_symbol: ROP
+    price_symbol: "ROP"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  ROST:
+  "ROST":
     name: 'Ross Stores'
     asset_class: STOCK
     currency: USD
-    price_symbol: ROST
+    price_symbol: "ROST"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  SBUX:
+  "SBUX":
     name: 'Starbucks'
     asset_class: STOCK
     currency: USD
-    price_symbol: SBUX
+    price_symbol: "SBUX"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  SMCI:
+  "SMCI":
     name: 'Super Micro Computer'
     asset_class: STOCK
     currency: USD
-    price_symbol: SMCI
+    price_symbol: "SMCI"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  SNPS:
+  "SNPS":
     name: 'Synopsys'
     asset_class: STOCK
     currency: USD
-    price_symbol: SNPS
+    price_symbol: "SNPS"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  TEAM:
+  "TEAM":
     name: 'Atlassian'
     asset_class: STOCK
     currency: USD
-    price_symbol: TEAM
+    price_symbol: "TEAM"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  TMUS:
+  "TMUS":
     name: 'T-Mobile US'
     asset_class: STOCK
     currency: USD
-    price_symbol: TMUS
+    price_symbol: "TMUS"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  TSLA:
+  "TSLA":
     name: 'Tesla'
     asset_class: STOCK
     currency: USD
-    price_symbol: TSLA
+    price_symbol: "TSLA"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  TTD:
+  "TTD":
     name: 'The Trade Desk'
     asset_class: STOCK
     currency: USD
-    price_symbol: TTD
+    price_symbol: "TTD"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  TTWO:
+  "TTWO":
     name: 'Take-Two Interactive'
     asset_class: STOCK
     currency: USD
-    price_symbol: TTWO
+    price_symbol: "TTWO"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  TXN:
+  "TXN":
     name: 'Texas Instruments'
     asset_class: STOCK
     currency: USD
-    price_symbol: TXN
+    price_symbol: "TXN"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  VRSK:
+  "VRSK":
     name: 'Verisk'
     asset_class: STOCK
     currency: USD
-    price_symbol: VRSK
+    price_symbol: "VRSK"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  VRTX:
+  "VRTX":
     name: 'Vertex Pharma'
     asset_class: STOCK
     currency: USD
-    price_symbol: VRTX
+    price_symbol: "VRTX"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  WBD:
+  "WBD":
     name: 'Warner Bros Discovery'
     asset_class: STOCK
     currency: USD
-    price_symbol: WBD
+    price_symbol: "WBD"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  WDAY:
+  "WDAY":
     name: 'Workday'
     asset_class: STOCK
     currency: USD
-    price_symbol: WDAY
+    price_symbol: "WDAY"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  XEL:
+  "XEL":
     name: 'Xcel Energy'
     asset_class: STOCK
     currency: USD
-    price_symbol: XEL
+    price_symbol: "XEL"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  ZS:
+  "ZS":
     name: 'Zscaler'
     asset_class: STOCK
     currency: USD
-    price_symbol: ZS
+    price_symbol: "ZS"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  1COV.DE:
-    name: 'Covestro'
-    asset_class: STOCK
-    currency: EUR
-    price_symbol: 1COV.DE
-    trading_calendar: XETRA
-    is_fund: false
-    risk_bucket: EQ_SINGLE_STOCK
-  ADS.DE:
+  "ADS.DE":
     name: 'Adidas'
     asset_class: STOCK
     currency: EUR
-    price_symbol: ADS.DE
+    price_symbol: "ADS.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  AFX.DE:
+  "AFX.DE":
     name: 'Carl Zeiss Meditec'
     asset_class: STOCK
     currency: EUR
-    price_symbol: AFX.DE
+    price_symbol: "AFX.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  AIR.DE:
+  "AIR.DE":
     name: 'Airbus'
     asset_class: STOCK
     currency: EUR
-    price_symbol: AIR.DE
+    price_symbol: "AIR.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  ALV.DE:
+  "ALV.DE":
     name: 'Allianz'
     asset_class: STOCK
     currency: EUR
-    price_symbol: ALV.DE
+    price_symbol: "ALV.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  BAS.DE:
+  "BAS.DE":
     name: 'BASF'
     asset_class: STOCK
     currency: EUR
-    price_symbol: BAS.DE
+    price_symbol: "BAS.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  BAYN.DE:
+  "BAYN.DE":
     name: 'Bayer'
     asset_class: STOCK
     currency: EUR
-    price_symbol: BAYN.DE
+    price_symbol: "BAYN.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  BEI.DE:
+  "BEI.DE":
     name: 'Beiersdorf'
     asset_class: STOCK
     currency: EUR
-    price_symbol: BEI.DE
+    price_symbol: "BEI.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  BMW.DE:
+  "BMW.DE":
     name: 'BMW'
     asset_class: STOCK
     currency: EUR
-    price_symbol: BMW.DE
+    price_symbol: "BMW.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  BNR.DE:
+  "BNR.DE":
     name: 'Brenntag'
     asset_class: STOCK
     currency: EUR
-    price_symbol: BNR.DE
+    price_symbol: "BNR.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  CBK.DE:
+  "CBK.DE":
     name: 'Commerzbank'
     asset_class: STOCK
     currency: EUR
-    price_symbol: CBK.DE
+    price_symbol: "CBK.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  CON.DE:
+  "CON.DE":
     name: 'Continental'
     asset_class: STOCK
     currency: EUR
-    price_symbol: CON.DE
+    price_symbol: "CON.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  DB1.DE:
+  "DB1.DE":
     name: 'Deutsche Boerse'
     asset_class: STOCK
     currency: EUR
-    price_symbol: DB1.DE
+    price_symbol: "DB1.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  DBK.DE:
+  "DBK.DE":
     name: 'Deutsche Bank'
     asset_class: STOCK
     currency: EUR
-    price_symbol: DBK.DE
+    price_symbol: "DBK.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  DHL.DE:
+  "DHL.DE":
     name: 'DHL Group'
     asset_class: STOCK
     currency: EUR
-    price_symbol: DHL.DE
+    price_symbol: "DHL.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  DTE.DE:
+  "DTE.DE":
     name: 'Deutsche Telekom'
     asset_class: STOCK
     currency: EUR
-    price_symbol: DTE.DE
+    price_symbol: "DTE.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  ENR.DE:
+  "ENR.DE":
     name: 'Siemens Energy'
     asset_class: STOCK
     currency: EUR
-    price_symbol: ENR.DE
+    price_symbol: "ENR.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  EOAN.DE:
+  "EOAN.DE":
     name: 'E.ON'
     asset_class: STOCK
     currency: EUR
-    price_symbol: EOAN.DE
+    price_symbol: "EOAN.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  EVK.DE:
+  "EVK.DE":
     name: 'Evonik'
     asset_class: STOCK
     currency: EUR
-    price_symbol: EVK.DE
+    price_symbol: "EVK.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  FRE.DE:
+  "FME.DE":
+    name: 'Fresenius Medical Care'
+    asset_class: STOCK
+    currency: EUR
+    price_symbol: "FME.DE"
+    trading_calendar: XETRA
+    is_fund: false
+    risk_bucket: EQ_SINGLE_STOCK
+  "FRE.DE":
     name: 'Fresenius'
     asset_class: STOCK
     currency: EUR
-    price_symbol: FRE.DE
+    price_symbol: "FRE.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  G24.DE:
+  "G24.DE":
     name: 'Scout24'
     asset_class: STOCK
     currency: EUR
-    price_symbol: G24.DE
+    price_symbol: "G24.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  HEI.DE:
+  "HEI.DE":
     name: 'Heidelberg Materials'
     asset_class: STOCK
     currency: EUR
-    price_symbol: HEI.DE
+    price_symbol: "HEI.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  HEN3.DE:
+  "HEN3.DE":
     name: 'Henkel'
     asset_class: STOCK
     currency: EUR
-    price_symbol: HEN3.DE
+    price_symbol: "HEN3.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  HNR1.DE:
+  "HNR1.DE":
     name: 'Hannover Rueck'
     asset_class: STOCK
     currency: EUR
-    price_symbol: HNR1.DE
+    price_symbol: "HNR1.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  IFX.DE:
+  "IFX.DE":
     name: 'Infineon'
     asset_class: STOCK
     currency: EUR
-    price_symbol: IFX.DE
+    price_symbol: "IFX.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  LEG.DE:
+  "LEG.DE":
     name: 'LEG Immobilien'
     asset_class: STOCK
     currency: EUR
-    price_symbol: LEG.DE
+    price_symbol: "LEG.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  LHA.DE:
+  "LHA.DE":
     name: 'Lufthansa'
     asset_class: STOCK
     currency: EUR
-    price_symbol: LHA.DE
+    price_symbol: "LHA.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  MBG.DE:
+  "MBG.DE":
     name: 'Mercedes-Benz Group'
     asset_class: STOCK
     currency: EUR
-    price_symbol: MBG.DE
+    price_symbol: "MBG.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  MRK.DE:
+  "MRK.DE":
     name: 'Merck KGaA'
     asset_class: STOCK
     currency: EUR
-    price_symbol: MRK.DE
+    price_symbol: "MRK.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  MTX.DE:
+  "MTX.DE":
     name: 'MTU Aero Engines'
     asset_class: STOCK
     currency: EUR
-    price_symbol: MTX.DE
+    price_symbol: "MTX.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  MUV2.DE:
+  "MUV2.DE":
     name: 'Munich Re'
     asset_class: STOCK
     currency: EUR
-    price_symbol: MUV2.DE
+    price_symbol: "MUV2.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  NDA.DE:
+  "NDA.DE":
     name: 'Aurubis'
     asset_class: STOCK
     currency: EUR
-    price_symbol: NDA.DE
+    price_symbol: "NDA.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  P911.DE:
+  "P911.DE":
     name: 'Porsche AG'
     asset_class: STOCK
     currency: EUR
-    price_symbol: P911.DE
+    price_symbol: "P911.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  PAH3.DE:
+  "PAH3.DE":
     name: 'Porsche SE'
     asset_class: STOCK
     currency: EUR
-    price_symbol: PAH3.DE
+    price_symbol: "PAH3.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  QIA.DE:
+  "QIA.DE":
     name: 'Qiagen'
     asset_class: STOCK
     currency: EUR
-    price_symbol: QIA.DE
+    price_symbol: "QIA.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  RHM.DE:
+  "RHM.DE":
     name: 'Rheinmetall'
     asset_class: STOCK
     currency: EUR
-    price_symbol: RHM.DE
+    price_symbol: "RHM.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  RWE.DE:
+  "RWE.DE":
     name: 'RWE'
     asset_class: STOCK
     currency: EUR
-    price_symbol: RWE.DE
+    price_symbol: "RWE.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  SAP.DE:
+  "SAP.DE":
     name: 'SAP'
     asset_class: STOCK
     currency: EUR
-    price_symbol: SAP.DE
+    price_symbol: "SAP.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  SHL.DE:
+  "SHL.DE":
     name: 'Siemens Healthineers'
     asset_class: STOCK
     currency: EUR
-    price_symbol: SHL.DE
+    price_symbol: "SHL.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  SIE.DE:
+  "SIE.DE":
     name: 'Siemens'
     asset_class: STOCK
     currency: EUR
-    price_symbol: SIE.DE
+    price_symbol: "SIE.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  SRT3.DE:
+  "SRT3.DE":
     name: 'Sartorius'
     asset_class: STOCK
     currency: EUR
-    price_symbol: SRT3.DE
+    price_symbol: "SRT3.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  SY1.DE:
+  "SY1.DE":
     name: 'Symrise'
     asset_class: STOCK
     currency: EUR
-    price_symbol: SY1.DE
+    price_symbol: "SY1.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  TKA.DE:
+  "TKA.DE":
     name: 'thyssenkrupp'
     asset_class: STOCK
     currency: EUR
-    price_symbol: TKA.DE
+    price_symbol: "TKA.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  VNA.DE:
+  "VNA.DE":
     name: 'Vonovia'
     asset_class: STOCK
     currency: EUR
-    price_symbol: VNA.DE
+    price_symbol: "VNA.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  VOW3.DE:
+  "VOW3.DE":
     name: 'Volkswagen'
     asset_class: STOCK
     currency: EUR
-    price_symbol: VOW3.DE
+    price_symbol: "VOW3.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  ZAL.DE:
+  "ZAL.DE":
     name: 'Zalando'
     asset_class: STOCK
     currency: EUR
-    price_symbol: ZAL.DE
+    price_symbol: "ZAL.DE"
     trading_calendar: XETRA
     is_fund: false
     risk_bucket: EQ_SINGLE_STOCK
-  2B76.DE:
+  "2B76.DE":
     name: 'iShares Automation & Robotics'
     asset_class: ETF
     currency: EUR
-    price_symbol: 2B76.DE
+    price_symbol: "2B76.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 40
     risk_bucket: EQ_SECTOR
-  2B7K.DE:
+  "2B7K.DE":
     name: 'iShares Digitalisation UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: 2B7K.DE
+    price_symbol: "2B7K.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 40
     risk_bucket: EQ_SECTOR
-  4GLD.DE:
+  "4GLD.DE":
     name: 'Xetra-Gold'
     asset_class: ETF
     currency: EUR
-    price_symbol: 4GLD.DE
+    price_symbol: "4GLD.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 0
     risk_bucket: COMMODITY
-  AGGH.AS:
-    name: 'iShares Core Global Aggregate Bond EUR-H'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: AGGH.AS
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 10
-    risk_bucket: BOND
-  AYEM.DE:
+  "AYEM.DE":
     name: 'Amundi MSCI Emerging Markets'
     asset_class: ETF
     currency: EUR
-    price_symbol: AYEM.DE
+    price_symbol: "AYEM.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 20
     risk_bucket: EQ_EM
-  BNXG.DE:
+  "BNXG.DE":
     name: 'VanEck Semiconductor UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: BNXG.DE
+    price_symbol: "BNXG.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 35
     risk_bucket: EQ_SECTOR
-  CEUU.AS:
+  "CEUU.AS":
     name: 'iShares Core MSCI Europe UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: CEUU.AS
+    price_symbol: "CEUU.AS"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 12
     risk_bucket: EQ_EUROPE
-  CNDX.AS:
+  "CNDX.AS":
     name: 'iShares Nasdaq 100 UCITS ETF (AMS)'
     asset_class: ETF
     currency: EUR
-    price_symbol: CNDX.AS
+    price_symbol: "CNDX.AS"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 33
     risk_bucket: EQ_US_LARGE
-  CSPX.AS:
+  "CSPX.AS":
     name: 'iShares Core S&P 500 UCITS ETF Acc'
     asset_class: ETF
     currency: EUR
-    price_symbol: CSPX.AS
+    price_symbol: "CSPX.AS"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 7
     risk_bucket: EQ_US_LARGE
-  DBXD.DE:
+  "DBXD.DE":
     name: 'Xtrackers DAX UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: DBXD.DE
+    price_symbol: "DBXD.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 9
     risk_bucket: EQ_EUROPE
-  DBXP.DE:
+  "DBXP.DE":
     name: 'Xtrackers Euro Stoxx 50'
     asset_class: ETF
     currency: EUR
-    price_symbol: DBXP.DE
+    price_symbol: "DBXP.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 9
     risk_bucket: EQ_EUROPE
-  EIMI.AS:
-    name: 'iShares Core MSCI EM IMI UCITS ETF (AMS)'
+  "EMIM.L":
+    name: 'iShares Core MSCI EM IMI UCITS ETF'
     asset_class: ETF
-    currency: EUR
-    price_symbol: EIMI.AS
+    currency: GBP
+    price_symbol: "EMIM.L"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 18
     risk_bucket: EQ_EM
-  EQQQ.DE:
+  "EQQQ.DE":
     name: 'Invesco EQQQ Nasdaq-100 UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: EQQQ.DE
+    price_symbol: "EQQQ.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 30
     risk_bucket: EQ_US_LARGE
-  ESPO.DE:
-    name: 'VanEck Video Gaming and eSports'
+  "EUN5.DE":
+    name: 'iShares Core EURO STOXX 50 UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: ESPO.DE
+    price_symbol: "EUN5.DE"
     trading_calendar: XETRA
     is_fund: true
-    ter_bps: 55
-    risk_bucket: EQ_SECTOR
-  EUNA.DE:
+    ter_bps: 10
+    risk_bucket: EQ_EUROPE
+  "EUNA.DE":
     name: 'iShares Core Euro Corporate Bond'
     asset_class: ETF
     currency: EUR
-    price_symbol: EUNA.DE
+    price_symbol: "EUNA.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 20
     risk_bucket: BOND
-  EUNL.DE:
+  "EUNH.DE":
+    name: 'iShares Core Euro Government Bond'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "EUNH.DE"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 9
+    risk_bucket: BOND
+  "EUNK.DE":
+    name: 'iShares Core MSCI Europe UCITS ETF'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "EUNK.DE"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 12
+    risk_bucket: EQ_EUROPE
+  "EUNL.DE":
     name: 'iShares Core MSCI World UCITS ETF (Xetra)'
     asset_class: ETF
     currency: EUR
-    price_symbol: EUNL.DE
+    price_symbol: "EUNL.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 20
     risk_bucket: EQ_GLOBAL_BROAD
-  EXH1.DE:
+  "EUNW.DE":
+    name: 'iShares MSCI World SRI UCITS ETF'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "EUNW.DE"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 20
+    risk_bucket: EQ_GLOBAL_BROAD
+  "EXH1.DE":
     name: 'iShares STOXX Europe 600 Oil & Gas'
     asset_class: ETF
     currency: EUR
-    price_symbol: EXH1.DE
+    price_symbol: "EXH1.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 46
     risk_bucket: EQ_SECTOR
-  EXH7.DE:
+  "EXH7.DE":
     name: 'iShares STOXX Europe 600 Utilities'
     asset_class: ETF
     currency: EUR
-    price_symbol: EXH7.DE
+    price_symbol: "EXH7.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 46
     risk_bucket: EQ_SECTOR
-  EXS1.DE:
+  "EXS1.DE":
     name: 'iShares Core DAX UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: EXS1.DE
+    price_symbol: "EXS1.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 16
     risk_bucket: EQ_EUROPE
-  EXSA.DE:
+  "EXSA.DE":
     name: 'iShares STOXX Europe 600 UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: EXSA.DE
+    price_symbol: "EXSA.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 20
     risk_bucket: EQ_EUROPE
-  EXSB.DE:
+  "EXSB.DE":
     name: 'iShares TecDAX UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: EXSB.DE
+    price_symbol: "EXSB.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 51
     risk_bucket: EQ_EUROPE
-  EXSD.DE:
+  "EXSD.DE":
     name: 'iShares STOXX Europe Mid 200'
     asset_class: ETF
     currency: EUR
-    price_symbol: EXSD.DE
+    price_symbol: "EXSD.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 20
     risk_bucket: EQ_EUROPE
-  EXSE.DE:
+  "EXSE.DE":
     name: 'iShares STOXX Europe Small 200'
     asset_class: ETF
     currency: EUR
-    price_symbol: EXSE.DE
+    price_symbol: "EXSE.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 20
     risk_bucket: EQ_EUROPE
-  EXSI.DE:
+  "EXSI.DE":
     name: 'iShares STOXX Europe Select Dividend 30'
     asset_class: ETF
     currency: EUR
-    price_symbol: EXSI.DE
+    price_symbol: "EXSI.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 31
     risk_bucket: EQ_EUROPE
-  EXV1.DE:
+  "EXV1.DE":
     name: 'iShares STOXX Europe 600 Banks'
     asset_class: ETF
     currency: EUR
-    price_symbol: EXV1.DE
+    price_symbol: "EXV1.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 46
     risk_bucket: EQ_SECTOR
-  EXV3.DE:
+  "EXV3.DE":
     name: 'iShares STOXX Europe 600 Technology'
     asset_class: ETF
     currency: EUR
-    price_symbol: EXV3.DE
+    price_symbol: "EXV3.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 46
     risk_bucket: EQ_SECTOR
-  EXV4.DE:
+  "EXV4.DE":
     name: 'iShares STOXX Europe 600 Health Care'
     asset_class: ETF
     currency: EUR
-    price_symbol: EXV4.DE
+    price_symbol: "EXV4.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 46
     risk_bucket: EQ_SECTOR
-  EXV6.DE:
+  "EXV6.DE":
     name: 'iShares STOXX Europe 600 Industrial'
     asset_class: ETF
     currency: EUR
-    price_symbol: EXV6.DE
+    price_symbol: "EXV6.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 46
     risk_bucket: EQ_SECTOR
-  EXX5.DE:
+  "EXX5.DE":
     name: 'iShares MDAX UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: EXX5.DE
+    price_symbol: "EXX5.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 51
     risk_bucket: EQ_EUROPE
-  HEAL.DE:
-    name: 'iShares Healthcare Innovation'
+  "EXX7.DE":
+    name: 'iShares Dow Jones China Offshore 50'
     asset_class: ETF
     currency: EUR
-    price_symbol: HEAL.DE
+    price_symbol: "EXX7.DE"
     trading_calendar: XETRA
     is_fund: true
-    ter_bps: 40
-    risk_bucket: EQ_SECTOR
-  IBCI.DE:
+    ter_bps: 74
+    risk_bucket: EQ_EM
+  "EXXT.DE":
+    name: 'iShares Nasdaq-100 UCITS ETF (DE)'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "EXXT.DE"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 31
+    risk_bucket: EQ_US_LARGE
+  "IBCI.DE":
     name: 'iShares Euro Inflation Linked Government Bond'
     asset_class: ETF
     currency: EUR
-    price_symbol: IBCI.DE
+    price_symbol: "IBCI.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 9
     risk_bucket: BOND
-  IBCX.DE:
+  "IBCX.DE":
     name: 'iShares Euro Corporate Bond Large Cap'
     asset_class: ETF
     currency: EUR
-    price_symbol: IBCX.DE
+    price_symbol: "IBCX.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 20
     risk_bucket: BOND
-  IBGL.AS:
+  "IBGL.AS":
     name: 'iShares Euro Government Bond 15-30yr'
     asset_class: ETF
     currency: EUR
-    price_symbol: IBGL.AS
+    price_symbol: "IBGL.AS"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 20
     risk_bucket: BOND
-  IBGM.AS:
+  "IBGM.AS":
     name: 'iShares Euro Government Bond 7-10yr'
     asset_class: ETF
     currency: EUR
-    price_symbol: IBGM.AS
+    price_symbol: "IBGM.AS"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 20
     risk_bucket: BOND
-  IBGX.AS:
+  "IBGX.AS":
     name: 'iShares Euro Government Bond 3-5yr'
     asset_class: ETF
     currency: EUR
-    price_symbol: IBGX.AS
+    price_symbol: "IBGX.AS"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 20
     risk_bucket: BOND
-  IBTA.AS:
-    name: 'iShares USD Treasury Bond 1-3yr'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: IBTA.AS
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 7
-    risk_bucket: BOND
-  IEAG.AS:
+  "IEAG.AS":
     name: 'iShares Core Euro Aggregate Bond'
     asset_class: ETF
     currency: EUR
-    price_symbol: IEAG.AS
+    price_symbol: "IEAG.AS"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 9
     risk_bucket: BOND
-  IESG.DE:
-    name: 'iShares MSCI World SRI UCITS ETF'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: IESG.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 20
-    risk_bucket: EQ_GLOBAL_BROAD
-  IHYG.AS:
-    name: 'iShares Euro High Yield Corporate Bond'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: IHYG.AS
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 50
-    risk_bucket: BOND
-  IJPA.AS:
+  "IJPA.AS":
     name: 'iShares MSCI Japan UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: IJPA.AS
+    price_symbol: "IJPA.AS"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 12
     risk_bucket: EQ_GLOBAL_BROAD
-  IMEU.AS:
+  "IMEU.AS":
     name: 'iShares MSCI Europe UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: IMEU.AS
+    price_symbol: "IMEU.AS"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 12
     risk_bucket: EQ_EUROPE
-  INRG.L:
+  "INRG.L":
     name: 'iShares Global Clean Energy'
     asset_class: ETF
     currency: GBP
-    price_symbol: INRG.L
+    price_symbol: "INRG.L"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 65
     risk_bucket: EQ_SECTOR
-  IPRP.AS:
+  "IPRP.AS":
     name: 'iShares European Property Yield UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: IPRP.AS
+    price_symbol: "IPRP.AS"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 40
     risk_bucket: EQ_SECTOR
-  IQQ6.DE:
+  "IQQ6.DE":
     name: 'iShares Developed Markets Property Yield'
     asset_class: ETF
     currency: EUR
-    price_symbol: IQQ6.DE
+    price_symbol: "IQQ6.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 59
     risk_bucket: EQ_SECTOR
-  IQQH.DE:
+  "IQQH.DE":
     name: 'iShares Global Clean Energy (Xetra)'
     asset_class: ETF
     currency: EUR
-    price_symbol: IQQH.DE
+    price_symbol: "IQQH.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 65
     risk_bucket: EQ_SECTOR
-  IQQQ.DE:
+  "IQQP.DE":
+    name: 'iShares Developed Markets Property Yield'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "IQQP.DE"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 59
+    risk_bucket: EQ_SECTOR
+  "IQQQ.DE":
     name: 'iShares Global Infrastructure'
     asset_class: ETF
     currency: EUR
-    price_symbol: IQQQ.DE
+    price_symbol: "IQQQ.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 65
     risk_bucket: EQ_SECTOR
-  IS3N.DE:
+  "IS3K.DE":
+    name: 'iShares Global Corporate Bond EUR-H'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "IS3K.DE"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 25
+    risk_bucket: BOND
+  "IS3N.DE":
     name: 'iShares Core MSCI EM IMI UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: IS3N.DE
+    price_symbol: "IS3N.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 18
     risk_bucket: EQ_EM
-  ISPA.DE:
-    name: 'iShares STOXX Global Select Dividend 100'
+  "IS3R.DE":
+    name: 'iShares Edge MSCI World Momentum'
     asset_class: ETF
     currency: EUR
-    price_symbol: ISPA.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 46
-    risk_bucket: EQ_GLOBAL_BROAD
-  ISPY.DE:
-    name: 'L&G Cyber Security UCITS ETF'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: ISPY.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 69
-    risk_bucket: EQ_SECTOR
-  IUHC.L:
-    name: 'iShares S&P 500 Health Care'
-    asset_class: ETF
-    currency: GBP
-    price_symbol: IUHC.L
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 15
-    risk_bucket: EQ_SECTOR
-  IUIT.L:
-    name: 'iShares S&P 500 Information Technology'
-    asset_class: ETF
-    currency: GBP
-    price_symbol: IUIT.L
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 15
-    risk_bucket: EQ_SECTOR
-  IUSA.DE:
-    name: 'iShares S&P 500 UCITS ETF Dist'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: IUSA.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 7
-    risk_bucket: EQ_US_LARGE
-  IUSN.DE:
-    name: 'iShares MSCI World Small Cap UCITS ETF'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: IUSN.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 35
-    risk_bucket: EQ_GLOBAL_BROAD
-  IUSQ.DE:
-    name: 'iShares MSCI ACWI UCITS ETF'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: IUSQ.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 20
-    risk_bucket: EQ_GLOBAL_BROAD
-  IWDA.AS:
-    name: 'iShares Core MSCI World UCITS ETF'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: IWDA.AS
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 20
-    risk_bucket: EQ_GLOBAL_BROAD
-  IWQU.L:
-    name: 'iShares Edge MSCI World Quality Factor'
-    asset_class: ETF
-    currency: GBP
-    price_symbol: IWQU.L
+    price_symbol: "IS3R.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 30
     risk_bucket: EQ_GLOBAL_BROAD
-  LYPS.DE:
-    name: 'Amundi S&P 500 UCITS ETF'
+  "IS3S.DE":
+    name: 'iShares Edge MSCI World Quality'
     asset_class: ETF
     currency: EUR
-    price_symbol: LYPS.DE
+    price_symbol: "IS3S.DE"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 30
+    risk_bucket: EQ_GLOBAL_BROAD
+  "ISPA.DE":
+    name: 'iShares STOXX Global Select Dividend 100'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "ISPA.DE"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 46
+    risk_bucket: EQ_GLOBAL_BROAD
+  "IUHC.L":
+    name: 'iShares S&P 500 Health Care'
+    asset_class: ETF
+    currency: GBP
+    price_symbol: "IUHC.L"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 15
-    risk_bucket: EQ_US_LARGE
-  MEUD.PA:
-    name: 'Lyxor Core STOXX Europe 600'
+    risk_bucket: EQ_SECTOR
+  "IUIT.L":
+    name: 'iShares S&P 500 Information Technology'
+    asset_class: ETF
+    currency: GBP
+    price_symbol: "IUIT.L"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 15
+    risk_bucket: EQ_SECTOR
+  "IUSA.DE":
+    name: 'iShares S&P 500 UCITS ETF Dist'
     asset_class: ETF
     currency: EUR
-    price_symbol: MEUD.PA
+    price_symbol: "IUSA.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 7
-    risk_bucket: EQ_EUROPE
-  QDVC.DE:
-    name: 'iShares S&P 500 Consumer Discretionary'
+    risk_bucket: EQ_US_LARGE
+  "IUSN.DE":
+    name: 'iShares MSCI World Small Cap UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: QDVC.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 15
-    risk_bucket: EQ_SECTOR
-  QDVE.DE:
-    name: 'iShares S&P 500 Information Technology'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: QDVE.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 15
-    risk_bucket: EQ_SECTOR
-  QDVF.DE:
-    name: 'iShares S&P 500 Financials'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: QDVF.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 15
-    risk_bucket: EQ_SECTOR
-  QDVG.DE:
-    name: 'iShares S&P 500 Health Care'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: QDVG.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 15
-    risk_bucket: EQ_SECTOR
-  RBOT.L:
-    name: 'iShares Automation & Robotics (LSE)'
-    asset_class: ETF
-    currency: GBP
-    price_symbol: RBOT.L
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 40
-    risk_bucket: EQ_SECTOR
-  SGLN.L:
-    name: 'iShares Physical Gold ETC'
-    asset_class: ETF
-    currency: GBP
-    price_symbol: SGLN.L
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 12
-    risk_bucket: COMMODITY
-  SJPA.AS:
-    name: 'iShares Core MSCI Japan IMI'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: SJPA.AS
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 15
-    risk_bucket: EQ_GLOBAL_BROAD
-  SMH.AS:
-    name: 'VanEck Semiconductor (AMS)'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: SMH.AS
+    price_symbol: "IUSN.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 35
-    risk_bucket: EQ_SECTOR
-  SPY5.DE:
-    name: 'SPDR S&P 500 UCITS ETF'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: SPY5.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 3
-    risk_bucket: EQ_US_LARGE
-  SPYY.DE:
-    name: 'SPDR MSCI ACWI UCITS ETF'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: SPYY.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 12
     risk_bucket: EQ_GLOBAL_BROAD
-  SUSW.AS:
-    name: 'iShares MSCI World SRI (AMS)'
+  "IUSQ.DE":
+    name: 'iShares MSCI ACWI UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: SUSW.AS
+    price_symbol: "IUSQ.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 20
     risk_bucket: EQ_GLOBAL_BROAD
-  SX5E.DE:
-    name: 'iShares Core EURO STOXX 50 UCITS ETF'
+  "IWDA.AS":
+    name: 'iShares Core MSCI World UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: SX5E.DE
+    price_symbol: "IWDA.AS"
     trading_calendar: XETRA
     is_fund: true
-    ter_bps: 10
-    risk_bucket: EQ_EUROPE
-  SXR8.DE:
-    name: 'iShares Core S&P 500 UCITS ETF (Xetra)'
+    ter_bps: 20
+    risk_bucket: EQ_GLOBAL_BROAD
+  "LYPS.DE":
+    name: 'Amundi S&P 500 UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: SXR8.DE
+    price_symbol: "LYPS.DE"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 15
+    risk_bucket: EQ_US_LARGE
+  "MEUD.PA":
+    name: 'Lyxor Core STOXX Europe 600'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "MEUD.PA"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 7
+    risk_bucket: EQ_EUROPE
+  "QDVC.DE":
+    name: 'iShares S&P 500 Consumer Discretionary'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "QDVC.DE"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 15
+    risk_bucket: EQ_SECTOR
+  "QDVE.DE":
+    name: 'iShares S&P 500 Information Technology'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "QDVE.DE"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 15
+    risk_bucket: EQ_SECTOR
+  "QDVF.DE":
+    name: 'iShares S&P 500 Financials'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "QDVF.DE"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 15
+    risk_bucket: EQ_SECTOR
+  "QDVG.DE":
+    name: 'iShares S&P 500 Health Care'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "QDVG.DE"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 15
+    risk_bucket: EQ_SECTOR
+  "RBOT.L":
+    name: 'iShares Automation & Robotics (LSE)'
+    asset_class: ETF
+    currency: GBP
+    price_symbol: "RBOT.L"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 40
+    risk_bucket: EQ_SECTOR
+  "SEMI.L":
+    name: 'iShares MSCI Global Semiconductors'
+    asset_class: ETF
+    currency: GBP
+    price_symbol: "SEMI.L"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 35
+    risk_bucket: EQ_SECTOR
+  "SGLN.L":
+    name: 'iShares Physical Gold ETC'
+    asset_class: ETF
+    currency: GBP
+    price_symbol: "SGLN.L"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 12
+    risk_bucket: COMMODITY
+  "SPY5.DE":
+    name: 'SPDR S&P 500 UCITS ETF'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "SPY5.DE"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 3
     risk_bucket: EQ_US_LARGE
-  SXRV.DE:
-    name: 'iShares Nasdaq 100 UCITS ETF'
+  "SPYY.DE":
+    name: 'SPDR MSCI ACWI UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: SXRV.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 33
-    risk_bucket: EQ_US_LARGE
-  TDIV.AS:
-    name: 'VanEck Morningstar Developed Markets Dividend'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: TDIV.AS
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 38
-    risk_bucket: EQ_GLOBAL_BROAD
-  VAGF.DE:
-    name: 'Vanguard Global Aggregate Bond EUR-H'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: VAGF.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 10
-    risk_bucket: BOND
-  VDEV.AS:
-    name: 'Vanguard FTSE Developed World'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: VDEV.AS
+    price_symbol: "SPYY.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 12
     risk_bucket: EQ_GLOBAL_BROAD
-  VEUR.AS:
+  "SUSW.AS":
+    name: 'iShares MSCI World SRI (AMS)'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "SUSW.AS"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 20
+    risk_bucket: EQ_GLOBAL_BROAD
+  "SXR8.DE":
+    name: 'iShares Core S&P 500 UCITS ETF (Xetra)'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "SXR8.DE"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 7
+    risk_bucket: EQ_US_LARGE
+  "SXRV.DE":
+    name: 'iShares Nasdaq 100 UCITS ETF'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "SXRV.DE"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 33
+    risk_bucket: EQ_US_LARGE
+  "TDIV.AS":
+    name: 'VanEck Morningstar Developed Markets Dividend'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "TDIV.AS"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 38
+    risk_bucket: EQ_GLOBAL_BROAD
+  "VAGF.DE":
+    name: 'Vanguard Global Aggregate Bond EUR-H'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "VAGF.DE"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 10
+    risk_bucket: BOND
+  "VEUR.AS":
     name: 'Vanguard FTSE Developed Europe'
     asset_class: ETF
     currency: EUR
-    price_symbol: VEUR.AS
+    price_symbol: "VEUR.AS"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 10
     risk_bucket: EQ_EUROPE
-  VFEM.AS:
+  "VFEM.AS":
     name: 'Vanguard FTSE Emerging Markets UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: VFEM.AS
+    price_symbol: "VFEM.AS"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 22
     risk_bucket: EQ_EM
-  VGEA.DE:
+  "VGEA.DE":
     name: 'Vanguard EUR Eurozone Government Bond'
     asset_class: ETF
     currency: EUR
-    price_symbol: VGEA.DE
+    price_symbol: "VGEA.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 7
     risk_bucket: BOND
-  VHYL.AS:
+  "VHYL.AS":
     name: 'Vanguard FTSE All-World High Div Yield'
     asset_class: ETF
     currency: EUR
-    price_symbol: VHYL.AS
+    price_symbol: "VHYL.AS"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 29
     risk_bucket: EQ_GLOBAL_BROAD
-  VJPN.AS:
+  "VJPN.AS":
     name: 'Vanguard FTSE Japan UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: VJPN.AS
+    price_symbol: "VJPN.AS"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 15
     risk_bucket: EQ_GLOBAL_BROAD
-  VNRT.AS:
+  "VNRT.AS":
     name: 'Vanguard FTSE North America'
     asset_class: ETF
     currency: EUR
-    price_symbol: VNRT.AS
+    price_symbol: "VNRT.AS"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 10
     risk_bucket: EQ_US_LARGE
-  VUAA.DE:
+  "VUAA.DE":
     name: 'Vanguard S&P 500 UCITS ETF Acc'
     asset_class: ETF
     currency: EUR
-    price_symbol: VUAA.DE
+    price_symbol: "VUAA.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 7
     risk_bucket: EQ_US_LARGE
-  VUKE.L:
+  "VUKE.L":
     name: 'Vanguard FTSE 100 UCITS ETF'
     asset_class: ETF
     currency: GBP
-    price_symbol: VUKE.L
+    price_symbol: "VUKE.L"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 9
     risk_bucket: EQ_EUROPE
-  VUSA.AS:
+  "VUSA.AS":
     name: 'Vanguard S&P 500 UCITS ETF Dist'
     asset_class: ETF
     currency: EUR
-    price_symbol: VUSA.AS
+    price_symbol: "VUSA.AS"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 7
     risk_bucket: EQ_US_LARGE
-  VUSD.AS:
-    name: 'Vanguard S&P 500 UCITS ETF USD Dist'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: VUSD.AS
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 7
-    risk_bucket: EQ_US_LARGE
-  VWCE.DE:
+  "VWCE.DE":
     name: 'Vanguard FTSE All-World UCITS ETF Acc'
     asset_class: ETF
     currency: EUR
-    price_symbol: VWCE.DE
+    price_symbol: "VWCE.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 22
     risk_bucket: EQ_GLOBAL_BROAD
-  VWRL.AS:
+  "VWRL.AS":
     name: 'Vanguard FTSE All-World UCITS ETF Dist'
     asset_class: ETF
     currency: EUR
-    price_symbol: VWRL.AS
+    price_symbol: "VWRL.AS"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 22
     risk_bucket: EQ_GLOBAL_BROAD
-  WCLD.L:
+  "VWRP.L":
+    name: 'Vanguard FTSE All-World UCITS ETF Acc (LSE)'
+    asset_class: ETF
+    currency: GBP
+    price_symbol: "VWRP.L"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 22
+    risk_bucket: EQ_GLOBAL_BROAD
+  "WCLD.L":
     name: 'WisdomTree Cloud Computing'
     asset_class: ETF
     currency: GBP
-    price_symbol: WCLD.L
+    price_symbol: "WCLD.L"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 40
     risk_bucket: EQ_SECTOR
-  WNRG.DE:
+  "WNRG.DE":
     name: 'iShares Global Water UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: WNRG.DE
+    price_symbol: "WNRG.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 65
     risk_bucket: EQ_SECTOR
-  WSML.AS:
-    name: 'iShares MSCI World Small Cap (AMS)'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: WSML.AS
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 35
-    risk_bucket: EQ_GLOBAL_BROAD
-  WTAI.DE:
+  "WTAI.DE":
     name: 'WisdomTree Artificial Intelligence'
     asset_class: ETF
     currency: EUR
-    price_symbol: WTAI.DE
+    price_symbol: "WTAI.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 40
     risk_bucket: EQ_SECTOR
-  XAIX.DE:
+  "XAIX.DE":
     name: 'Xtrackers AI & Big Data'
     asset_class: ETF
     currency: EUR
-    price_symbol: XAIX.DE
+    price_symbol: "XAIX.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 35
     risk_bucket: EQ_SECTOR
-  XDEM.DE:
+  "XDEM.DE":
     name: 'Xtrackers MSCI World Momentum'
     asset_class: ETF
     currency: EUR
-    price_symbol: XDEM.DE
+    price_symbol: "XDEM.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 25
     risk_bucket: EQ_GLOBAL_BROAD
-  XDEQ.DE:
+  "XDEQ.DE":
     name: 'Xtrackers MSCI World Quality'
     asset_class: ETF
     currency: EUR
-    price_symbol: XDEQ.DE
+    price_symbol: "XDEQ.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 25
     risk_bucket: EQ_GLOBAL_BROAD
-  XDEV.DE:
+  "XDEV.DE":
     name: 'Xtrackers MSCI World Value'
     asset_class: ETF
     currency: EUR
-    price_symbol: XDEV.DE
+    price_symbol: "XDEV.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 25
     risk_bucket: EQ_GLOBAL_BROAD
-  XDPU.DE:
+  "XDPU.DE":
     name: 'Xtrackers S&P 500 Swap UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: XDPU.DE
+    price_symbol: "XDPU.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 15
     risk_bucket: EQ_US_LARGE
-  XDWD.DE:
+  "XDWD.DE":
     name: 'Xtrackers MSCI World UCITS ETF'
     asset_class: ETF
     currency: EUR
-    price_symbol: XDWD.DE
+    price_symbol: "XDWD.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 19
     risk_bucket: EQ_GLOBAL_BROAD
-  XEON.DE:
-    name: 'Xtrackers II EUR Overnight Rate Swap'
+  "XDWH.DE":
+    name: 'Xtrackers MSCI World Health Care'
     asset_class: ETF
     currency: EUR
-    price_symbol: XEON.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 10
-    risk_bucket: MONEY_MARKET
-  XLKQ.DE:
-    name: 'Xtrackers MSCI World Information Technology'
-    asset_class: ETF
-    currency: EUR
-    price_symbol: XLKQ.DE
+    price_symbol: "XDWH.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 25
     risk_bucket: EQ_SECTOR
-  XMME.DE:
+  "XDWT.DE":
+    name: 'Xtrackers MSCI World Information Technology'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "XDWT.DE"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 25
+    risk_bucket: EQ_SECTOR
+  "XDWY.DE":
+    name: 'Xtrackers MSCI World Energy'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "XDWY.DE"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 25
+    risk_bucket: EQ_SECTOR
+  "XEON.DE":
+    name: 'Xtrackers II EUR Overnight Rate Swap'
+    asset_class: ETF
+    currency: EUR
+    price_symbol: "XEON.DE"
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 10
+    risk_bucket: MONEY_MARKET
+  "XMME.DE":
     name: 'Xtrackers MSCI Emerging Markets'
     asset_class: ETF
     currency: EUR
-    price_symbol: XMME.DE
+    price_symbol: "XMME.DE"
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 18

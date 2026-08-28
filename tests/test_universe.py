@@ -63,6 +63,21 @@ def test_every_category_is_one_the_engine_knows() -> None:
     assert not unknown, f"peers.BUCKETS does not contain {sorted(unknown)}"
 
 
+def test_no_entry_was_eaten_by_yaml() -> None:
+    """YAML 1.1 reads bare ON, NO, YES, OFF, Y and N as booleans.
+
+    The Nasdaq ticker `ON` became the key `True` with the price symbol `1`,
+    and the catalogue carried an instrument that could never be fetched --
+    reported only as one line in a list of failed downloads, among genuinely
+    delisted symbols. Quoting fixes it; this notices if the quoting is lost.
+    """
+    entries = universe.catalogue()
+    assert all(isinstance(k, str) for k in entries), "a key was parsed as a non-string"
+    assert "ON" in entries and entries["ON"]["price_symbol"] == "ON"
+    for key, spec in entries.items():
+        assert isinstance(spec["price_symbol"], str), f"{key} has a non-string symbol"
+
+
 def test_every_entry_carries_what_pricing_needs() -> None:
     for key, spec in universe.catalogue().items():
         assert spec.get("currency"), key
