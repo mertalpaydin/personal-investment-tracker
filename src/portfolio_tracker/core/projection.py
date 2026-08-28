@@ -108,7 +108,14 @@ MIN_EFFECTIVE_SAMPLES = Decimal(3)
 #: The window contributions are measured over, unless the caller says otherwise.
 #: Recent enough to reflect what you are doing now rather than what you did two
 #: years ago, long enough that one unusual month does not set the rate.
-CONTRIBUTION_WINDOW_MONTHS = 6
+#:
+#: Twelve rather than six, because six is not long enough for the second half
+#: of that sentence to be true. On a real ledger a single EUR 22,686 transfer
+#: made two thirds of a six-month "monthly savings rate", and the projection
+#: then assumed that pace continued for fifteen years. Twelve months also
+#: matches the trailing figure the savings page shows, so the same screen
+#: stops quoting two different savings rates.
+CONTRIBUTION_WINDOW_MONTHS = 12
 
 DEFAULT_PATHS = 1000
 
@@ -141,6 +148,12 @@ class Contributions:
     total_eur: Decimal | None = None
     measured_from: date | None = None
     measured_to: date | None = None
+    #: The middle month of the window. An average is dragged upwards by one
+    #: large transfer; the median is what a typical month actually looked
+    #: like, and the gap between the two is itself worth seeing.
+    median_monthly_eur: Decimal | None = None
+    #: Net external flow per calendar month, oldest first, as (period, amount).
+    by_month: tuple[tuple[str, Decimal], ...] = ()
 
     @property
     def sentence(self) -> str:
@@ -247,14 +260,28 @@ def measure_contributions(
     """
     since = goal.add_months(as_of, -window_months)
     total = ZERO
+    months: dict[str, Decimal] = {}
     for row in conn.execute(
-        "SELECT net_external_flow_eur FROM portfolio_daily "
-        "WHERE person_id = ? AND date > ? AND date <= ?",
+        "SELECT date, net_external_flow_eur FROM portfolio_daily "
+        "WHERE person_id = ? AND date > ? AND date <= ? ORDER BY date",
         (person_id, since.isoformat(), as_of.isoformat()),
     ):
-        total += Decimal(str(row["net_external_flow_eur"] or 0))
+        amount = Decimal(str(row["net_external_flow_eur"] or 0))
+        total += amount
+        period = str(row["date"])[:7]
+        months[period] = months.get(period, ZERO) + amount
 
     monthly = quantize_money(total / Decimal(window_months)) if window_months else ZERO
+    ordered = sorted(months.values())
+    median = (
+        quantize_money(
+            ordered[len(ordered) // 2]
+            if len(ordered) % 2
+            else (ordered[len(ordered) // 2 - 1] + ordered[len(ordered) // 2]) / 2
+        )
+        if ordered
+        else ZERO
+    )
     return Contributions(
         monthly_eur=max(monthly, ZERO),
         source="measured",
@@ -262,6 +289,8 @@ def measure_contributions(
         total_eur=quantize_money(total),
         measured_from=since,
         measured_to=as_of,
+        median_monthly_eur=max(median, ZERO),
+        by_month=tuple((k, quantize_money(v)) for k, v in sorted(months.items())),
     )
 
 

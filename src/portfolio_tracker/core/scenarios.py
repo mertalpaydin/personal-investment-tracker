@@ -33,11 +33,12 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
-from portfolio_tracker.core import goal, projection
+from portfolio_tracker.core import cash, goal, projection
+from portfolio_tracker.core.projection import Contributions
 from portfolio_tracker.money import ZERO, quantize_money
 
 ONE = Decimal(1)
@@ -51,14 +52,13 @@ MONTHS_PER_YEAR = 12
 
 #: Levers that are decisions, as opposed to assumptions about the world.
 CONTROLLABLE = (
-    "monthly_contribution_delta_eur",
+    "monthly_contribution_eur",
     "lump_sums",
     "contribution_growth_pct_annual",
-    "ter_delta_bps",
     "target_amount_eur",
     "target_months",
 )
-ASSUMED = ("return_delta_annual_pct",)
+ASSUMED = ("return_annual_pct",)
 
 ASSUMPTION_WARNING = (
     "Changing the assumed return does not change the portfolio. This shows what "
@@ -72,19 +72,23 @@ class ScenarioError(ValueError):
 
 @dataclass
 class Levers:
-    """The changes a scenario applies. All optional; all default to no change."""
+    """The changes a scenario applies. All optional; all default to no change.
 
-    #: Money added or removed each month, on top of what is measured.
-    monthly_contribution_delta_eur: Decimal = ZERO
+    Stated as **what things would be**, not as differences from what they are.
+    "Save EUR 1,500 a month" is a sentence somebody can check against their own
+    intentions; "save EUR 300 a month more" asks them to remember what the tool
+    measured first, and to trust that measurement. None means "leave this".
+    """
+
+    #: What you would put aside each month. None keeps the measured rate.
+    monthly_contribution_eur: Decimal | None = None
     #: One-off amounts, as (months from now, amount).
     lump_sums: tuple[tuple[int, Decimal], ...] = ()
     #: Contributions rising each year, compounded.
     contribution_growth_pct_annual: Decimal = ZERO
-    #: Added to the annual return. An assumption, and labelled as one.
-    return_delta_annual_pct: Decimal = ZERO
-    #: A cheaper (negative) or dearer fund, in basis points a year. Applied as
-    #: a return delta, because that is exactly what an ongoing charge is.
-    ter_delta_bps: int = 0
+    #: The annual return to assume. None resamples this portfolio's own price
+    #: history, which is the default and the only setting that is evidence.
+    return_annual_pct: Decimal | None = None
     #: Override the goal itself.
     target_amount_eur: Decimal | None = None
     #: A different horizon to measure against, in months.
@@ -95,14 +99,13 @@ class Levers:
         """Which sorts of lever this scenario actually uses."""
         out: list[str] = []
         if (
-            self.monthly_contribution_delta_eur
+            self.monthly_contribution_eur is not None
             or self.lump_sums
             or self.contribution_growth_pct_annual
-            or self.ter_delta_bps
             or self.target_amount_eur is not None
         ):
             out.append("controllable")
-        if self.return_delta_annual_pct:
+        if self.return_annual_pct is not None:
             out.append("assumption")
         return out
 
@@ -110,27 +113,34 @@ class Levers:
     def is_empty(self) -> bool:
         return not self.kinds
 
-    @property
-    def return_delta_monthly(self) -> Decimal:
-        """Annual drift plus fee change, per month.
+    def return_delta_monthly(self, implied_annual: Decimal) -> Decimal:
+        """The monthly drift that turns the sampled returns into the chosen one.
 
-        A fee is a certain, continuous drag, so a 10 basis point saving is
-        exactly a 0.10% annual return delta. Treating them as one number keeps
-        the simulation honest about the fact that they act identically.
+        Added to each sampled month rather than rescaling it, which keeps the
+        volatility and the sequencing the block bootstrap exists to capture.
+        What changes is the average; how bumpy the ride is does not -- and a
+        screen offering a higher return with a smoother ride would be
+        describing something that does not exist.
         """
-        annual = self.return_delta_annual_pct - Decimal(self.ter_delta_bps) / Decimal(10000)
+        if self.return_annual_pct is None:
+            return ZERO
+        annual = self.return_annual_pct - implied_annual
         if not annual:
             return ZERO
-        # Compounded, so "+1% a year" means the same over any horizon.
         return (ONE + annual) ** Decimal("0.0833333333") - ONE
 
     def as_dict(self) -> dict[str, object]:
         return {
-            "monthly_contribution_delta_eur": str(self.monthly_contribution_delta_eur),
+            "monthly_contribution_eur": (
+                str(self.monthly_contribution_eur)
+                if self.monthly_contribution_eur is not None
+                else None
+            ),
             "lump_sums": [[m, str(a)] for m, a in self.lump_sums],
             "contribution_growth_pct_annual": str(self.contribution_growth_pct_annual),
-            "return_delta_annual_pct": str(self.return_delta_annual_pct),
-            "ter_delta_bps": self.ter_delta_bps,
+            "return_annual_pct": (
+                str(self.return_annual_pct) if self.return_annual_pct is not None else None
+            ),
             "target_amount_eur": (
                 str(self.target_amount_eur) if self.target_amount_eur is not None else None
             ),
@@ -159,14 +169,16 @@ class Levers:
             month, amount = entry
             lumps.append((int(month), Decimal(str(amount))))
 
-        target = raw.get("target_amount_eur")
+        def maybe(key: str) -> Decimal | None:
+            value = raw.get(key)
+            return Decimal(str(value)) if value not in (None, "") else None
+
         return cls(
-            monthly_contribution_delta_eur=dec("monthly_contribution_delta_eur"),
+            monthly_contribution_eur=maybe("monthly_contribution_eur"),
             lump_sums=tuple(lumps),
             contribution_growth_pct_annual=dec("contribution_growth_pct_annual"),
-            return_delta_annual_pct=dec("return_delta_annual_pct"),
-            ter_delta_bps=whole("ter_delta_bps", 0) or 0,
-            target_amount_eur=Decimal(str(target)) if target not in (None, "") else None,
+            return_annual_pct=maybe("return_annual_pct"),
+            target_amount_eur=maybe("target_amount_eur"),
             target_months=whole("target_months"),
         )
 
@@ -272,6 +284,116 @@ def _at(sorted_values: list[Decimal], fraction: Decimal) -> Decimal:
     return sorted_values[index]
 
 
+def implied_annual_return(factors: list[Decimal], block_days: int) -> Decimal:
+    """The annual return the resampled history averages out to.
+
+    The bootstrap never states a return -- it draws from what actually
+    happened -- but a screen offering "assume a different return" has to say
+    what it is being different *from*. This is that number: the mean sampled
+    month, compounded to a year.
+    """
+    if not factors:
+        return ZERO
+    monthly = [projection._monthly_from_block(f, block_days) for f in factors]
+    mean = sum(monthly, ZERO) / Decimal(len(monthly))
+    return ((ONE + mean) ** 12 - ONE).quantize(Decimal("0.0001"))
+
+
+@dataclass(frozen=True)
+class MeasuredReturn:
+    """One window's actual return, both as it happened and per year."""
+
+    period: Decimal | None
+    annualised: Decimal | None
+    days: int
+
+
+@dataclass
+class ReturnContext:
+    """What this portfolio has actually done, for choosing an assumption.
+
+    Offered because "assume a different return" is unanswerable without
+    knowing what the tool is already using, and because a number picked from
+    nowhere is how a projection becomes a wish.
+    """
+
+    implied_annual: Decimal
+    measured: dict[str, MeasuredReturn] = field(default_factory=dict)
+    history_from: date | None = None
+    history_days: int = 0
+    #: False while purchases exist that no recorded money paid for. Those read
+    #: as return, so ``measured`` is inflated -- offering it as something to
+    #: assume would launder a data gap into a projection.
+    measured_reliable: bool = True
+
+
+def return_context(
+    conn: sqlite3.Connection,
+    *,
+    person_id: int = 1,
+    as_of: date | None = None,
+    block_days: int = projection.BLOCK_DAYS,
+) -> ReturnContext:
+    """The measured returns beside the one the projection is using."""
+    from portfolio_tracker.core import returns as returns_module
+
+    state = goal.progress(conn, person_id=person_id)
+    horizon = as_of or state.as_of
+
+    model = projection.build_return_model(conn, person_id=person_id, as_of=horizon)
+    factors = projection.block_factors(model.series, block_days)
+
+    measured: dict[str, MeasuredReturn] = {}
+    for label, days in (("3m", 92), ("6m", 183), ("12m", 366)):
+        summary = returns_module.summarise(
+            conn, person_id=person_id, start=horizon - timedelta(days=days), end=horizon
+        )
+        # Both figures, because either alone misleads: three months of +4% is
+        # not "+4% a year", and "+17% a year" from twelve weeks of data is not
+        # something anybody actually earned.
+        measured[label] = MeasuredReturn(
+            period=summary.twr if summary.days >= 30 else None,
+            annualised=summary.twr_annualised if summary.days >= 30 else None,
+            days=summary.days,
+        )
+
+    whole = returns_module.summarise(conn, person_id=person_id)
+    measured["since_start"] = MeasuredReturn(
+        period=whole.twr, annualised=whole.twr_annualised, days=whole.days
+    )
+
+    return ReturnContext(
+        implied_annual=implied_annual_return(factors, block_days),
+        measured=measured,
+        history_from=model.start,
+        history_days=model.days,
+        measured_reliable=not cash.compute_flows(conn).unfunded,
+    )
+
+
+def contribution_context(
+    conn: sqlite3.Connection, *, person_id: int = 1, as_of: date | None = None
+) -> dict[str, Contributions]:
+    """The savings rate over several windows, so one can be chosen knowingly.
+
+    An average over any window is one large transfer away from being a poor
+    description of a habit, and there is no window length that is right for
+    everybody. So the windows are shown rather than picked: six months, twelve
+    months, and the median month inside each. The form defaults to the twelve
+    month average because that is what the savings section on the same page
+    reports, and a screen quoting two different savings rates is worse than
+    either figure alone.
+    """
+    state = goal.progress(conn, person_id=person_id)
+    horizon = as_of or state.as_of
+    return {
+        f"{months}m": projection.measure_contributions(
+            conn, person_id=person_id, as_of=horizon, window_months=months
+        )
+        for months in (6, 12, 24)
+    }
+
+
 def run(
     conn: sqlite3.Connection,
     *,
@@ -328,14 +450,22 @@ def run(
             **extra,  # type: ignore[arg-type]
         )
 
+    implied = implied_annual_return(factors, block_days)
+
     baseline_paths = simulate(base_monthly, base_target)
-    scenario_monthly = max(ZERO, base_monthly + applied.monthly_contribution_delta_eur)
+    # Absolute, not a difference: the form asks what you would save, and a
+    # blank means "carry on as measured".
+    scenario_monthly = (
+        base_monthly
+        if applied.monthly_contribution_eur is None
+        else max(ZERO, applied.monthly_contribution_eur)
+    )
     scenario_paths = simulate(
         scenario_monthly,
         base_target,
         lump_sums=applied.lump_sums,
         contribution_growth_annual=applied.contribution_growth_pct_annual,
-        return_delta_monthly=applied.return_delta_monthly,
+        return_delta_monthly=applied.return_delta_monthly(implied),
     )
 
     baseline = _outcome(
@@ -374,7 +504,7 @@ def run(
             before - after if before is not None and after is not None else None
         )
 
-    delta = applied.monthly_contribution_delta_eur
+    delta = scenario_monthly - base_monthly
     earlier = result.months_earlier.get(str(HEADLINE_CONFIDENCE))
     if delta > ZERO and earlier is not None:
         # The most decision-useful figure in the whole tool: months bought per
@@ -403,7 +533,7 @@ def _caveats(
     ]
     if "assumption" in levers.kinds:
         out.append(ASSUMPTION_WARNING)
-    if levers.return_delta_annual_pct:
+    if levers.return_annual_pct is not None:
         out.append(
             "A higher assumed return with unchanged volatility is not something "
             "that exists in markets. Read the earlier date as arithmetic, not as "
@@ -447,12 +577,20 @@ def sweep(
     Fewer paths than a single scenario on purpose: this runs several
     simulations and the answer it gives is a shape, not a date.
     """
+    # The sweep still talks in extra-per-month, because that is the question
+    # it answers: what does each additional hundred buy. It resolves the
+    # measured rate first so the levers stay absolute.
+    state = goal.progress(conn, person_id=person_id)
+    base = projection.measure_contributions(
+        conn, person_id=person_id, as_of=as_of or state.as_of
+    ).monthly_eur
+
     out: list[dict[str, object]] = []
     for step in steps:
         try:
             found = run(
                 conn,
-                levers=Levers(monthly_contribution_delta_eur=step),
+                levers=Levers(monthly_contribution_eur=base + step),
                 person_id=person_id,
                 paths=paths,
                 with_bands=False,

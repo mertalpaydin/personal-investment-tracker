@@ -97,7 +97,7 @@ def db() -> sqlite3.Connection:
 
 def test_the_same_lever_twice_gives_the_same_answer(db: sqlite3.Connection) -> None:
     """The comparison is only meaningful if the draws are identical."""
-    levers = scenarios.Levers(monthly_contribution_delta_eur=Decimal(500))
+    levers = scenarios.Levers(monthly_contribution_eur=Decimal(1500))
     first = scenarios.run(db, levers=levers, paths=200, with_bands=False, as_of=AS_OF)
     second = scenarios.run(db, levers=levers, paths=200, with_bands=False, as_of=AS_OF)
     assert first.months_earlier == second.months_earlier
@@ -135,7 +135,7 @@ def test_a_projection_survives_a_day_with_no_valuation(db: sqlite3.Connection) -
 def test_contributing_more_never_arrives_later(db: sqlite3.Connection) -> None:
     result = scenarios.run(
         db,
-        levers=scenarios.Levers(monthly_contribution_delta_eur=Decimal(2000)),
+        levers=scenarios.Levers(monthly_contribution_eur=Decimal(3000)),
         paths=200,
         with_bands=False,
         as_of=AS_OF,
@@ -156,12 +156,40 @@ def test_a_lump_sum_brings_the_date_forward(db: sqlite3.Connection) -> None:
     assert earlier is not None and earlier > 0
 
 
-def test_a_cheaper_fund_is_a_return_delta(db: sqlite3.Connection) -> None:
-    """An ongoing charge and a return difference act identically, so they are
-    one number in the simulation rather than two that could disagree."""
-    cheaper = scenarios.Levers(ter_delta_bps=-50)
-    equivalent = scenarios.Levers(return_delta_annual_pct=Decimal("0.005"))
-    assert cheaper.return_delta_monthly == equivalent.return_delta_monthly
+def test_a_stated_return_is_a_drift_away_from_the_measured_one(
+    db: sqlite3.Connection,
+) -> None:
+    """Asking for 9% when the history averages 7% adds two points, not nine.
+
+    The lever states a destination; the simulation still draws from real
+    history. Getting this backwards would replace the bootstrap's volatility
+    with a smooth 9% a year, which is the one thing markets never do.
+    """
+    implied = Decimal("0.07")
+    same = scenarios.Levers(return_annual_pct=implied)
+    assert same.return_delta_monthly(implied) == Decimal(0)
+
+    higher = scenarios.Levers(return_annual_pct=Decimal("0.09"))
+    drift = higher.return_delta_monthly(implied)
+    assert drift > 0
+    # Two points a year, compounded monthly -- not two points a month.
+    assert drift < Decimal("0.003")
+
+    # Blank means "use the history", which is the only setting that is evidence.
+    assert scenarios.Levers().return_delta_monthly(implied) == Decimal(0)
+
+
+def test_the_implied_return_is_what_the_bootstrap_already_assumes(
+    db: sqlite3.Connection,
+) -> None:
+    """The number the form has to show before it can offer a different one."""
+    context = scenarios.return_context(db, as_of=AS_OF)
+    assert context.history_days > 0
+    assert context.implied_annual != Decimal(0)
+    # Every window reports how much data stands behind it, so a wild
+    # annualised figure from three weeks can be recognised as one.
+    for window in context.measured.values():
+        assert window.days >= 0
 
 
 def test_a_return_assumption_is_labelled_as_one(db: sqlite3.Connection) -> None:
@@ -172,7 +200,7 @@ def test_a_return_assumption_is_labelled_as_one(db: sqlite3.Connection) -> None:
     """
     assumed = scenarios.run(
         db,
-        levers=scenarios.Levers(return_delta_annual_pct=Decimal("0.02")),
+        levers=scenarios.Levers(return_annual_pct=Decimal("0.15")),
         paths=100,
         with_bands=False,
         as_of=AS_OF,
@@ -182,7 +210,7 @@ def test_a_return_assumption_is_labelled_as_one(db: sqlite3.Connection) -> None:
 
     decided = scenarios.run(
         db,
-        levers=scenarios.Levers(monthly_contribution_delta_eur=Decimal(300)),
+        levers=scenarios.Levers(monthly_contribution_eur=Decimal(1300)),
         paths=100,
         with_bands=False,
         as_of=AS_OF,
@@ -194,15 +222,21 @@ def test_a_return_assumption_is_labelled_as_one(db: sqlite3.Connection) -> None:
 def test_efficiency_is_months_bought_per_hundred(db: sqlite3.Connection) -> None:
     result = scenarios.run(
         db,
-        levers=scenarios.Levers(monthly_contribution_delta_eur=Decimal(1000)),
+        levers=scenarios.Levers(monthly_contribution_eur=Decimal(2000)),
         paths=200,
         with_bands=False,
         as_of=AS_OF,
     )
     earlier = result.months_earlier[str(scenarios.HEADLINE_CONFIDENCE)]
+    # Derived from the two outcomes rather than assumed. The lever states a
+    # rate, not a difference, so the difference is whatever it turned out to
+    # be against the measured baseline -- which changes if the measuring
+    # window does.
+    delta = result.scenario.monthly_contribution_eur - result.baseline.monthly_contribution_eur
+    assert delta > 0
     if earlier:
         assert result.efficiency_months_per_100 == pytest.approx(
-            Decimal(earlier) / Decimal(10), abs=Decimal("0.01")
+            Decimal(earlier) / (delta / Decimal(100)), abs=Decimal("0.01")
         )
 
 
@@ -262,3 +296,56 @@ def test_confidence_counts_paths_that_arrived(db: sqlite3.Connection) -> None:
     almost_all = projection.months_at_confidence(paths, Decimal("0.90"))
     assert half is not None and almost_all is not None
     assert almost_all >= half
+
+
+# ---------------------------------------------------------------------------
+# Choosing a savings rate knowingly
+# ---------------------------------------------------------------------------
+
+
+def test_one_large_transfer_does_not_become_a_monthly_savings_rate(
+    db: sqlite3.Connection,
+) -> None:
+    """The failure that made the whole plan page wrong.
+
+    A single EUR 60,000 transfer inside a six-month window is a EUR 10,000
+    "monthly savings rate", and the projection then assumes it repeats every
+    month for fifteen years. The average cannot be defended against this --
+    it is what an average does -- so the median month is reported beside it,
+    and the gap between the two is what tells the reader which to trust.
+    """
+    db.execute(
+        "UPDATE portfolio_daily SET net_external_flow_eur = '60000' WHERE date = ?",
+        ((AS_OF - timedelta(days=45)).isoformat(),),
+    )
+    db.commit()
+
+    windows = scenarios.contribution_context(db, as_of=AS_OF)
+    six = windows["6m"]
+    assert six.median_monthly_eur is not None
+    # The average is dragged into a different order of magnitude; the median
+    # is not moved at all by one month, whatever is in it.
+    assert six.monthly_eur > six.median_monthly_eur * 3
+    assert six.by_month, "the months behind the figure must be inspectable"
+
+
+def test_the_contribution_window_is_a_year(db: sqlite3.Connection) -> None:
+    """Six months was not long enough for its own stated purpose.
+
+    The constant's comment says the window is "long enough that one unusual
+    month does not set the rate". At six months one transfer can be two
+    thirds of it. A year also matches the trailing figure the savings section
+    shows, so one page stops quoting two different savings rates.
+    """
+    assert projection.CONTRIBUTION_WINDOW_MONTHS == 12
+
+
+def test_every_window_reports_both_an_average_and_a_median(
+    db: sqlite3.Connection,
+) -> None:
+    windows = scenarios.contribution_context(db, as_of=AS_OF)
+    assert set(windows) == {"6m", "12m", "24m"}
+    for label, c in windows.items():
+        assert c.monthly_eur >= 0, label
+        assert c.median_monthly_eur is not None, label
+        assert c.measured_from is not None, label

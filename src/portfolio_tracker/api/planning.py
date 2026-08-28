@@ -52,28 +52,74 @@ def _num(value: object) -> float | None:
 
 
 class LeverRequest(BaseModel):
-    """A change to try. Every field optional; omitting all of them is the baseline."""
+    """A change to try, stated as what things would be. Null means "leave it".
 
-    monthly_contribution_delta_eur: Decimal = Field(default=Decimal(0))
+    Absolute rather than differential, because "save EUR 1,500 a month" is a
+    sentence somebody can check against their own bank statement, and "save
+    EUR 300 a month more" is only meaningful if they already trust the figure
+    the tool measured.
+    """
+
+    monthly_contribution_eur: Decimal | None = Field(default=None, ge=0)
     lump_sums: list[tuple[int, Decimal]] = Field(
         default_factory=list, description="[months from now, amount]"
     )
     contribution_growth_pct_annual: Decimal = Field(default=Decimal(0), ge=-1, le=1)
-    return_delta_annual_pct: Decimal = Field(default=Decimal(0), ge=-1, le=1)
-    ter_delta_bps: int = Field(default=0, ge=-500, le=500)
+    return_annual_pct: Decimal | None = Field(default=None, ge=-1, le=1)
     target_amount_eur: Decimal | None = Field(default=None, gt=0)
     name: str = Field(default="Scenario", max_length=60)
     pin: bool = False
 
     def levers(self) -> scenarios.Levers:
         return scenarios.Levers(
-            monthly_contribution_delta_eur=self.monthly_contribution_delta_eur,
+            monthly_contribution_eur=self.monthly_contribution_eur,
             lump_sums=tuple((int(m), Decimal(a)) for m, a in self.lump_sums),
             contribution_growth_pct_annual=self.contribution_growth_pct_annual,
-            return_delta_annual_pct=self.return_delta_annual_pct,
-            ter_delta_bps=self.ter_delta_bps,
+            return_annual_pct=self.return_annual_pct,
             target_amount_eur=self.target_amount_eur,
         )
+
+
+def _return_context_json(context: scenarios.ReturnContext) -> dict[str, Any]:
+    """The return the projection is using, beside the ones actually earned.
+
+    Sent with every projection because "assume a different return" is an
+    unanswerable question otherwise. A reader who cannot see what the tool is
+    already assuming has no way to tell an adjustment from a fantasy.
+    """
+    return {
+        "implied_annual": _num(context.implied_annual),
+        "measured": {
+            label: {
+                "period": _num(window.period),
+                "annualised": _num(window.annualised),
+                "days": window.days,
+            }
+            for label, window in context.measured.items()
+        },
+        "history_from": context.history_from.isoformat() if context.history_from else None,
+        "history_days": context.history_days,
+        "measured_reliable": context.measured_reliable,
+    }
+
+
+def _contribution_context_json(windows: dict[str, Any]) -> dict[str, Any]:
+    """What was actually paid in, over each window, average and median.
+
+    Both figures for each window, because the gap between them is the whole
+    point: an average well above the median means one transfer is carrying the
+    rate, and a plan built on it assumes that transfer repeats every month.
+    """
+    return {
+        label: {
+            "average_monthly_eur": _num(c.monthly_eur),
+            "median_monthly_eur": _num(c.median_monthly_eur),
+            "total_eur": _num(c.total_eur),
+            "from": c.measured_from.isoformat() if c.measured_from else None,
+            "months": [[period, _num(amount)] for period, amount in c.by_month],
+        }
+        for label, c in windows.items()
+    }
 
 
 def _outcome_json(outcome: scenarios.Outcome, *, with_bands: bool) -> dict[str, Any]:
@@ -170,6 +216,10 @@ def baseline(
     body.pop("scenario")
     body.pop("months_earlier")
     body.pop("efficiency_months_per_100")
+    body["returns"] = _return_context_json(scenarios.return_context(conn, person_id=person_id))
+    body["contributions"] = _contribution_context_json(
+        scenarios.contribution_context(conn, person_id=person_id)
+    )
     return body
 
 
@@ -185,6 +235,9 @@ def run_scenario(
     levers = body.levers()
     result = _run(conn, levers, person_id=person_id, paths=paths, years=years, name=body.name)
     out = _comparison_json(result)
+    # Repeated with the answer, not only on the form: an earlier date means
+    # nothing without the assumptions that produced it in the same view.
+    out["returns"] = _return_context_json(scenarios.return_context(conn, person_id=person_id))
     if body.pin:
         with transaction(conn):
             out["id"] = scenarios.save(conn, name=body.name, levers=levers, person_id=person_id)
