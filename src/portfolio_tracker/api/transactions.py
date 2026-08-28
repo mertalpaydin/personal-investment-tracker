@@ -742,7 +742,8 @@ def listing(
 
     rows = conn.execute(
         f"""
-        SELECT t.*, i.import_key, i.name AS instrument_name, a.name AS account_name
+        SELECT t.*, i.import_key, i.name AS instrument_name, i.is_cash_proxy,
+               a.name AS account_name
         FROM transaction_ t
         JOIN account a ON a.id = t.account_id
         LEFT JOIN instrument i ON i.id = t.instrument_id
@@ -752,10 +753,45 @@ def listing(
         [*args, limit, offset],
     ).fetchall()
 
+    # What the page can filter by, drawn from the ledger rather than from the
+    # instrument table: something never traded has nothing to filter.
+    options = conn.execute(
+        """
+        SELECT DISTINCT i.import_key, i.name, i.is_cash_proxy, a.name AS account_name
+        FROM transaction_ t
+        JOIN account a ON a.id = t.account_id
+        JOIN instrument i ON i.id = t.instrument_id
+        WHERE a.person_id = ?
+        ORDER BY i.import_key
+        """,
+        (person_id,),
+    ).fetchall()
+
     return {
         "total": total,
         "limit": limit,
         "offset": offset,
+        "filters": {
+            "instruments": [
+                {
+                    "instrument": o["import_key"],
+                    "label": (
+                        o["account_name"] if o["is_cash_proxy"] else (o["name"] or o["import_key"])
+                    ),
+                    "is_cash": bool(o["is_cash_proxy"]),
+                }
+                for o in options
+            ],
+            "types": [
+                r["type"]
+                for r in conn.execute(
+                    "SELECT DISTINCT t.type FROM transaction_ t "
+                    "JOIN account a ON a.id = t.account_id "
+                    "WHERE a.person_id = ? ORDER BY t.type",
+                    (person_id,),
+                )
+            ],
+        },
         "transactions": [
             {
                 "id": r["id"],
@@ -764,6 +800,15 @@ def listing(
                 "instrument": r["import_key"],
                 "instrument_name": r["instrument_name"],
                 "account": r["account_name"],
+                # A cash proxy is a bookkeeping device, not something anybody
+                # bought: `CASH_TRY_3` exists so a deposit account can be
+                # valued day by day. Showing that ticker where a fund name
+                # belongs makes a deposit look like a mystery holding, so the
+                # account it belongs to is shown instead.
+                "shown_as": (
+                    r["account_name"] if r["is_cash_proxy"] else (r["instrument_name"] or "")
+                ),
+                "is_cash": bool(r["is_cash_proxy"]),
                 "quantity": plain(r["quantity"]) if r["quantity"] is not None else None,
                 "price_per_unit_local": (
                     plain(r["price_per_unit_local"])

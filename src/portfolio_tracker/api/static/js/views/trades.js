@@ -32,10 +32,19 @@ const TYPES = [
   ["TRANSFER_OUT", "Transferred out"],
 ];
 
+//: Kept across refreshes, so deleting a row does not reset the filter.
+let filterInstrument = "";
+let filterType = "";
+
 export async function render({ query }) {
   const data = await all({
     positions: get("/api/positions"),
-    ledger: get("/api/transactions", { limit: 100 }),
+    ledger: get("/api/transactions", {
+      limit: 200,
+      instrument: filterInstrument || null,
+      type: filterType || null,
+    }),
+    funding: get("/api/savings/inferred"),
   });
 
   const view = el(
@@ -44,11 +53,101 @@ export async function render({ query }) {
     el("p.sub", { text: "Record what you did. Nothing is saved until you press Save." }),
   );
 
+  // Before the form: until this is settled every return figure in the app is
+  // overstated, and there is nothing to be gained by recording another trade
+  // on top of it.
+  if (!isError(data.funding) && data.funding.count > 0) {
+    view.append(fundingReview(data.funding));
+  }
+
   const holdings = isError(data.positions) ? [] : data.positions.positions || [];
   view.append(entryForm(holdings, query));
 
   if (!isError(data.ledger)) view.append(ledgerTable(data.ledger));
   return view;
+}
+
+/* ---------------------------------------------------- inferred funding */
+
+/*
+ * Contributions an earlier version of this tool deduced rather than read.
+ *
+ * The rule was: a purchase larger than the cash on record means money must
+ * have arrived. On this ledger it produced EUR 131,479 of savings nobody
+ * recorded against EUR 23,367 that were. The money may have been a deposit --
+ * or it may have come from an account this tool cannot see, which is a
+ * different fact. Only the owner knows which, so only the owner decides.
+ */
+function fundingReview(body) {
+  const rows = (body.deposits || []).map((d) =>
+    row([
+      f.date(d.date),
+      { text: d.account, cls: "muted" },
+      f.eur(d.amount_eur),
+      { text: d.why_it_was_guessed, cls: "name muted" },
+      {
+        node: el(
+          "span.actions",
+          el("button", {
+            text: "It was new money",
+            title: "Counts as a contribution. Your return figures drop accordingly.",
+            onclick: () => decide("POST", `/api/savings/inferred/${d.id}/keep`, {}),
+          }),
+          el("button.danger", {
+            text: "It came from elsewhere",
+            title: "Removes it. The money is treated as having come from outside this tool.",
+            onclick: () => decide("DELETE", `/api/savings/inferred/${d.id}`),
+          }),
+        ),
+      },
+    ]),
+  );
+
+  return el(
+    "section",
+    el("div.panel.bad",
+      el("h3", { text: `${body.count} contributions were guessed, not recorded` }),
+      el("p", {
+        text:
+          `Totalling ${f.eur(body.total_eur)}. An earlier version assumed that a purchase ` +
+          "larger than your recorded cash meant a deposit had arrived. Keep the ones " +
+          "that really were money you paid in.",
+      }),
+      el("p.note", { text: body.what_to_do }),
+      el(
+        "div.wrap",
+        el(
+          "table",
+          el(
+            "thead",
+            el("tr", ["Date", "Account", "Amount", "Why it was guessed", ""].map((x) => el("th", { text: x }))),
+          ),
+          el("tbody", rows),
+        ),
+      ),
+      el(
+        "div.actions",
+        el("button.danger", {
+          text: "None of these were mine — clear them all",
+          onclick: () => {
+            if (window.confirm(`Remove all ${body.count}? Your return figures will change.`)) {
+              decide("DELETE", "/api/savings/inferred");
+            }
+          },
+        }),
+      ),
+    ),
+  );
+}
+
+async function decide(method, path, body) {
+  try {
+    if (method === "DELETE") await del(path);
+    else await post(path, body || {});
+    router.refresh();
+  } catch (err) {
+    window.alert(err.message);
+  }
 }
 
 /* ----------------------------------------------------------------- form */
@@ -86,6 +185,12 @@ function entryForm(holdings, query) {
     fees: el("input", { type: "number", step: "any", min: "0", value: "0" }),
     feesKnown: el("input", { type: "checkbox", checked: true }),
     fx: el("input", { type: "number", step: "any", min: "0", placeholder: "from stored rates" }),
+    // Asked, never deduced. This tool used to infer a contribution whenever a
+    // purchase exceeded the cash it knew about, and that invented 85% of the
+    // savings figure -- the money might equally have come from an account it
+    // cannot see. Only you know, so only you say.
+    newMoney: el("input", { type: "number", step: "any", min: "0", placeholder: "0" }),
+    newMoneyLabel: el("input", { type: "text", placeholder: "salary, bonus, gift" }),
     note: el("input", { type: "text", placeholder: "optional" }),
   };
 
@@ -105,6 +210,8 @@ function entryForm(holdings, query) {
     if (fields.price.value) out.price_per_unit_local = fields.price.value;
     if (fields.amount.value) out.gross_amount_local = fields.amount.value;
     if (fields.fx.value) out.fx_rate = fields.fx.value;
+    if (fields.newMoney.value) out.new_money_local = fields.newMoney.value;
+    if (fields.newMoneyLabel.value) out.new_money_label = fields.newMoneyLabel.value;
     if (fields.note.value) out.note = fields.note.value;
     return out;
   };
@@ -158,6 +265,10 @@ function entryForm(holdings, query) {
     wraps.price.hidden = !trades;
     wraps.fees.hidden = !trades;
     wraps.feesKnown.hidden = !trades;
+    // Only a purchase can be funded from outside. A sale raises its own money
+    // and a deposit already is the money.
+    wraps.newMoney.hidden = type !== "BUY";
+    wraps.newMoneyLabel.hidden = type !== "BUY";
 
     // An exchange rate only means something for a holding not priced in
     // euros. Showing the field otherwise invites a number that would be
@@ -229,6 +340,13 @@ function entryForm(holdings, query) {
       field("amount", "Amount", fields.amount),
       field("fees", "Dealing fee", fields.fees),
       field("fx", "Exchange rate", fields.fx, "Only if no rate is stored"),
+      field(
+        "newMoney",
+        "Funded by new money",
+        fields.newMoney,
+        "how much of this came from outside — leave blank if you paid with money already here",
+      ),
+      field("newMoneyLabel", "Where it came from", fields.newMoneyLabel, "optional"),
       field("note", "Note", fields.note),
       check(
         "feesKnown",
@@ -406,9 +524,17 @@ function ledgerTable(body) {
       f.date(t.trade_date),
       t.type.toLowerCase().replace(/_/g, " "),
       {
-        node: t.instrument
-          ? el("a", { href: `#/holdings/${encodeURIComponent(t.instrument)}`, text: t.instrument })
-          : document.createTextNode("—"),
+        node: !t.instrument
+          ? document.createTextNode("—")
+          : t.is_cash
+            ? // A cash proxy is a bookkeeping device. `CASH_TRY_3` where a
+              // fund name belongs makes a deposit look like a mystery holding.
+              el("span.muted", { text: t.shown_as || t.account })
+            : el("a", {
+                href: `#/holdings/${encodeURIComponent(t.instrument)}`,
+                text: t.instrument,
+                title: t.shown_as || undefined,
+              }),
       },
       f.qty(t.quantity),
       f.eur(t.gross_amount_eur),
@@ -421,6 +547,7 @@ function ledgerTable(body) {
   return el(
     "section",
     heading("Everything recorded"),
+    filterBar(body),
     el(
       "div.wrap",
       el(
@@ -440,6 +567,54 @@ function ledgerTable(body) {
     }),
   );
 }
+
+function filterBar(body) {
+  const options = body.filters?.instruments || [];
+  const types = body.filters?.types || [];
+
+  const instrument = el(
+    "select",
+    { onchange: (e) => ((filterInstrument = e.target.value), router.refresh()) },
+    el("option", { value: "", text: "Every holding", selected: !filterInstrument }),
+    options.map((o) =>
+      el("option", {
+        value: o.instrument,
+        // A deposit account rather than its bookkeeping ticker.
+        text: o.is_cash ? o.label : `${o.instrument} — ${o.label}`,
+        selected: o.instrument === filterInstrument,
+      }),
+    ),
+  );
+
+  const kind = el(
+    "select",
+    { onchange: (e) => ((filterType = e.target.value), router.refresh()) },
+    el("option", { value: "", text: "Everything", selected: !filterType }),
+    types.map((x) =>
+      el("option", {
+        value: x,
+        text: x.toLowerCase().replace(/_/g, " "),
+        selected: x === filterType,
+      }),
+    ),
+  );
+
+  return el(
+    "form.row",
+    { onsubmit: (e) => e.preventDefault() },
+    el("label.field", el("span", { text: "Holding" }), instrument),
+    el("label.field", el("span", { text: "Kind" }), kind),
+    filterInstrument || filterType
+      ? el("button", {
+          type: "button",
+          text: "Clear",
+          onclick: () => ((filterInstrument = ""), (filterType = ""), router.refresh()),
+        })
+      : null,
+    el("span.over", { text: `${body.total} entr${body.total === 1 ? "y" : "ies"}` }),
+  );
+}
+
 
 function badges(t) {
   return el(
