@@ -21,11 +21,29 @@ import { timeChart, toTs, palette, indexTo100 } from "../charts.js";
 import * as router from "../router.js";
 import { explainPanel } from "../narrative.js";
 
+/* Plain English for the category codes. The code is what the engine matches
+   on; nobody should have to type EQ_GLOBAL_BROAD to be understood. */
+const BUCKET_LABEL = {
+  EQ_GLOBAL_BROAD: "Shares — whole world",
+  EQ_US_LARGE: "Shares — large US companies",
+  EQ_EUROPE: "Shares — Europe",
+  EQ_EM: "Shares — emerging markets",
+  EQ_SECTOR: "Shares — one sector or theme",
+  EQ_SINGLE_STOCK: "A single company",
+  BOND: "Bonds",
+  MONEY_MARKET: "Money market / cash-like",
+  COMMODITY: "Commodity, such as gold",
+  CRYPTO: "Crypto",
+  CASH: "Cash",
+  OTHER: "Something else",
+};
+
 export async function render() {
   const data = await all({
     watchlist: get("/api/watchlist"),
     positions: get("/api/positions"),
     peers: get("/api/peers"),
+    universe: get("/api/universe"),
   });
 
   const view = el(
@@ -37,6 +55,7 @@ export async function render() {
   );
 
   view.append(addSection());
+  if (!isError(data.universe)) view.append(universeSection(data.universe));
 
   const entries = isError(data.watchlist) ? [] : data.watchlist.watchlist || [];
   view.append(watchTable(entries, isError(data.watchlist) ? null : data.watchlist.basis));
@@ -46,8 +65,78 @@ export async function render() {
     view.append(comparisonChart(entries, holdings));
   }
 
-  if (!isError(data.peers)) view.append(peerSection(data.peers));
+  const buckets = (!isError(data.universe) && data.universe.buckets) || Object.keys(BUCKET_LABEL);
+  if (!isError(data.peers)) view.append(peerSection(data.peers, buckets));
   return view;
+}
+
+/* -------------------------------------------------------------- universe */
+
+/*
+ * The pool a peer scan looks in.
+ *
+ * The scan was built and shipped with nothing to scan: a candidate list of
+ * zero, which renders as a blank panel that looks like a broken feature. This
+ * is the button that fills it.
+ *
+ * Loading is a decision, not a default. It is two hundred more symbols in
+ * every daily price fetch -- somebody else's rate limit, and minutes of
+ * somebody's evening -- so the tool asks. And it says twice, because it is
+ * the question people actually have: none of this is owned, and none of it
+ * moves a single figure about the portfolio.
+ */
+function universeSection(body) {
+  const loaded = body.loaded;
+  const waiting = loaded && body.priced < body.present;
+
+  const act = async (method) => {
+    try {
+      await (method === "POST" ? post("/api/universe", {}) : del("/api/universe"));
+      router.refresh();
+    } catch (err) {
+      window.alert(err.message);
+    }
+  };
+
+  const panel = el(
+    "div.panel",
+    el("h3", { text: "Comparison set" }),
+    el("p.note", { text: body.what_this_is }),
+    el(
+      "p",
+      loaded
+        ? `${body.present} instruments loaded, ${body.priced} with prices.`
+        : `Not loaded. ${body.catalogue_size} well-known shares and funds are ` +
+          "available: the Nasdaq-100, the German large caps, and the biggest " +
+          "European ETFs.",
+    ),
+  );
+
+  if (waiting) {
+    panel.append(
+      el("p.note.warn", {
+        text:
+          `${body.present - body.priced} of them have no price history yet. ` +
+          "They arrive with the next update — until then a peer scan has " +
+          "little to measure. Run one from Settings if you do not want to wait.",
+      }),
+    );
+  }
+
+  panel.append(
+    el(
+      "div.actions",
+      loaded
+        ? el("button", { type: "button", text: "Remove them", onclick: () => act("DELETE") })
+        : el("button.primary", {
+            type: "button",
+            text: `Load ${body.catalogue_size} instruments`,
+            onclick: () => act("POST"),
+          }),
+    ),
+  );
+
+  return el("section", heading("Where comparisons come from"), panel);
 }
 
 /* ---------------------------------------------------------------- adding */
@@ -185,6 +274,7 @@ function watchTable(entries, basis) {
           "span",
           e.prices === 0 ? el("span.tag.warn", { text: "no prices yet" }) : null,
           p.basis === "PRICE" ? el("span.tag.warn", { text: "price only", title: (p.caveats || [])[0] }) : null,
+          buyButton(e),
           removeButton(e),
         ),
       },
@@ -239,6 +329,22 @@ function terCell(entry) {
   };
   input.addEventListener("change", save);
   return input;
+}
+
+/*
+ * Straight into the trade form with this instrument already chosen.
+ *
+ * Watching something and then buying it were two disconnected screens: the
+ * only way to record a purchase of a watched instrument was to import a trade
+ * in it from elsewhere, which made the watchlist a place things went to be
+ * looked at and never acted on.
+ */
+function buyButton(entry) {
+  return el("a.button.small", {
+    href: `#/trades?type=BUY&instrument=${encodeURIComponent(entry.instrument)}`,
+    text: "Buy",
+    title: `Record a purchase of ${entry.instrument}.`,
+  });
 }
 
 function removeButton(entry) {
@@ -313,10 +419,61 @@ function comparisonChart(entries, holdings) {
 
 /* ----------------------------------------------------------------- peers */
 
-function peerSection(body) {
+/*
+ * A category picker for one holding.
+ *
+ * The panel used to name what was missing and then say "set one on each
+ * holding" -- with no field anywhere in the app that could set it. The whole
+ * peer feature was unreachable behind a sentence of advice.
+ *
+ * A guess is not offered as a default. `core/peers.py` refuses to compare on
+ * a derived category precisely because it cannot tell a semiconductor fund
+ * from a world tracker, and prefilling the box with that guess would hand the
+ * refusal straight back as a click-through.
+ */
+function categoryRow(key, buckets) {
+  const select = el(
+    "select",
+    el("option", { value: "", text: "Choose…" }),
+    buckets.map((b) => el("option", { value: b, text: BUCKET_LABEL[b] || b })),
+  );
+  const save = el("button.small.primary", {
+    type: "button",
+    text: "Save",
+    onclick: async () => {
+      if (!select.value) return;
+      save.disabled = true;
+      try {
+        await patch(`/api/instruments/${encodeURIComponent(key)}/details`, {
+          risk_bucket: select.value,
+        });
+        router.refresh();
+      } catch (err) {
+        window.alert(err.message);
+        save.disabled = false;
+      }
+    },
+  });
+  return row([
+    { text: key, cls: "name" },
+    { node: select },
+    { node: save },
+  ]);
+}
+
+function peerSection(body, buckets) {
   const scans = body.scans || [];
   const needs = body.needs_category || [];
   const section = el("section", heading("Comparable to what you hold"));
+
+  // One paragraph across every holding, not one per holding. The question is
+  // "is there something better than what I have", and asking it eleven times
+  // separately is eleven calls against a free tier to say what one says.
+  if (scans.length) {
+    section.append(
+      explainPanel("/api/peers", {}, "Compare my whole portfolio in words"),
+    );
+  }
 
   for (const scan of scans) section.append(scanPanel(scan));
   if (scans.length) section.append(el("p.note", { text: scans[0].disclaimer }));
@@ -337,9 +494,10 @@ function peerSection(body) {
         }),
         el("p.note", {
           text:
-            "Set one on each holding — a short label such as EQ_GLOBAL_BROAD, " +
-            "EQ_SECTOR or EQ_SINGLE_STOCK is enough.",
+            "Pick what each one actually is. Nothing else on this page changes; " +
+            "it only decides which instruments are treated as its peers.",
         }),
+        el("div.wrap", el("table", el("tbody", needs.map((key) => categoryRow(key, buckets))))),
       ),
     );
   }

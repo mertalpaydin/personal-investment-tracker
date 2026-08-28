@@ -46,6 +46,7 @@ export async function render({ query }) {
     }),
     funding: get("/api/savings/inferred"),
     opening: get("/api/accounts/opening-balances"),
+    watching: get("/api/watchlist"),
   });
 
   const view = el(
@@ -79,7 +80,8 @@ export async function render({ query }) {
   }
 
   const holdings = isError(data.positions) ? [] : data.positions.positions || [];
-  view.append(entryForm(holdings, query));
+  const watching = isError(data.watching) ? [] : data.watching.watchlist || [];
+  view.append(entryForm(holdings, watching, query));
 
   if (!isError(data.ledger)) view.append(ledgerTable(data.ledger));
   return view;
@@ -466,7 +468,23 @@ async function decide(method, path, body) {
 
 /* ----------------------------------------------------------------- form */
 
-function entryForm(holdings, query) {
+/*
+ * One <option> per instrument, with what the form needs to configure itself.
+ *
+ * `data-currency` decides whether an exchange-rate field appears at all: a
+ * euro holding has no rate to enter, and a field that cannot apply is a field
+ * that invites a wrong answer.
+ */
+function instrumentOption(h, selected) {
+  return el("option", {
+    value: h.instrument,
+    text: `${h.instrument} — ${h.name}`,
+    selected: h.instrument === selected,
+    "data-currency": h.currency,
+  });
+}
+
+function entryForm(holdings, watching, query) {
   const preview = el("div.panel", el("p.note", { text: "Fill in the trade to see what it would do." }));
   const status = el("p.note");
 
@@ -477,20 +495,27 @@ function entryForm(holdings, query) {
         el("option", { value, text: label, selected: value === (query.get("type") || "BUY") }),
       ),
     ),
+    // Two groups, because buying something new and adding to something you
+    // hold are different acts and the list should say which is which. Before
+    // this, an instrument you were watching could only be bought by first
+    // importing a trade in it -- the watchlist was a dead end.
     instrument: el(
       "select",
       el("option", { value: "", text: "Choose…" }),
-      holdings.map((h) =>
-        el("option", {
-          value: h.instrument,
-          text: `${h.instrument} — ${h.name}`,
-          selected: h.instrument === query.get("instrument"),
-          // Read back by applyRelevance: a euro holding has no exchange
-          // rate to enter, and a field that cannot apply is a field that
-          // invites a wrong answer.
-          "data-currency": h.currency,
-        }),
-      ),
+      holdings.length
+        ? el(
+            "optgroup",
+            { label: "You hold" },
+            holdings.map((h) => instrumentOption(h, query.get("instrument"))),
+          )
+        : null,
+      watching.length
+        ? el(
+            "optgroup",
+            { label: "You are watching" },
+            watching.map((w) => instrumentOption(w, query.get("instrument"))),
+          )
+        : null,
     ),
     trade_date: el("input", { type: "date", value: f.iso(new Date()), required: true }),
     quantity: el("input", { type: "number", step: "any", min: "0", value: query.get("qty") || "" }),

@@ -435,6 +435,21 @@ button.danger { border-color: color-mix(in srgb, var(--loss) 60%, var(--line)); 
 /* Sits inside a table row, so it must not make the row taller than its text. */
 button.small { padding: .12rem .5rem; font-size: .8rem; }
 
+/* A link that navigates but reads as an action. Used where the row's other
+   controls are buttons and one odd underlined word would look like a mistake. */
+a.button {
+  font: inherit;
+  padding: .35rem .85rem;
+  border-radius: .35rem;
+  border: 1px solid var(--line-strong);
+  background: var(--bg);
+  color: var(--fg);
+  text-decoration: none;
+  display: inline-block;
+}
+a.button:hover { background: var(--bg-sunken); }
+a.button.small { padding: .12rem .5rem; font-size: .8rem; }
+
 .actions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-top: .6rem; }
 
 /* Inside a table cell there is no margin to add and the buttons are a pair,

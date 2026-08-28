@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 
 from portfolio_tracker.api import deps
 from portfolio_tracker.api.deps import get_db, get_writable_db
-from portfolio_tracker.core import peers, performance, watchlist
+from portfolio_tracker.core import peers, performance, universe, watchlist
 from portfolio_tracker.db.connection import transaction
 from portfolio_tracker.ingest.providers.base import ProviderUnavailable
 from portfolio_tracker.ingest.providers.market import YFinanceProvider
@@ -366,13 +366,24 @@ def peer_scan(
 
 @router.get("/api/peers")
 def portfolio_peers(
-    conn: sqlite3.Connection = Depends(get_db),
+    conn: sqlite3.Connection = Depends(get_writable_db),
     person_id: int = Query(1, alias="person"),
     top: int = Query(3, ge=1, le=10),
+    narrate: bool = Query(False),
 ) -> dict[str, Any]:
-    """One comparison per holding that has something to be compared with."""
+    """One comparison per holding that has something to be compared with.
+
+    ``narrate`` writes the whole portfolio up in one paragraph rather than one
+    per holding: the question is "is there something better than what I have",
+    and answering it eleven times separately is eleven calls against a free
+    tier to say what one paragraph says.
+
+    Off by default, and the model is given only the figures below. It cannot
+    compute, predict or recommend -- `llm/tasks.py` enforces that, and
+    `llm_run` stores exactly what was sent so the claim stays checkable.
+    """
     found = peers.scan_portfolio(conn, person_id=person_id, top=top)
-    return {
+    body = {
         "scans": [_scan_json(s) for s in found.scans],
         # Named rather than silently skipped: "nothing to compare" and "I do
         # not know what these are" are different answers, and only one of them
@@ -385,3 +396,71 @@ def portfolio_peers(
             "your holdings a risk category so like is compared with like."
         ),
     }
+    if not narrate:
+        return {**body, "narrative": None, "narrative_status": "NOT_REQUESTED"}
+    if not found.scans:
+        return {**body, "narrative": None, "narrative_status": "NOTHING_TO_SAY"}
+
+    with transaction(conn):
+        result = tasks.narrate(
+            conn, task="peer_scan", payload=body, subject="portfolio", max_sentences=8
+        )
+    return {**body, **result.as_dict()}
+
+
+# ---------------------------------------------------------------------------
+# The comparison universe
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/universe")
+def universe_status(conn: sqlite3.Connection = Depends(get_db)) -> dict[str, Any]:
+    """Whether the comparison set is loaded, and whether it has prices yet.
+
+    Two numbers, not one. Instruments land the moment the catalogue is
+    applied; their price history arrives with the next fetch, and a peer scan
+    is a blank panel until it does. Reporting only "loaded" would make that
+    gap look like a broken feature rather than a wait.
+    """
+    body = universe.status(conn)
+    body["buckets"] = list(peers.BUCKETS)
+    body["what_this_is"] = (
+        "A set of well-known shares and funds the tool prices so your own "
+        "holdings have something to be compared against. None of it is owned, "
+        "none of it is a recommendation, and none of it affects a single "
+        "figure about your portfolio."
+    )
+    return body
+
+
+@router.post("/api/universe")
+def universe_load(
+    refresh: bool = Query(False),
+    conn: sqlite3.Connection = Depends(get_writable_db),
+) -> dict[str, Any]:
+    """Load the catalogue. Idempotent, and never touches what you own."""
+    try:
+        with transaction(conn):
+            report = universe.load(conn, refresh=refresh)
+    except universe.UniverseError as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+    return {
+        "added": report.added,
+        "updated": report.updated,
+        "already_yours": report.owned,
+        "already_watched": report.watched,
+        "summary": report.sentence,
+        "next": (
+            "Prices arrive with the next update. Until then a peer scan has nothing to measure."
+        ),
+        **universe.status(conn),
+    }
+
+
+@router.delete("/api/universe")
+def universe_unload(conn: sqlite3.Connection = Depends(get_writable_db)) -> dict[str, Any]:
+    """Remove the comparison set, keeping anything owned or watched."""
+    with transaction(conn):
+        removed = universe.unload(conn)
+    return {"removed": removed, **universe.status(conn)}
