@@ -115,6 +115,17 @@ def _portfolio_series(conn: sqlite3.Connection, *, contribution: str = "500") ->
                 D("0.0002") if offset else None,
             ),
         )  # fmt: skip
+        if flow:
+            # The ledger row behind the flow. `measure_contributions` reads
+            # what was actually saved rather than every external movement, so
+            # the derived column alone is no longer enough to measure from.
+            conn.execute(
+                "INSERT INTO transaction_ (account_id, type, trade_date, currency, "
+                "gross_amount_local, gross_amount_eur, flow_class, source, confidence, "
+                "is_new_savings) VALUES (1, 'DEPOSIT', ?, 'EUR', ?, ?, 'EXTERNAL_IN', "
+                "'MANUAL', 'ACTUAL', 1)",
+                (when.isoformat(), str(flow), str(flow)),
+            )
 
 
 @pytest.fixture

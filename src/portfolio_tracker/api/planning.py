@@ -89,6 +89,8 @@ def _return_context_json(context: scenarios.ReturnContext) -> dict[str, Any]:
     """
     return {
         "implied_annual": _num(context.implied_annual),
+        "resampled_annual": _num(context.resampled_annual),
+        "from_history": context.from_history,
         "measured": {
             label: {
                 "period": _num(window.period),

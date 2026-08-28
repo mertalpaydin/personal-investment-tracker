@@ -316,10 +316,16 @@ function returnEvidence(returns, onPick) {
       el("span", { text: "The projection is using " }),
       el("strong", { text: `${f.pct(returns.implied_annual)} a year` }),
       el("span", {
-        text:
-          `, which is what ${returns.history_days} days of your own holdings' prices ` +
-          `(from ${f.month(returns.history_from)}) average out to. It is not typed in ` +
-          "anywhere — it falls out of resampling that history.",
+        text: returns.from_history
+          ? `, which is what ${returns.history_days} days of your own holdings' prices ` +
+            `(from ${f.month(returns.history_from)}) average out to. It is not typed in ` +
+            "anywhere — it falls out of resampling that history."
+          : `, a stated figure, not a measured one. Resampling your own history ` +
+            `works out at ${f.pct(returns.resampled_annual)} a year, but there are only ` +
+            `${returns.history_days} days of it (from ${f.month(returns.history_from)}) — ` +
+            "one stretch of good weather, not a range of outcomes. Planning years " +
+            "on that number would be indefensible, so a modest one stands in until " +
+            "there is enough history. Change it below if you disagree.",
       }),
     ),
     el(

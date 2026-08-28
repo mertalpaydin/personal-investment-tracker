@@ -105,6 +105,17 @@ def db() -> sqlite3.Connection:
             "'FULL', '0', ?)",
             (on.isoformat(), "1000" if offset % 30 == 0 else "0"),
         )
+        if offset % 30 == 0:
+            # A real ledger row, not just a number in the derived table:
+            # `measure_contributions` reads what was actually saved, so that
+            # one figure cannot disagree with the savings page's.
+            conn.execute(
+                "INSERT INTO transaction_ (account_id, type, trade_date, currency, "
+                "gross_amount_local, gross_amount_eur, flow_class, source, confidence, "
+                "is_new_savings) VALUES (1, 'DEPOSIT', ?, 'EUR', '1000', '1000', "
+                "'EXTERNAL_IN', 'MANUAL', 'ACTUAL', 1)",
+                (on.isoformat(),),
+            )
     conn.commit()
     return conn
 
@@ -168,13 +179,13 @@ def test_measured_returns_are_flagged_when_the_ledger_cannot_support_them(
     clean = client.get("/api/projection", params={"paths": 100, "years": 15}).json()
     assert clean["returns"]["measured_reliable"] is True
 
-    # A purchase with no cash behind it: unit accounting reads the missing
-    # funding as return, so every measured figure above is inflated.
+    # A purchase far larger than any cash on record: unit accounting reads
+    # the missing funding as return, so every measured figure is inflated.
     db.execute(
         "INSERT INTO transaction_ (account_id, instrument_id, trade_date, type, quantity, "
         "currency, price_per_unit_local, gross_amount_local, fees_local, fx_rate, "
         "gross_amount_eur, fees_eur, flow_class, source, confidence) VALUES "
-        "(1, 1, ?, 'BUY', '10', 'EUR', '1000', '10000', '0', '1', '10000', '0', "
+        "(1, 1, ?, 'BUY', '500', 'EUR', '1000', '500000', '0', '1', '500000', '0', "
         "'INVESTMENT', 'MANUAL', 'ACTUAL')",
         (AS_OF.isoformat(),),
     )

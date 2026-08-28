@@ -105,6 +105,19 @@ MIN_COVERAGE = Decimal("0.50")
 #: independent draws to mean much. Overlapping windows do not fix this.
 MIN_EFFECTIVE_SAMPLES = Decimal(3)
 
+#: What to assume when the history cannot support an assumption of its own.
+#:
+#: Below MIN_EFFECTIVE_SAMPLES the resampled mean is not a measurement, it is
+#: one recent stretch repeated. On this ledger 362 days cut into 252-day
+#: blocks gave 111 windows that all overlap, every one of them between +25%
+#: and +39%, and the projection then planned fifteen years on "31.72% a
+#: year". Arithmetically faithful to the input; indefensible as a plan.
+#:
+#: So a stated figure takes over, and the screen says it is stated. The middle
+#: of DEFAULT_RATES, chosen because this file already publishes that spread as
+#: the range worth thinking in -- not fitted to anything, which is the point.
+FALLBACK_ANNUAL_RETURN = Decimal("0.04")
+
 #: The window contributions are measured over, unless the caller says otherwise.
 #: Recent enough to reflect what you are doing now rather than what you did two
 #: years ago, long enough that one unusual month does not set the rate.
@@ -187,6 +200,14 @@ class ReturnModel:
     def days(self) -> int:
         return len(self.series)
 
+    def supports_its_own_return(self, block_days: int) -> bool:
+        """Whether the history is long enough to be evidence about returns.
+
+        Not about whether the maths runs -- it always runs. About whether the
+        answer is a measurement or a recent run of luck restated.
+        """
+        return self.effective_samples(block_days) >= MIN_EFFECTIVE_SAMPLES
+
     def effective_samples(self, block_days: int) -> Decimal:
         """Roughly how many independent blocks the history supports.
 
@@ -258,15 +279,45 @@ def measure_contributions(
     years ago is not evidence about next month, and averaging it in makes the
     figure harder to recognise as yours.
     """
-    since = goal.add_months(as_of, -window_months)
+    # Whole calendar months, ending with the one `as_of` falls in.
+    #
+    # A rolling window from the same day last year cuts a month in half, and
+    # the savings page -- which groups by calendar month -- then reports a
+    # different figure for the same question. On this ledger a deposit on the
+    # 31st of the opening month landed inside one window and outside the
+    # other, and the two numbers sat 121 euros apart on one screen.
+    since = goal.add_months(as_of, -(window_months - 1)).replace(day=1)
     total = ZERO
     months: dict[str, Decimal] = {}
+    # Saving, not every external flow.
+    #
+    # `portfolio_daily.net_external_flow_eur` is the right series for unit
+    # accounting and the wrong one for this: it necessarily includes the
+    # balance a savings account joined with, because that money really did
+    # enter the portfolio. Measured here it became a monthly savings rate --
+    # one EUR 20,186 transfer made a "EUR 3,449 a month" habit out of a
+    # EUR 1,381 one, and the same page then showed both figures at once.
+    #
+    # `is_new_savings` is the flag `core/savings.py` sets for exactly this
+    # question, so both answers now come from one rule.
     for row in conn.execute(
-        "SELECT date, net_external_flow_eur FROM portfolio_daily "
-        "WHERE person_id = ? AND date > ? AND date <= ? ORDER BY date",
+        """
+        SELECT t.trade_date AS date,
+               CASE WHEN t.flow_class = 'EXTERNAL_OUT'
+                    THEN -CAST(t.gross_amount_eur AS REAL)
+                    ELSE CAST(t.gross_amount_eur AS REAL) END AS amount
+        FROM transaction_ t JOIN account a ON a.id = t.account_id
+        WHERE a.person_id = ? AND a.in_perimeter = 1
+          AND t.trade_date >= ? AND t.trade_date <= ?
+          AND t.gross_amount_eur IS NOT NULL
+          AND (t.is_new_savings = 1
+               OR (t.flow_class = 'EXTERNAL_OUT'
+                   AND t.id NOT IN (SELECT out_txn_id FROM internal_transfer_link)))
+        ORDER BY t.trade_date
+        """,
         (person_id, since.isoformat(), as_of.isoformat()),
     ):
-        amount = Decimal(str(row["net_external_flow_eur"] or 0))
+        amount = Decimal(str(row["amount"] or 0))
         total += amount
         period = str(row["date"])[:7]
         months[period] = months.get(period, ZERO) + amount

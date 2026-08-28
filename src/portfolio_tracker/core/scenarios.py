@@ -317,7 +317,15 @@ class ReturnContext:
     nowhere is how a projection becomes a wish.
     """
 
+    #: What the projection actually uses. Equals ``resampled_annual`` when the
+    #: history supports it, and ``projection.FALLBACK_ANNUAL_RETURN`` when it
+    #: does not.
     implied_annual: Decimal
+    #: What resampling the history works out to, whether or not it is trusted.
+    resampled_annual: Decimal = ZERO
+    #: False when the history is too short to be evidence about returns, and
+    #: a stated figure is standing in for it.
+    from_history: bool = True
     measured: dict[str, MeasuredReturn] = field(default_factory=dict)
     history_from: date | None = None
     history_days: int = 0
@@ -362,8 +370,12 @@ def return_context(
         period=whole.twr, annualised=whole.twr_annualised, days=whole.days
     )
 
+    resampled = implied_annual_return(factors, block_days)
+    from_history = model.supports_its_own_return(block_days)
     return ReturnContext(
-        implied_annual=implied_annual_return(factors, block_days),
+        implied_annual=resampled if from_history else projection.FALLBACK_ANNUAL_RETURN,
+        resampled_annual=resampled,
+        from_history=from_history,
         measured=measured,
         history_from=model.start,
         history_days=model.days,
@@ -450,9 +462,21 @@ def run(
             **extra,  # type: ignore[arg-type]
         )
 
-    implied = implied_annual_return(factors, block_days)
+    # What the simulation is assuming, and whether that is evidence.
+    #
+    # Below MIN_EFFECTIVE_SAMPLES the resampled mean is one recent stretch
+    # repeated, not a distribution -- so a stated figure takes over and every
+    # path is drifted onto it. The blocks still supply the shape and the
+    # sequencing, which is the part the bootstrap is actually good for; only
+    # the average is replaced, and the caveats say so.
+    resampled = implied_annual_return(factors, block_days)
+    trusted = model.supports_its_own_return(block_days)
+    implied = resampled if trusted else projection.FALLBACK_ANNUAL_RETURN
+    house_drift = (
+        ZERO if trusted else Levers(return_annual_pct=implied).return_delta_monthly(resampled)
+    )
 
-    baseline_paths = simulate(base_monthly, base_target)
+    baseline_paths = simulate(base_monthly, base_target, return_delta_monthly=house_drift)
     # Absolute, not a difference: the form asks what you would save, and a
     # blank means "carry on as measured".
     scenario_monthly = (
@@ -465,7 +489,13 @@ def run(
         base_target,
         lump_sums=applied.lump_sums,
         contribution_growth_annual=applied.contribution_growth_pct_annual,
-        return_delta_monthly=applied.return_delta_monthly(implied),
+        # Relative to what the baseline is using, so "assume 9%" means 9% and
+        # not 9% on top of a house figure the reader never saw.
+        return_delta_monthly=(
+            house_drift
+            if applied.return_annual_pct is None
+            else Levers(return_annual_pct=applied.return_annual_pct).return_delta_monthly(resampled)
+        ),
     )
 
     baseline = _outcome(
@@ -531,6 +561,19 @@ def _caveats(
         "today's weights. Historical samples understate tail risk and come from "
         "a period that may not repeat. This is a range of outcomes, not a forecast.",
     ]
+    if not model.supports_its_own_return(block_days):
+        resampled = implied_annual_return(
+            projection.block_factors(model.series, block_days), block_days
+        )
+        out.insert(
+            0,
+            f"The return is assumed at {projection.FALLBACK_ANNUAL_RETURN:.1%} a year, "
+            f"not measured. Resampling your own history works out at "
+            f"{resampled:.1%} a year, but {model.days} days cut into {block_days}-day "
+            "blocks is one stretch of good weather repeated, not a range of "
+            "outcomes -- planning fifteen years on it would be indefensible. "
+            "Set your own figure in “What if” if you disagree.",
+        )
     if "assumption" in levers.kinds:
         out.append(ASSUMPTION_WARNING)
     if levers.return_annual_pct is not None:

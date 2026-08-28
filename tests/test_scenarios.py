@@ -86,6 +86,17 @@ def db() -> sqlite3.Connection:
             "'FULL', '0', ?)",
             (on.isoformat(), "1000" if offset % 30 == 0 else "0"),
         )
+        if offset % 30 == 0:
+            # A real ledger row, not just a number in the derived table:
+            # `measure_contributions` reads what was actually saved, so that
+            # one figure cannot disagree with the savings page's.
+            conn.execute(
+                "INSERT INTO transaction_ (account_id, type, trade_date, currency, "
+                "gross_amount_local, gross_amount_eur, flow_class, source, confidence, "
+                "is_new_savings) VALUES (1, 'DEPOSIT', ?, 'EUR', '1000', '1000', "
+                "'EXTERNAL_IN', 'MANUAL', 'ACTUAL', 1)",
+                (on.isoformat(),),
+            )
     conn.commit()
     return conn
 
@@ -315,7 +326,10 @@ def test_one_large_transfer_does_not_become_a_monthly_savings_rate(
     and the gap between the two is what tells the reader which to trust.
     """
     db.execute(
-        "UPDATE portfolio_daily SET net_external_flow_eur = '60000' WHERE date = ?",
+        "INSERT INTO transaction_ (account_id, type, trade_date, currency, "
+        "gross_amount_local, gross_amount_eur, flow_class, source, confidence, "
+        "is_new_savings) VALUES (1, 'DEPOSIT', ?, 'EUR', '60000', '60000', "
+        "'EXTERNAL_IN', 'MANUAL', 'ACTUAL', 1)",
         ((AS_OF - timedelta(days=45)).isoformat(),),
     )
     db.commit()
