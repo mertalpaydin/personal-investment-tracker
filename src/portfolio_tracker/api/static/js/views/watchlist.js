@@ -44,6 +44,7 @@ export async function render() {
     positions: get("/api/positions"),
     peers: get("/api/peers"),
     universe: get("/api/universe"),
+    suggested: get("/api/instruments/categories/suggested"),
   });
 
   const view = el(
@@ -66,7 +67,7 @@ export async function render() {
   }
 
   const buckets = (!isError(data.universe) && data.universe.buckets) || Object.keys(BUCKET_LABEL);
-  if (!isError(data.peers)) view.append(peerSection(data.peers, buckets));
+  if (!isError(data.peers)) view.append(peerSection(data.peers, buckets, data.suggested));
   return view;
 }
 
@@ -431,11 +432,20 @@ function comparisonChart(entries, holdings) {
  * from a world tracker, and prefilling the box with that guess would hand the
  * refusal straight back as a click-through.
  */
-function categoryRow(key, buckets) {
+function categoryRow(key, buckets, proposal) {
   const select = el(
     "select",
     el("option", { value: "", text: "Choose…" }),
-    buckets.map((b) => el("option", { value: b, text: BUCKET_LABEL[b] || b })),
+    buckets.map((b) =>
+      el("option", {
+        value: b,
+        text: BUCKET_LABEL[b] || b,
+        // Pre-selected from the fund's own name, with the reason shown
+        // beside it. A proposal a person can see the basis of is a very
+        // different thing from a guess made on their behalf.
+        selected: proposal ? b === proposal.suggested : false,
+      }),
+    ),
   );
   const save = el("button.small.primary", {
     type: "button",
@@ -456,14 +466,43 @@ function categoryRow(key, buckets) {
   });
   return row([
     { text: key, cls: "name" },
+    { text: proposal?.name || "", cls: "prose" },
     { node: select },
+    { text: proposal?.why || "", cls: "prose muted" },
     { node: save },
   ]);
 }
 
-function peerSection(body, buckets) {
+/** Accept every proposal at once, then let the page re-read the result. */
+function acceptAllButton(proposals) {
+  const usable = proposals.filter((p) => p.suggested);
+  if (!usable.length) return null;
+  const button = el("button.primary", {
+    type: "button",
+    text: `Accept all ${usable.length}`,
+    onclick: async () => {
+      button.disabled = true;
+      button.textContent = "Saving…";
+      try {
+        const categories = {};
+        for (const p of usable) categories[p.instrument] = p.suggested;
+        await post("/api/instruments/categories", { categories });
+        router.refresh();
+      } catch (err) {
+        window.alert(err.message);
+        button.disabled = false;
+        button.textContent = `Accept all ${usable.length}`;
+      }
+    },
+  });
+  return button;
+}
+
+function peerSection(body, buckets, suggested) {
   const scans = body.scans || [];
   const needs = body.needs_category || [];
+  const proposals = isError(suggested) ? [] : suggested?.suggestions || [];
+  const byKey = new Map(proposals.map((p) => [p.instrument, p]));
   const section = el("section", heading("Comparable to what you hold"));
 
   // One paragraph across every holding, not one per holding. The question is
@@ -494,10 +533,28 @@ function peerSection(body, buckets) {
         }),
         el("p.note", {
           text:
-            "Pick what each one actually is. Nothing else on this page changes; " +
-            "it only decides which instruments are treated as its peers.",
+            proposals.length
+              ? "Each one is already filled in from the fund's own name, with the " +
+                "reason beside it. Read the reason, change anything that looks " +
+                "wrong, then save."
+              : "Pick what each one actually is. Nothing else on this page " +
+                "changes; it only decides which instruments are treated as its peers.",
         }),
-        el("div.wrap", el("table", el("tbody", needs.map((key) => categoryRow(key, buckets))))),
+        el(
+          "div.wrap",
+          el(
+            "table",
+            el(
+              "thead",
+              el(
+                "tr",
+                ["Holding", "Name", "Category", "Why", ""].map((h) => el("th", { text: h })),
+              ),
+            ),
+            el("tbody", needs.map((key) => categoryRow(key, buckets, byKey.get(key)))),
+          ),
+        ),
+        el("div.actions", acceptAllButton(proposals)),
       ),
     );
   }

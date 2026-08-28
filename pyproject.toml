@@ -81,6 +81,12 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 # Plus E501: the LANDMINES table is a data structure of prose sentences, and
 # wrapping them across lines would hurt the thing it exists to communicate.
 "scripts/make_example_data.py" = ["RUF001", "RUF002", "RUF003", "E501"]
+# Matches Turkish fund names against their own spelling: altin with the
+# dotless i, gumus with the cedilla. Transliterating them would stop them
+# matching the names they exist to recognise.
+"src/portfolio_tracker/core/classify.py" = ["RUF001"]
+# Same reason: the Turkish fund names under test are spelled as they are.
+"tests/test_classify.py" = ["RUF001", "E501"]
 # Documents the TEFAS export's real header lines verbatim, Turkish dotless i
 # included. Transliterating them would make the docstring not match the file
 # it describes.

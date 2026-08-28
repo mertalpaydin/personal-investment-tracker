@@ -60,6 +60,15 @@ VOL_BAND_CUTS: tuple[Decimal, Decimal] = (Decimal("0.10"), Decimal("0.20"))
 #: about the window than the instrument.
 MIN_HISTORY_OBSERVATIONS = 200
 
+#: The same requirement, expressed as time rather than as rows.
+#:
+#: The row count alone stopped meaning "about a year" the moment candidates
+#: began to be priced weekly: a full year of weekly closes is 52 rows, so a
+#: 200-row floor excluded the entire comparison set and the panel went back to
+#: being empty -- with nothing anywhere reporting a reason. What the rule was
+#: always reaching for is a year of history, and this measures that directly.
+MIN_HISTORY_DAYS = 350
+
 #: The vocabulary the derived fallback uses. Seeded values are free text and
 #: need not come from this list; it is here so a seed file has something to
 #: be consistent with.
@@ -304,6 +313,20 @@ def _candidate(
     return out
 
 
+def _has_enough_history(m: performance.Metrics, horizon: date, min_observations: int) -> bool:
+    """Whether the series covers long enough to say anything about the fund.
+
+    Either measure will do. A daily series clears the row count; a weekly one
+    clears the span. Requiring both would exclude everything sampled weekly,
+    and requiring neither would let a fortnight of prices rank as a peer.
+    """
+    if m.observations >= min_observations:
+        return True
+    if m.history_from is None:
+        return False
+    return (horizon - m.history_from).days >= MIN_HISTORY_DAYS
+
+
 def _basis_words(basis: str) -> str:
     return "total return" if basis == "TOTAL_RETURN" else "price alone"
 
@@ -389,7 +412,7 @@ def scan(
             # shorter.
             result.excluded.append((str(row["import_key"]), "no exchange rate for its currency"))
             continue
-        if m.observations < min_observations:
+        if not _has_enough_history(m, horizon, min_observations):
             continue
         result.considered += 1
 

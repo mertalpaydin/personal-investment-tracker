@@ -209,7 +209,13 @@ def _return_over(points: list[Point], as_of: date, days: int) -> Decimal | None:
     window = _window(points, as_of, days)
     if len(window) < 2:
         return None
-    expected = days * TRADING_DAYS_PER_YEAR / 365
+    # How many observations to expect depends on how often this series is
+    # sampled, not on how often a daily one would be. Assuming 252 a year
+    # rejected every weekly series outright -- a full year of weekly closes
+    # is 52 rows against a 126-row floor -- so instruments priced weekly had
+    # a volatility and a drawdown but never a return, and ranked last in
+    # every comparison for want of the figure they are ranked by.
+    expected = days * _periods_per_year(window) / 365
     if len(window) < expected * MIN_COVERAGE:
         return None
     first, last = window[0].level, window[-1].level

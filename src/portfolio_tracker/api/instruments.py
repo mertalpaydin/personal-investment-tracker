@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 
 from portfolio_tracker.api import deps
 from portfolio_tracker.api.deps import get_db, get_writable_db
-from portfolio_tracker.core import peers, performance, universe, watchlist
+from portfolio_tracker.core import classify, peers, performance, universe, watchlist
 from portfolio_tracker.db.connection import transaction
 from portfolio_tracker.ingest.providers.base import ProviderUnavailable
 from portfolio_tracker.ingest.providers.market import YFinanceProvider
@@ -464,3 +464,94 @@ def universe_unload(conn: sqlite3.Connection = Depends(get_writable_db)) -> dict
     with transaction(conn):
         removed = universe.unload(conn)
     return {"removed": removed, **universe.status(conn)}
+
+
+# ---------------------------------------------------------------------------
+# Proposing risk categories
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/instruments/categories/suggested")
+def suggested_categories(
+    conn: sqlite3.Connection = Depends(get_db),
+    person_id: int = Query(1, alias="person"),
+    unset_only: bool = Query(True),
+) -> dict[str, Any]:
+    """What each holding looks like, from its own name.
+
+    Proposals, not decisions. `core/peers.py` compares only where the category
+    was stated, and it is right to: the difference between a semiconductor
+    fund and a world tracker is invisible in `asset_class`. But making the
+    owner type one for every holding before any comparison worked at all was
+    a wall in front of a finished feature.
+
+    Each row carries the words it matched on, so accepting is a judgement
+    about visible evidence rather than trust in a black box.
+    """
+    rows = conn.execute(
+        """
+        SELECT DISTINCT i.import_key, i.name, i.asset_class, i.risk_bucket
+        FROM position_daily p
+        JOIN instrument i ON i.id = p.instrument_id
+        JOIN account a ON a.id = p.account_id
+        WHERE a.person_id = ? AND p.date = (
+            SELECT max(date) FROM position_daily
+        )
+        ORDER BY i.import_key
+        """,
+        (person_id,),
+    ).fetchall()
+
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if unset_only and row["risk_bucket"]:
+            continue
+        found = classify.suggest(row["import_key"], row["name"], row["asset_class"])
+        out.append(
+            {
+                "instrument": found.import_key,
+                "name": row["name"],
+                "current": row["risk_bucket"],
+                "suggested": found.bucket,
+                "why": found.why,
+                "matched": found.matched,
+                "hedged": classify.is_hedged(row["name"]),
+            }
+        )
+    unknown = [r["instrument"] for r in out if not r["suggested"]]
+    return {
+        "suggestions": out,
+        "unknown": unknown,
+        "note": (
+            "Read the reason before accepting. These come from each fund's own "
+            "name, which is usually a fair description of what it holds and "
+            "occasionally is not."
+        ),
+    }
+
+
+class CategoryDecisions(BaseModel):
+    """Categories the owner has agreed to, keyed by instrument."""
+
+    categories: dict[str, str] = Field(default_factory=dict)
+
+
+@router.post("/api/instruments/categories")
+def accept_categories(
+    body: CategoryDecisions,
+    conn: sqlite3.Connection = Depends(get_writable_db),
+) -> dict[str, Any]:
+    """Save agreed categories. Once saved they are stated, not guessed."""
+    unknown = sorted(set(body.categories.values()) - set(peers.BUCKETS))
+    if unknown:
+        raise HTTPException(422, f"not risk categories: {unknown}")
+
+    saved: list[str] = []
+    with transaction(conn):
+        for key, bucket in body.categories.items():
+            try:
+                watchlist.set_details(conn, key, risk_bucket=bucket)
+            except watchlist.WatchlistError as exc:
+                raise HTTPException(409, str(exc)) from exc
+            saved.append(key)
+    return {"saved": saved, "count": len(saved)}
