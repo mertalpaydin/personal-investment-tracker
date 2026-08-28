@@ -237,6 +237,27 @@ th {
 tbody tr:hover { background: var(--bg-sunken); }
 td.name { max-width: 22rem; overflow: hidden; text-overflow: ellipsis; }
 
+/*
+ * A cell whose content is a sentence rather than a figure.
+ *
+ * Tables here are `white-space: nowrap` so a column of numbers stays a column.
+ * Applied to prose that turns an explanation into an ellipsis with nothing
+ * behind it -- and a sentence somebody is being asked to act on is the last
+ * thing that should be unreadable.
+ */
+td.prose {
+  /* Left, like every other sentence. Table cells default to right-aligned
+     here because most of them are figures, and a right-ragged paragraph is
+     hard to read for no benefit. */
+  text-align: left;
+  white-space: normal;
+  max-width: none;
+  min-width: 24rem;
+  overflow: visible;
+  line-height: 1.45;
+  padding-block: .6rem;
+}
+
 th.sortable { cursor: pointer; user-select: none; }
 th.sortable:hover { color: var(--fg); }
 
@@ -412,6 +433,11 @@ button.primary { border-color: var(--accent); color: var(--accent); font-weight:
 button.danger { border-color: color-mix(in srgb, var(--loss) 60%, var(--line)); color: var(--loss); }
 
 .actions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-top: .6rem; }
+
+/* Inside a table cell there is no margin to add and the buttons are a pair,
+   so they sit on one line and stop the row growing a third taller. */
+td .actions { margin-top: 0; flex-wrap: nowrap; justify-content: flex-end; }
+td .actions button { white-space: nowrap; }
 
 /* --------------------------------------------------------------- notes */
 

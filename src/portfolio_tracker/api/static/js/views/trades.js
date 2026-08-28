@@ -84,7 +84,7 @@ function fundingReview(body) {
       f.date(d.date),
       { text: d.account, cls: "muted" },
       f.eur(d.amount_eur),
-      { node: whyItWasGuessed(d), cls: "name" },
+      { node: whyItWasGuessed(d), cls: "prose", title: plainReason(d) },
       {
         node: el(
           "span.actions",
@@ -110,8 +110,7 @@ function fundingReview(body) {
       el("p", {
         text:
           `Totalling ${f.eur(body.total_eur)}. An earlier version assumed that a purchase ` +
-          "larger than your recorded cash meant a deposit had arrived. Keep the ones " +
-          "that really were money you paid in.",
+          "larger than your recorded cash meant a deposit had arrived.",
       }),
       el("p.note", { text: body.what_to_do }),
       el(
@@ -148,6 +147,22 @@ function fundingReview(body) {
  * lira fund that 40,015.36 was lira while the deposit beside it was 1,114.44
  * euro -- two currencies in one sentence, neither of them labelled.
  */
+/** The same sentence as one string, for the hover and for screen readers. */
+function plainReason(d) {
+  const b = d.bought;
+  if (!b) return "No purchase is linked to this one.";
+  const cash =
+    d.cash_before_eur > 0
+      ? ` You had ${f.eur(d.cash_before_eur)} of recorded cash, so the rest was assumed to have arrived.`
+      : " No cash was recorded, so the whole amount was assumed to have arrived.";
+  return (
+    `To buy ${f.qty(b.quantity)} ${b.instrument}` +
+    (b.name ? ` (${b.name})` : "") +
+    ` for ${f.money(b.amount_local, b.currency)} on ${f.date(b.date)}.${cash}`
+  );
+}
+
+
 function whyItWasGuessed(d) {
   const b = d.bought;
   if (!b) {
