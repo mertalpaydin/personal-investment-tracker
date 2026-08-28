@@ -28,14 +28,16 @@ import { timeChart, toTs, palette, indexTo100 } from "../charts.js";
 import { divergingBars } from "../bars.js";
 
 const RANGES = [
-  { key: "1M", days: 31 },
-  { key: "3M", days: 92 },
-  { key: "6M", days: 183 },
-  { key: "1Y", days: 366 },
-  { key: "ALL", days: null },
+  { key: "1W", label: "1 week", days: 7 },
+  { key: "1M", label: "1 month", days: 31 },
+  { key: "3M", label: "3 months", days: 92 },
+  { key: "6M", label: "6 months", days: 183 },
+  { key: "YTD", label: "This year", days: null, ytd: true },
+  { key: "1Y", label: "1 year", days: 366 },
+  { key: "ALL", label: "All", days: null },
 ];
 
-let range = "ALL";
+let range = "1M";
 
 export async function render({ params }) {
   const key = params.key;
@@ -63,7 +65,7 @@ export async function render({ params }) {
   }
 
   const window = sliceToRange(h.history);
-  view.append(rangePicker());
+  view.append(rangePicker(window));
   view.append(valueVsCost(h, window));
   view.append(vsPortfolio(h, window, isError(data.portfolio) ? null : data.portfolio));
 
@@ -72,6 +74,7 @@ export async function render({ params }) {
     view.append(currencySplit(h, window));
   }
 
+  view.append(dividendsSection(h));
   view.append(lotsTable(h));
   view.append(disposalsTable(h));
   view.append(transactionsTable(h));
@@ -145,13 +148,12 @@ function header(h) {
 
 /* --------------------------------------------------------------- range */
 
-function rangePicker() {
-  const box = el("div.chart-head", el("h3", { text: "Over time" }));
-  const picker = el("div.rangepick");
+function rangePicker(window) {
+  const box = el("div.ranges");
   for (const option of RANGES) {
-    picker.append(
+    box.append(
       el("button", {
-        text: option.key,
+        text: option.label,
         "aria-pressed": String(range === option.key),
         onclick: () => {
           range = option.key;
@@ -160,17 +162,31 @@ function rangePicker() {
       }),
     );
   }
-  box.append(picker);
+  if (window.length) {
+    box.append(
+      el("span.over", {
+        text: `${f.date(window[0].date)} to ${f.date(window[window.length - 1].date)}`,
+      }),
+    );
+  }
   return box;
 }
 
 function sliceToRange(history) {
   const option = RANGES.find((r) => r.key === range);
-  if (!option || option.days === null) return history;
-  const cutoff = Date.now() - option.days * 86400000;
+  if (!option) return history;
+
+  // Measured back from the last day this holding was valued, not from today.
+  // A holding sold in March has no rows in the last month, and anchoring to
+  // today would empty every window.
+  const last = new Date(`${history[history.length - 1].date}T00:00:00`).getTime();
+  let cutoff;
+  if (option.ytd) cutoff = new Date(new Date(last).getFullYear(), 0, 1).getTime();
+  else if (option.days === null) return history;
+  else cutoff = last - option.days * 86400000;
+
   const window = history.filter((p) => new Date(`${p.date}T00:00:00`).getTime() >= cutoff);
-  // A holding sold two years ago has nothing inside a 1M window. Showing an
-  // empty chart would read as "worth nothing"; showing everything is right.
+  // An empty chart reads as "worth nothing"; the whole history is right.
   return window.length > 1 ? window : history;
 }
 
@@ -185,9 +201,10 @@ function valueVsCost(h, pts) {
   queueMicrotask(() =>
     timeChart(box, {
       x: pts.map((p) => toTs(p.date)),
-      height: 300,
+      height: 320,
       kind: "eur",
-      zero: true,
+      // No forced zero: over a one-month window it squashes the lines into
+      // the top of the chart and hides the very movement being looked at.
       sync: `holding-${h.instrument}`,
       series: [
         { label: "Value", data: pts.map((p) => f.num(p.market_value_eur)), fill: 0.14 },
@@ -336,9 +353,8 @@ function currencySplit(h, pts) {
   queueMicrotask(() =>
     timeChart(box, {
       x: pts.map((p) => toTs(p.date)),
-      height: 220,
+      height: 240,
       kind: "eur",
-      zero: true,
       sync: `holding-${h.instrument}`,
       series: [
         {
@@ -389,13 +405,17 @@ function lotsTable(h) {
   const open = (h.lots || []).filter((l) => (f.num(l.qty_remaining) ?? 0) > 0);
   if (!open.length) return el("div");
 
+  // A euro holding has no exchange rate worth showing: it is 1, on every row,
+  // for ever. A column of ones is a column of noise.
+  const foreign = h.currency !== "EUR";
+
   const rows = open.map((l) =>
     row([
       f.date(l.open_date),
       f.qty(l.qty_remaining),
-      `${f.qty(l.cost_per_unit_local)} ${l.currency}`,
+      foreign ? `${f.qty(l.cost_per_unit_local)} ${l.currency}` : f.eur(l.cost_per_unit_local),
       f.eur(l.cost_total_eur),
-      f.qty(l.fx_rate_at_open),
+      ...(foreign ? [f.qty(l.fx_rate_at_open)] : []),
       {
         node:
           l.basis_quality === "EXACT"
@@ -410,6 +430,15 @@ function lotsTable(h) {
     ]),
   );
 
+  const head = [
+    ["Bought", null],
+    ["Units", null],
+    ["Cost / unit", null],
+    ["Cost (EUR)", "Frozen at the exchange rate on the day you bought."],
+    ...(foreign ? [["Rate then", `${h.currency} per euro on the day you bought.`]] : []),
+    ["Basis", "Whether the euro cost was read from a record or reconstructed."],
+  ];
+
   return el(
     "section",
     heading("Open lots"),
@@ -417,17 +446,16 @@ function lotsTable(h) {
       "div.wrap",
       el(
         "table",
-        el("thead", el("tr", ["Bought", "Units", "Cost / unit", "Cost (EUR)", "Rate then", "Basis"].map((t) => el("th", { text: t })))),
+        el("thead", el("tr", head.map(([label, hint]) => el("th", withHint(label, hint))))),
         el("tbody", rows),
       ),
     ),
     el("p.note", {
-      text:
-        "German tax consumes these oldest-first (FIFO). A sale takes from the " +
-        "top of this list down.",
+      text: "German tax sells these oldest first. A sale takes from the top down.",
     }),
   );
 }
+
 
 function disposalsTable(h) {
   const disposals = h.disposals || [];
@@ -440,19 +468,31 @@ function disposalsTable(h) {
       f.eur(d.proceeds_eur),
       f.eur(d.cost_basis_eur),
       { text: f.eur(d.gross_gain_eur, { sign: true }), cls: f.tone(d.gross_gain_eur) },
-      {
-        text: f.eur(d.vap_offset_eur),
-        title:
-          "Advance charges already taxed on this lot in earlier years, deducted " +
-          "from the gain so the same euros are not taxed twice.",
-      },
-      {
-        text: f.eur(d.teilfreistellung_eur),
-        title: "The share of the gain that is tax-free because it came from a fund.",
-      },
+      f.eur(d.vap_offset_eur),
+      f.eur(d.teilfreistellung_eur),
       { text: f.eur(d.taxable_gain_eur, { sign: true }), cls: f.tone(d.taxable_gain_eur) },
     ]),
   );
+
+  // "Less advance charge" and "Less exemption" meant nothing without the rule
+  // behind them, and the rule does not fit in a column header -- so it lives
+  // on the hover, and the header says what the number does.
+  const head = [
+    ["Sold", null],
+    ["Units", null],
+    ["Proceeds", "What the sale raised, after dealing costs."],
+    ["Cost", "What you paid, at the exchange rate on the day you bought."],
+    ["Gain", "Proceeds less cost. Before any tax relief."],
+    [
+      "Already taxed",
+      "Tax you already paid on this holding in earlier years, through the annual advance charge (Vorabpauschale). It is deducted here so the same euros are not taxed twice.",
+    ],
+    [
+      "Tax-free part",
+      "The share of a fund's gain that is simply not taxed — 30% for an equity fund, nothing for a bond or money-market one (Teilfreistellung).",
+    ],
+    ["Taxable", "What actually counts against your allowance, after both deductions."],
+  ];
 
   return el(
     "section",
@@ -461,35 +501,87 @@ function disposalsTable(h) {
       "div.wrap",
       el(
         "table",
-        el(
-          "thead",
-          el(
-            "tr",
-            [
-              "Sold",
-              "Units",
-              "Proceeds",
-              "Cost",
-              "Gain",
-              "Less advance charge",
-              "Less exemption",
-              "Taxable",
-            ].map((t) => el("th", { text: t })),
-          ),
-        ),
+        el("thead", el("tr", head.map(([label, hint]) => el("th", withHint(label, hint))))),
         el("tbody", rows),
       ),
     ),
     el("p.note", {
-      text:
-        "Planning figures. Your bank's annual tax certificate is the " +
-        "authoritative statement of what was actually withheld.",
+      text: "Planning figures. Your bank's annual tax certificate is authoritative.",
     }),
   );
 }
 
+
+function withHint(label, hint) {
+  return hint ? el("span.hint", { title: hint, text: label }) : el("span", { text: label });
+}
+
+
+/*
+ * What the holding paid out, kept apart from what you did with it.
+ *
+ * A trade is a decision you made; a distribution is something the holding did.
+ * In one list the income stream is invisible -- five dividends scattered
+ * between forty buys read as noise rather than as a yield.
+ */
+function dividendsSection(h) {
+  const d = h.dividends || {};
+  if (!d.count) return el("div");
+
+  const rows = (d.payments || []).map((p) =>
+    row([
+      f.date(p.date),
+      p.type === "INTEREST" ? "interest" : "dividend",
+      f.eur(p.amount_eur),
+    ]),
+  );
+
+  return el(
+    "section",
+    heading("What it has paid you"),
+    el(
+      "div.cards",
+      card("Received in total", f.eur(d.total_eur), {
+        cls: "total",
+        sub: `${d.count} payment${d.count === 1 ? "" : "s"} since ${f.date(d.first)}`,
+      }),
+      card("Last 12 months", f.eur(d.last_12m_eur)),
+      hintCard(
+        "Yield on what you paid",
+        "Last twelve months of payments against what this holding cost you. This is what you earn, and it rises as the price does.",
+        f.pct(d.yield_on_cost),
+      ),
+      hintCard(
+        "Yield at today's price",
+        "The same payments against what the holding is worth now — what somebody buying today would get. Lower than the figure beside it whenever the price has risen.",
+        f.pct(d.current_yield),
+      ),
+    ),
+    el(
+      "div.wrap",
+      el(
+        "table",
+        el("thead", el("tr", ["Paid", "What", "Amount"].map((x) => el("th", { text: x })))),
+        el("tbody", rows),
+      ),
+    ),
+    el("p.note", { text: d.basis }),
+  );
+}
+
+
+function hintCard(label, hint, value, opts = {}) {
+  const node = card("", value, opts);
+  node.querySelector(".k").replaceChildren(withHint(label, hint));
+  return node;
+}
+
+
 function transactionsTable(h) {
-  const txns = h.transactions || [];
+  // Distributions have their own section; this is what you did.
+  const txns = (h.transactions || []).filter(
+    (x) => x.type !== "DIVIDEND" && x.type !== "INTEREST",
+  );
   if (!txns.length) return el("div");
 
   const rows = txns.map((t) =>
@@ -521,7 +613,7 @@ function transactionsTable(h) {
 
   return el(
     "section",
-    heading("Every entry for this holding"),
+    heading("Your trades"),
     el(
       "div.wrap",
       el(

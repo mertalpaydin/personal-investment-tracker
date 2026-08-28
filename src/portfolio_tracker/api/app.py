@@ -13,7 +13,7 @@ Uninvested cash is reported beside it, never inside it.
 from __future__ import annotations
 
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -865,6 +865,66 @@ def _now_or_zero(row: sqlite3.Row | None, column: str, open_now: bool) -> float 
 # holding whether the slash is sent raw or percent-encoded, since Starlette
 # does not decode %2F inside a path segment. Declared after `/api/positions`,
 # which is an exact match and therefore still wins.
+def _dividend_summary(
+    transactions: list[dict[str, Any]],
+    last: sqlite3.Row | None,
+    open_now: bool,
+) -> dict[str, Any]:
+    """What this holding has paid out, and what that is worth as a rate.
+
+    Kept apart from the trades because they answer different questions: a
+    trade is a decision you made, a distribution is something the holding did.
+    Mixing them in one list makes an income stream invisible.
+
+    Two rates, because neither alone is honest. **Yield on cost** measures the
+    payout against what you actually paid, which is what a long holder earns
+    and rises as the price does. **Current yield** measures it against today's
+    value, which is what a buyer today would get. They diverge a long way on
+    anything held for years, and quoting only the first flatters.
+    """
+    payments = [
+        t
+        for t in transactions
+        if t["type"] in ("DIVIDEND", "INTEREST") and t["gross_amount_eur"] is not None
+    ]
+    if not payments:
+        return {"count": 0, "total_eur": 0.0, "payments": []}
+
+    total = sum(float(t["gross_amount_eur"]) for t in payments)
+    cutoff = (date.today() - timedelta(days=365)).isoformat()
+    last_year = sum(float(t["gross_amount_eur"]) for t in payments if t["trade_date"] >= cutoff)
+
+    cost = float(last["cost_basis_eur"]) if last is not None and open_now else 0.0
+    value = float(last["market_value_eur"]) if last is not None and open_now else 0.0
+
+    return {
+        "count": len(payments),
+        "total_eur": round(total, 2),
+        "last_12m_eur": round(last_year, 2),
+        "first": payments[0]["trade_date"],
+        "latest": payments[-1]["trade_date"],
+        # What you earn on what you paid. Rises over time as the price does.
+        "yield_on_cost": round(last_year / cost, 6) if cost > 0 else None,
+        # What a buyer today would get on today's price.
+        "current_yield": round(last_year / value, 6) if value > 0 else None,
+        "total_on_cost": round(total / cost, 6) if cost > 0 else None,
+        "payments": [
+            {
+                "date": t["trade_date"],
+                "type": t["type"],
+                "amount_eur": t["gross_amount_eur"],
+                "currency": t["currency"],
+                "amount_local": t["price_per_unit_local"],
+            }
+            for t in payments
+        ],
+        "basis": (
+            "Rates use the last twelve months of payments. Withholding tax "
+            "deducted at source is not added back."
+        ),
+    }
+
+
 @app.get("/api/positions/{import_key:path}")
 def position_detail(
     import_key: str,
@@ -1076,6 +1136,7 @@ def position_detail(
         # holding: they are the only figures about it that are now final.
         "realised_gain_eur": realised,
         "income_eur": income,
+        "dividends": _dividend_summary(transactions, last, open_now),
         "return_decomposition": decomposition,
         "performance_basis": (
             "Price return only. The price line follows the raw closing price, "
