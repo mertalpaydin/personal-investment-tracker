@@ -348,3 +348,110 @@ def test_an_inferred_deposit_resets_both_pots(db: sqlite3.Connection) -> None:
     assert state.balance_after == D(0)
     assert state.income_after == D(0)
     assert state.income_received == D(100)
+
+
+# ---------------------------------------------------------------------------
+# What was already there
+# ---------------------------------------------------------------------------
+
+
+def test_an_opening_balance_funds_a_purchase(db: sqlite3.Connection) -> None:
+    """A ledger starts when the first export does; the account did not.
+
+    Without somewhere to say what was already in it, a purchase made with
+    money that had been sitting there is unexplainable for ever -- there is no
+    earlier data to go and fetch.
+    """
+    cash.set_opening_balance(
+        db, account_id=1, currency="EUR", amount=D("5000"), on=date(2026, 1, 1)
+    )
+    db.commit()
+    trade(db, "BUY", "2026-01-05", "1500")
+
+    assert cash.unfunded_purchases(db) == []
+
+
+def test_only_the_part_beyond_the_opening_balance_is_unfunded(
+    db: sqlite3.Connection,
+) -> None:
+    cash.set_opening_balance(
+        db, account_id=1, currency="EUR", amount=D("1000"), on=date(2026, 1, 1)
+    )
+    db.commit()
+    trade(db, "BUY", "2026-01-05", "1500")
+
+    events = cash.unfunded_purchases(db)
+    assert len(events) == 1
+    assert events[0].amount == D("500.00")
+
+
+def test_the_suggestion_is_the_least_that_explains_everything(
+    db: sqlite3.Connection,
+) -> None:
+    """A floor, not a guess at the real figure.
+
+    The deepest the running balance would go is exactly what had to be there
+    already. Offered to correct rather than applied, because the account very
+    likely held more.
+    """
+    trade(db, "BUY", "2026-01-05", "1500")
+    trade(db, "SELL", "2026-01-20", "400")
+    trade(db, "BUY", "2026-02-01", "900")
+
+    suggestions = cash.suggest_opening_balances(db)
+    assert len(suggestions) == 1
+    found = suggestions[0]
+    assert found.currency == "EUR"
+    # 1500 short, then 400 back, then 900 more: 2000 at the low point.
+    assert found.needed == D("2000.00")
+    assert found.unfunded_count == 2
+
+    cash.set_opening_balance(
+        db,
+        account_id=found.account_id,
+        currency=found.currency,
+        amount=found.needed,
+        on=found.on_date,
+    )
+    db.commit()
+    assert cash.unfunded_purchases(db) == []
+
+
+def test_an_opening_balance_is_dated_at_the_start_not_where_it_is_needed(
+    db: sqlite3.Connection,
+) -> None:
+    """Otherwise it appears out of nowhere and reads as a return.
+
+    On the real ledger a balance dated at the first purchase that needed it
+    made the valuation basis jump from EUR 7,042 to EUR 112,301 in one day,
+    and the unit price with it -- a 16x return for money that had been sitting
+    there all along.
+    """
+    trade(db, "BUY", "2026-01-05", "100")
+    trade(db, "BUY", "2026-06-01", "5000")
+
+    found = cash.suggest_opening_balances(db)[0]
+    assert found.on_date == date(2026, 1, 5), "the portfolio's first day, not June"
+
+
+def test_an_opening_balance_is_present_from_the_first_valued_day(
+    db: sqlite3.Connection,
+) -> None:
+    """It has to be in the daily series from the start, not from its stream."""
+    cash.set_opening_balance(
+        db, account_id=1, currency="EUR", amount=D("5000"), on=date(2026, 1, 1)
+    )
+    trade(db, "BUY", "2026-01-05", "1000")
+    db.commit()
+
+    cash.build_cash_daily(db, end=date(2026, 1, 10))
+    first = db.execute("SELECT balance_local FROM cash_daily ORDER BY date LIMIT 1").fetchone()
+    # 5,000 less the 1,000 spent on the first day, not a balance appearing later.
+    assert D(str(first["balance_local"])) >= D("4000")
+
+
+def test_a_negative_opening_balance_is_refused(db: sqlite3.Connection) -> None:
+    with pytest.raises(ValueError, match="cannot be negative"):
+        cash.set_opening_balance(
+            db, account_id=1, currency="EUR", amount=D("-1"), on=date(2026, 1, 1)
+        )

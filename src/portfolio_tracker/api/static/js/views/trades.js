@@ -13,7 +13,7 @@
  */
 
 import { el, row, heading } from "../dom.js";
-import { get, post, del, all, isError } from "../api.js";
+import { get, post, put, del, all, isError } from "../api.js";
 import * as f from "../fmt.js";
 import * as router from "../router.js";
 
@@ -45,6 +45,7 @@ export async function render({ query }) {
       type: filterType || null,
     }),
     funding: get("/api/savings/inferred"),
+    opening: get("/api/accounts/opening-balances"),
   });
 
   const view = el(
@@ -60,12 +61,110 @@ export async function render({ query }) {
     view.append(fundingReview(data.funding));
   }
 
+  // Once the guessed contributions are settled, what is left is money that
+  // was in the account before this tool's records begin. There is no earlier
+  // data to fetch, so it has to be stated.
+  if (!isError(data.opening) && data.opening.unexplained_purchases > 0) {
+    view.append(openingBalances(data.opening));
+  }
+
   const holdings = isError(data.positions) ? [] : data.positions.positions || [];
   view.append(entryForm(holdings, query));
 
   if (!isError(data.ledger)) view.append(ledgerTable(data.ledger));
   return view;
 }
+
+/* ---------------------------------------------------- opening balances */
+
+/*
+ * What each account already held.
+ *
+ * Every figure here is built from a ledger that starts on whatever day the
+ * first export happens to cover. The accounts did not start then, and a
+ * purchase funded by money that was already sitting there is unexplainable
+ * for ever -- there is no earlier data to go and fetch.
+ *
+ * The suggested figure is the deepest the running balance would go with
+ * nothing assumed, which is exactly the least the account can have held. A
+ * floor, not a guess: it is offered to correct, not applied on anyone's
+ * behalf.
+ */
+function openingBalances(body) {
+  const rows = (body.suggested || []).map((s) => {
+    const input = el("input", {
+      type: "number",
+      step: "any",
+      min: "0",
+      value: String(s.amount_local),
+      style: "width:11rem",
+    });
+    const save = async () => {
+      try {
+        await put("/api/accounts/opening-balances", {
+          account_id: s.account_id,
+          currency: s.currency,
+          amount_local: input.value || "0",
+          on_date: s.on_date,
+          source: "entered by hand",
+        });
+        router.refresh();
+      } catch (err) {
+        window.alert(err.message);
+      }
+    };
+    return row([
+      { text: s.account, cls: "name" },
+      s.currency,
+      {
+        text: f.money(s.amount_local, s.currency),
+        title: "The least it can have held for every purchase to be funded.",
+      },
+      `${s.explains} purchase${s.explains === 1 ? "" : "s"}`,
+      { node: input },
+      { node: el("button.primary", { text: "Save", onclick: save }) },
+    ]);
+  });
+
+  return el(
+    "section",
+    el(
+      "div.panel.warn",
+      el("h3", {
+        text: `${body.unexplained_purchases} purchases used money this tool has no record of`,
+      }),
+      el("p", {
+        text:
+          "Your accounts did not start at zero. This tool's records begin when your " +
+          "first export does, and anything already sitting in the account before " +
+          "then funded purchases it cannot otherwise explain.",
+      }),
+      el("p.note", { text: body.what_this_is }),
+      el(
+        "div.wrap",
+        el(
+          "table",
+          el(
+            "thead",
+            el(
+              "tr",
+              ["Account", "Currency", "At least", "Explains", "It actually held", ""].map((x) =>
+                el("th", { text: x }),
+              ),
+            ),
+          ),
+          el("tbody", rows),
+        ),
+      ),
+      el("p.note", {
+        text:
+          "The suggested figure is the smallest that makes every purchase add up. " +
+          "If you know the real balance, enter that instead — it is very likely higher.",
+      }),
+    ),
+  );
+}
+
 
 /* ---------------------------------------------------- inferred funding */
 

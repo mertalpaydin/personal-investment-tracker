@@ -29,7 +29,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from portfolio_tracker.api.deps import get_db, get_writable_db
-from portfolio_tracker.core import projection, savings, scenarios
+from portfolio_tracker.core import cash, projection, rebuild, savings, scenarios
 from portfolio_tracker.db.connection import transaction
 
 router = APIRouter(tags=["planning"])
@@ -690,3 +690,116 @@ def discard_all_inferred(
         result = rebuild.run(conn, end=date.today(), strict=False, commit=False)
 
     return {"deleted": removed, "recomputed_ok": result.ok}
+
+
+# ---------------------------------------------------------------------------
+# What was already there
+# ---------------------------------------------------------------------------
+
+
+class OpeningBalance(BaseModel):
+    """What an account held before this ledger begins."""
+
+    account_id: int
+    currency: str = Field(min_length=3, max_length=3)
+    amount_local: Decimal = Field(ge=0)
+    on_date: date
+    source: str | None = Field(default=None, max_length=120)
+
+
+@router.get("/api/accounts/opening-balances")
+def opening_balances(
+    conn: sqlite3.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """What is set, and the least that would explain the ledger.
+
+    Every figure in this tool is built from a ledger starting on whatever day
+    the first export happens to cover. The accounts did not start then. Money
+    already sitting in a depot funded purchases the ledger cannot explain, and
+    with nothing to say so the tool reports them as unaccounted for ever --
+    there is no earlier data to go and fetch.
+
+    ``suggested`` is the deepest the running balance would go with nothing
+    assumed, which is exactly the least the account can have held. A floor, not
+    a guess at the real figure: the account may well have held more, which is
+    why it is offered to correct rather than applied on anybody's behalf.
+    """
+    suggestions = cash.suggest_opening_balances(conn)
+    existing = conn.execute(
+        """
+        SELECT o.account_id, o.currency, o.amount_local, o.on_date, o.source, a.name
+        FROM opening_balance o JOIN account a ON a.id = o.account_id
+        ORDER BY a.name, o.currency
+        """
+    ).fetchall()
+
+    return {
+        "set": [
+            {
+                "account_id": r["account_id"],
+                "account": r["name"],
+                "currency": r["currency"],
+                "amount_local": _num(r["amount_local"]),
+                "on_date": r["on_date"],
+                "source": r["source"],
+            }
+            for r in existing
+        ],
+        "suggested": [
+            {
+                "account_id": s.account_id,
+                "account": s.account,
+                "currency": s.currency,
+                "amount_local": _num(s.needed),
+                "on_date": s.on_date.isoformat(),
+                "explains": s.unfunded_count,
+                "already_set": _num(s.current),
+            }
+            for s in suggestions
+        ],
+        "unexplained_purchases": len(cash.unfunded_purchases(conn)),
+        "what_this_is": (
+            "Money already in an account before this tool's records begin. It is "
+            "neither saving nor return — it was not paid in during the tracked "
+            "period, and nothing here earned it."
+        ),
+    }
+
+
+@router.put("/api/accounts/opening-balances")
+def set_opening_balance(
+    body: OpeningBalance,
+    conn: sqlite3.Connection = Depends(get_writable_db),
+) -> dict[str, Any]:
+    """Record what an account already held, then recompute."""
+    try:
+        with transaction(conn):
+            cash.set_opening_balance(
+                conn,
+                account_id=body.account_id,
+                currency=body.currency.upper(),
+                amount=body.amount_local,
+                on=body.on_date,
+                source=body.source,
+            )
+            result = rebuild.run(conn, end=date.today(), strict=False, commit=False)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    return {
+        "saved": True,
+        "unexplained_purchases": len(cash.unfunded_purchases(conn)),
+        "recomputed_ok": result.ok,
+    }
+
+
+@router.delete("/api/accounts/opening-balances/{account_id}/{currency}")
+def clear_opening_balance(
+    account_id: int,
+    currency: str,
+    conn: sqlite3.Connection = Depends(get_writable_db),
+) -> dict[str, Any]:
+    with transaction(conn):
+        cash.clear_opening_balance(conn, account_id=account_id, currency=currency.upper())
+        rebuild.run(conn, end=date.today(), strict=False, commit=False)
+    return {"cleared": True, "unexplained_purchases": len(cash.unfunded_purchases(conn))}

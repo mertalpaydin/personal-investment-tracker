@@ -141,7 +141,10 @@ def compute_flows(conn: sqlite3.Connection, *, account_id: int | None = None) ->
         tuple(params),
     ).fetchall()
 
-    balances: dict[tuple[int, str], Decimal] = {}
+    # Seeded with whatever was in each account before this ledger begins.
+    # Without it every purchase funded by money that was already there is
+    # unexplained for ever, and there is no earlier data to go and fetch.
+    balances: dict[tuple[int, str], Decimal] = opening_balances(conn)
     # The part of each balance that is realised income, and the running total
     # of income ever credited. The second is not derivable from the first:
     # reinvested income leaves the balance without ceasing to have been earned.
@@ -274,6 +277,111 @@ def compute_flows(conn: sqlite3.Connection, *, account_id: int | None = None) ->
     return report
 
 
+def opening_balances(conn: sqlite3.Connection) -> dict[tuple[int, str], Decimal]:
+    """What each account already held, per currency, before the ledger starts."""
+    return {
+        (int(r["account_id"]), str(r["currency"])): Decimal(str(r["amount_local"]))
+        for r in conn.execute("SELECT account_id, currency, amount_local FROM opening_balance")
+    }
+
+
+@dataclass(frozen=True)
+class OpeningSuggestion:
+    """The smallest opening balance that would explain the ledger."""
+
+    account_id: int
+    account: str
+    currency: str
+    #: The largest shortfall reached at any point, which is the least the
+    #: account can have held for every purchase to be funded.
+    needed: Decimal
+    on_date: date
+    unfunded_count: int
+    current: Decimal
+
+
+def suggest_opening_balances(conn: sqlite3.Connection) -> list[OpeningSuggestion]:
+    """How much each account must have held for its purchases to make sense.
+
+    Computed as the deepest the running balance would go if nothing were
+    assumed: that low point is exactly what had to be there already. It is a
+    *floor*, not a guess at the real figure -- the account may well have held
+    more -- which is why it is offered as a starting number to correct rather
+    than applied on anybody's behalf.
+    """
+    report = compute_flows(conn)
+    existing = opening_balances(conn)
+
+    worst: dict[tuple[int, str], Decimal] = {}
+    counts: dict[tuple[int, str], int] = {}
+    running: dict[tuple[int, str], Decimal] = {}
+
+    # Dated at the portfolio's own first day, not at the stream's. An opening
+    # balance means "this was already here"; one dated later is not an opening
+    # balance at all, it is a contribution, and treating it as the former makes
+    # the money appear as return on the day it shows up.
+    inception = min((e.on for e in report.events), default=date.today())
+
+    for event in report.events:
+        key = (event.account_id, event.currency)
+        if event.kind == "UNFUNDED":
+            # The shortfall is money the balance went below zero by.
+            running[key] = running.get(key, ZERO) - event.amount
+            counts[key] = counts.get(key, 0) + 1
+            worst[key] = min(worst.get(key, ZERO), running[key])
+
+    names = {int(r["id"]): str(r["name"]) for r in conn.execute("SELECT id, name FROM account")}
+    return [
+        OpeningSuggestion(
+            account_id=key[0],
+            account=names.get(key[0], str(key[0])),
+            currency=key[1],
+            needed=quantize_money(-low),
+            on_date=inception,
+            unfunded_count=counts.get(key, 0),
+            current=existing.get(key, ZERO),
+        )
+        for key, low in sorted(worst.items())
+        if low < ZERO
+    ]
+
+
+def set_opening_balance(
+    conn: sqlite3.Connection,
+    *,
+    account_id: int,
+    currency: str,
+    amount: Decimal,
+    on: date,
+    source: str | None = None,
+) -> None:
+    """Record what an account already held. Replaces any previous figure."""
+    if amount < ZERO:
+        raise ValueError("an opening balance cannot be negative")
+    conn.execute(
+        "INSERT INTO opening_balance (account_id, currency, on_date, amount_local, source, set_at) "
+        "VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT (account_id, currency) DO UPDATE SET "
+        "  on_date = excluded.on_date, amount_local = excluded.amount_local, "
+        "  source = excluded.source, set_at = excluded.set_at",
+        (
+            account_id,
+            currency,
+            on.isoformat(),
+            str(quantize_money(amount)),
+            source,
+            datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        ),
+    )
+
+
+def clear_opening_balance(conn: sqlite3.Connection, *, account_id: int, currency: str) -> None:
+    conn.execute(
+        "DELETE FROM opening_balance WHERE account_id = ? AND currency = ?",
+        (account_id, currency),
+    )
+
+
 def _spend(balance: Decimal, income: Decimal, amount: Decimal) -> tuple[Decimal, Decimal]:
     """Draw ``amount`` out of a balance, spending capital before income.
 
@@ -399,14 +507,22 @@ def build_cash_daily(conn: sqlite3.Connection, *, end: date, start: date | None 
         (window_start.isoformat(), end.isoformat()),
     )
 
-    keys = {(e.account_id, e.currency) for e in report.events}
+    openings = opening_balances(conn)
+    keys = {(e.account_id, e.currency) for e in report.events} | set(openings)
     written = 0
     for account_id, currency in keys:
         relevant = [
             e for e in report.events if (e.account_id, e.currency) == (account_id, currency)
         ]
         rates = fx.get_rate_series(conn, currency, days, strict=False)
-        balance = ZERO
+        # From the first day of the grid, not from this stream's first event.
+        #
+        # Starting at zero and picking the balance up when the stream begins
+        # makes an opening balance appear out of nowhere mid-series: on the
+        # real ledger the valuation basis jumped from EUR 7,042 to EUR 112,301
+        # in a day and the unit price with it, reporting a 16x return for
+        # money that had been sitting there all along.
+        balance = openings.get((account_id, currency), ZERO)
         income = ZERO
         idle = 0
         cursor = 0
