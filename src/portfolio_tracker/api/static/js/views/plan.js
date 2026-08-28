@@ -56,6 +56,7 @@ export async function render() {
     sensitivity: get("/api/projection/sensitivity", { paths: 300 }),
     pinned: get("/api/projection/scenarios", { paths: 300 }),
     savings: get("/api/savings"),
+    alreadyHad: get("/api/savings/opening-transfers"),
   });
 
   if (isError(data.baseline)) throw data.baseline;
@@ -74,7 +75,7 @@ export async function render() {
   // Before the levers, because the rate the projection assumes comes from
   // here: a plan built on an aspirational savings rate is the commonest way
   // a tool like this flatters its owner.
-  if (!isError(data.savings)) view.append(savingsSection(data.savings));
+  if (!isError(data.savings)) view.append(savingsSection(data.savings, data.alreadyHad));
   view.append(leverForm(base, data.baseline));
   if (!isError(data.sensitivity)) view.append(sensitivitySection(data.sensitivity));
   if (!isError(data.pinned)) view.append(pinnedSection(data.pinned));
@@ -867,7 +868,75 @@ function caveats(list) {
  * the sum deliberately -- dividends land in cash, which the headline value
  * excludes, and folding them in would double-count whatever was reinvested.
  */
-function savingsSection(s) {
+/*
+ * The deposits that are money you already had, and the ones that might be.
+ *
+ * Every deposit account's first capital row is listed whether it is marked or
+ * not, because that is the row the question always turns on: a statement's
+ * opening line looks identical whether it is a lifetime of saving arriving at
+ * once or a genuinely new payment. Only the owner can tell, so the tool asks
+ * rather than decides -- and shows what it currently believes so a wrong
+ * belief is visible instead of buried in an average.
+ */
+function alreadyHadPanel(body) {
+  if (isError(body) || !body.entries?.length) return null;
+
+  const rows = body.entries.map((e) =>
+    row([
+      { text: f.date(e.on), cls: "name" },
+      { text: e.account },
+      { text: f.money(e.amount_local, e.currency) },
+      {
+        node: el("span", {
+          class: e.already_had ? "tag ok" : "tag warn",
+          text: e.already_had ? "already yours" : "counted as saving",
+        }),
+      },
+      {
+        node: el("button.small", {
+          type: "button",
+          text: e.already_had ? "No — I saved this" : "I already had this",
+          onclick: async (event) => {
+            event.target.disabled = true;
+            try {
+              await post(
+                `/api/savings/opening-transfers/${e.txn_id}`,
+                {},
+                { already_had: e.already_had ? "false" : "true" },
+              );
+              router.refresh();
+            } catch (err) {
+              window.alert(err.message);
+              event.target.disabled = false;
+            }
+          },
+        }),
+      },
+    ]),
+  );
+
+  return el(
+    "details.assumptions",
+    el("summary", { text: "Which deposits were money you already had" }),
+    el("p.note", { text: body.what_this_is }),
+    el(
+      "div.wrap",
+      el(
+        "table",
+        el(
+          "thead",
+          el(
+            "tr",
+            ["When", "Account", "Amount", "Treated as", ""].map((h) => el("th", { text: h })),
+          ),
+        ),
+        el("tbody", rows),
+      ),
+    ),
+  );
+}
+
+function savingsSection(s, alreadyHad) {
   const made = s.made_of || {};
   const months = (s.months || []).slice(-24);
 
@@ -882,6 +951,12 @@ function savingsSection(s) {
       }),
       card("This year", f.eur(s.year_to_date_eur)),
       card("Since the start", f.eur(made.money_you_put_in_eur)),
+      // Its own card, not folded into either neighbour. Counted as saving it
+      // flatters the habit; counted as growth it invents a return.
+      card("Money already yours", f.eur(made.money_you_already_had_eur), {
+        cls: "aside",
+        sub: "brought in when an account joined",
+      }),
       card("Market growth", f.eur(made.market_growth_eur), {
         valueCls: f.tone(made.market_growth_eur),
       }),
@@ -896,11 +971,17 @@ function savingsSection(s) {
   // The identity, shown rather than asserted. A gap means a movement was
   // classified as something this does not account for.
   const gap = f.num(made.gap_eur) ?? 0;
+  const already = f.num(made.money_you_already_had_eur) ?? 0;
   section.append(
     el("p.note" + (Math.abs(gap) > 0.01 ? ".bad" : ""), {
       text:
-        `${f.eur(made.money_you_put_in_eur)} put in plus ${f.eur(made.market_growth_eur)} of ` +
-        `market growth is ${f.eur(made.adds_to_eur)}, and the portfolio is worth ` +
+        `${f.eur(made.money_you_put_in_eur)} put in` +
+        // Named in the sum, not just in the total. Left out, the sentence
+        // states an addition that does not add up, which reads as a bug in
+        // the very line whose job is to prove there is not one.
+        (already ? `, plus ${f.eur(made.money_you_already_had_eur)} you already had` : "") +
+        `, plus ${f.eur(made.market_growth_eur)} of market growth, is ` +
+        `${f.eur(made.adds_to_eur)}, and the portfolio is worth ` +
         `${f.eur(made.portfolio_value_eur)}.` +
         (Math.abs(gap) > 0.01 ? ` They differ by ${f.eur(gap)}, which should not happen.` : ""),
     }),
@@ -928,6 +1009,8 @@ function savingsSection(s) {
     section.append(el("h3", { text: "Month by month" }), box);
   }
 
+  const panel = alreadyHadPanel(alreadyHad);
+  if (panel) section.append(panel);
   section.append(caveats(s.caveats));
   return section;
 }

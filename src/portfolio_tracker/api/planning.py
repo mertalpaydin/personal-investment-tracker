@@ -345,6 +345,7 @@ def savings_history(
         # outside the sum on purpose -- see core/savings.py.
         "made_of": {
             "money_you_put_in_eur": _num(result.cumulative_eur),
+            "money_you_already_had_eur": _num(result.opening_transfer_eur),
             "market_growth_eur": _num(result.market_growth_eur),
             "adds_to_eur": _num(result.reconciles),
             "portfolio_value_eur": _num(result.closing_value_eur),
@@ -361,6 +362,7 @@ def savings_history(
                 "income_eur": _num(p.income_received_eur),
                 "market_growth_eur": _num(p.market_growth_eur),
                 "value_eur": _num(p.closing_value_eur),
+                "already_had_eur": _num(p.opening_transfer_eur),
             }
             for p in result.periods
         ],
@@ -371,6 +373,74 @@ def savings_history(
             "a reinvested dividend -- that is a return being compounded."
         ),
     }
+
+
+@router.get("/api/savings/opening-transfers")
+def opening_transfers(
+    conn: sqlite3.Connection = Depends(get_db),
+    person_id: int = Query(1, alias="person"),
+) -> dict[str, Any]:
+    """Deposits treated as money the owner already had, and the ones nearby.
+
+    Also lists the *first* capital row of every deposit account, marked or
+    not, because that is the row this distinction always turns on and the
+    owner is the only one who can settle it.
+    """
+    rows = conn.execute(
+        """
+        SELECT t.id, t.trade_date, t.currency, t.gross_amount_local, t.gross_amount_eur,
+               t.is_opening_transfer, t.note, a.name AS account, a.kind AS account_kind,
+               t.id = (SELECT min(t2.id) FROM transaction_ t2
+                       WHERE t2.account_id = t.account_id AND t2.type = 'DEPOSIT')
+                 AS is_first_for_account
+        FROM transaction_ t JOIN account a ON a.id = t.account_id
+        WHERE a.person_id = ? AND t.type = 'DEPOSIT' AND t.flow_class = 'EXTERNAL_IN'
+        ORDER BY t.trade_date
+        """,
+        (person_id,),
+    ).fetchall()
+
+    entries = [
+        {
+            "txn_id": r["id"],
+            "on": r["trade_date"],
+            "account": r["account"],
+            "account_kind": r["account_kind"],
+            "amount_local": _num(r["gross_amount_local"]),
+            "currency": r["currency"],
+            "amount_eur": _num(r["gross_amount_eur"]),
+            "already_had": bool(r["is_opening_transfer"]),
+            "first_for_account": bool(r["is_first_for_account"]),
+            "note": r["note"],
+        }
+        for r in rows
+        if r["is_opening_transfer"] or r["is_first_for_account"]
+    ]
+    return {
+        "entries": entries,
+        "what_this_is": (
+            "Money that was already yours, arriving here for the first time because "
+            "the account joined this tool. It counts towards what you are worth. It "
+            "is not counted as saving, because you set it aside before any of this "
+            "was being recorded."
+        ),
+    }
+
+
+@router.post("/api/savings/opening-transfers/{txn_id}")
+def mark_opening_transfer(
+    txn_id: int,
+    already_had: bool = Query(True),
+    conn: sqlite3.Connection = Depends(get_writable_db),
+) -> dict[str, Any]:
+    """Say whether a deposit was money you already had. Then recompute."""
+    row = conn.execute("SELECT id FROM transaction_ WHERE id = ?", (txn_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, f"no transaction {txn_id}")
+    with transaction(conn):
+        savings.set_opening_transfer(conn, txn_id=txn_id, is_opening=already_had)
+        savings.build_periods(conn)
+    return {"txn_id": txn_id, "already_had": already_had}
 
 
 @router.get("/api/savings/unclear")
