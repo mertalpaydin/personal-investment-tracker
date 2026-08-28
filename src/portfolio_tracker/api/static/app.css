@@ -432,6 +432,9 @@ button[disabled] { opacity: .45; cursor: not-allowed; }
 button.primary { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 button.danger { border-color: color-mix(in srgb, var(--loss) 60%, var(--line)); color: var(--loss); }
 
+/* Sits inside a table row, so it must not make the row taller than its text. */
+button.small { padding: .12rem .5rem; font-size: .8rem; }
+
 .actions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-top: .6rem; }
 
 /* Inside a table cell there is no margin to add and the buttons are a pair,
@@ -471,6 +474,31 @@ ul.caveats li { margin-bottom: .3rem; }
 }
 .panel.bad { border-color: color-mix(in srgb, var(--loss) 50%, var(--line)); }
 .panel.warn { border-color: color-mix(in srgb, var(--warn) 50%, var(--line)); }
+
+/* The assumptions behind a projected date, printed with it.
+
+   Open by default and collapsible rather than hidden behind a click: a date
+   whose assumptions have to be hunted for is a date that gets quoted without
+   them. Muted, because it is the fine print of an answer and not the answer. */
+details.assumptions {
+  border-top: 1px solid var(--line);
+  margin-top: .9rem;
+  padding-top: .6rem;
+}
+details.assumptions > summary {
+  cursor: pointer;
+  font-size: .8rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+  margin-bottom: .4rem;
+}
+details.assumptions td.muted { color: var(--muted); }
+
+/* A figure that is technically correct but likely to mislead -- a median far
+   below its own average, say. Coloured, not hidden: the reader still needs
+   the number, they just need to notice it. */
+td.warn { color: var(--warn); }
 
 /* A German statutory term shown beside its plain-English name. Never bold,
    never alone -- it is there so a figure can be matched against a bank

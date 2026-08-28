@@ -5,7 +5,7 @@
  * has never shown it -- the goal card said how much was left and stopped. This
  * is the screen that answers the question the target implies.
  *
- * Three deliberate framings:
+ * Four deliberate framings:
  *
  * The headline is **75% confidence**, not the median. A 50/50 date is a coin
  * flip and the wrong thing to plan a house purchase around, so the middle card
@@ -16,11 +16,17 @@
  * because a fan needs a middle, but no number on this page is presented as
  * "what you will have".
  *
- * **What you control is separated from what you assume.** Contributions and
- * fees are decisions. A different return is a wish about the world, and a
- * screen that lists them together invites the reader to treat them as equally
- * available -- so assumed levers sit below, under their own heading, and any
- * result using one carries a sentence saying so.
+ * **What you control is separated from what you assume.** Contributions are a
+ * decision. A different return is a wish about the world, and a screen that
+ * lists them together invites the reader to treat them as equally available --
+ * so assumed levers sit below, under their own heading, and any result using
+ * one carries a sentence saying so.
+ *
+ * **Every field says what it would be, not how much it would change.** "Save
+ * EUR 1,500 a month" can be checked against a bank statement. "Save EUR 300 a
+ * month more" cannot be checked against anything unless the reader already
+ * remembers, and trusts, the figure the tool measured. So each box arrives
+ * filled in with what is true today, and editing it states a new truth.
  */
 
 import { el, card, row, heading } from "../dom.js";
@@ -35,6 +41,14 @@ const CONFIDENCES = [
   ["0.90", "Nine times in ten"],
 ];
 const HEADLINE = "0.75";
+
+/** The measured windows, in the order they should be read. */
+const WINDOWS = [
+  ["3m", "Last 3 months"],
+  ["6m", "Last 6 months"],
+  ["12m", "Last 12 months"],
+  ["since_start", "Since records begin"],
+];
 
 export async function render() {
   const data = await all({
@@ -55,13 +69,13 @@ export async function render() {
     }),
   );
 
-  view.append(confidenceCards(base));
+  view.append(confidenceCards(base, data.baseline));
   view.append(fanChart(base, data.baseline));
   // Before the levers, because the rate the projection assumes comes from
   // here: a plan built on an aspirational savings rate is the commonest way
   // a tool like this flatters its owner.
   if (!isError(data.savings)) view.append(savingsSection(data.savings));
-  view.append(leverForm(base));
+  view.append(leverForm(base, data.baseline));
   if (!isError(data.sensitivity)) view.append(sensitivitySection(data.sensitivity));
   if (!isError(data.pinned)) view.append(pinnedSection(data.pinned));
   view.append(el("p.note", { text: data.baseline.disclosure }));
@@ -71,26 +85,61 @@ export async function render() {
 
 /* ------------------------------------------------------------ headline */
 
-function confidenceCards(outcome) {
+/*
+ * A projected date is only ever accurate to a month, so it is shown as one.
+ * "18 Mar 2028" reads as a diary entry somebody could hold the tool to; "Mar
+ * 2028" reads as what it is -- the month a resampled simulation crossed a
+ * line. The precision that was there was not information, it was decoration.
+ */
+function confidenceCards(outcome, body) {
   const cards = CONFIDENCES.map(([key, label]) => {
     const date = outcome.dates[key];
     const months = outcome.months_to_target[key];
-    return card(label, date ? f.date(date) : "not within 15 years", {
+    return card(label, date ? f.month(date) : "not within 15 years", {
       cls: key === HEADLINE ? "total" : "",
       sub: months === null || months === undefined ? "on this evidence" : `${months} months`,
     });
   });
 
+  /*
+   * Three identical dates look like a broken feature, and the explanation was
+   * sitting at the foot of the page where nobody would connect it.
+   *
+   * They coincide when the price history is barely longer than the 252-day
+   * blocks the simulation draws from: every path is then built from nearly the
+   * same overlapping windows, so the paths barely differ and the percentiles
+   * land on one month. The spread is real, but far too narrow to believe --
+   * which is a statement about how little history there is, not about how
+   * certain the date is. Saying that here is the difference between an
+   * apparent bug and an honest limit.
+   */
+  const dates = CONFIDENCES.map(([key]) => outcome.dates[key]);
+  const identical = dates.every((d) => d === dates[0]) && dates[0];
+  const days = body?.returns?.history_days;
+
   return el(
     "section",
     heading("When the target is reached"),
     el("div.cards", cards),
-    el("p.note", {
-      text:
-        "Read the middle one. “Three times in four” means that in 75 out of 100 " +
-        "resampled histories the target had been reached by then — it is not a " +
-        "promise, and the other two show how wide the spread is.",
-    }),
+    identical
+      ? el("p.note.warn", {
+          text:
+            "All three are the same date, and that is a warning rather than a " +
+            "result. " +
+            (days
+              ? `There are only ${days} days of price history to resample, barely ` +
+                "more than the one-year blocks the simulation draws from, "
+              : "There is too little price history to resample, ") +
+            "so every simulated path ends up looking like every other one. Read " +
+            "this as a single rough estimate, not as three levels of confidence. " +
+            "It will separate as the price history grows.",
+        })
+      : el("p.note", {
+          text:
+            "Read the middle one. “Three times in four” means that in 75 out of 100 " +
+            "resampled histories the target had been reached by then — it is not a " +
+            "promise, and the other two show how wide the spread is.",
+        }),
     outcome.shortfall_p10_eur > 0
       ? el("p.note.warn", {
           text:
@@ -104,30 +153,48 @@ function confidenceCards(outcome) {
 
 /* ---------------------------------------------------------------- fan */
 
+/**
+ * How far of the horizon is worth drawing.
+ *
+ * The simulation runs fifteen years because a scenario may need it. Drawing
+ * all fifteen puts a EUR 30M line at the top, squashes the target onto the
+ * axis, and answers a question about compounding when the question asked was
+ * "when do I reach EUR 250,000". Stop a year after even the unluckiest
+ * twentieth has arrived; failing that, a year after the middle arrives.
+ */
+function horizonCut(bands, target) {
+  const arrives = (key) => bands.findIndex((b) => b[key] >= target);
+  const YEAR = 4; // bands are quarterly
+
+  for (const [key, pad] of [
+    ["p05", YEAR],
+    ["p25", YEAR],
+    ["p50", YEAR * 2],
+  ]) {
+    const at = arrives(key);
+    if (at !== -1) return Math.min(bands.length, at + pad + 1);
+  }
+  return bands.length;
+}
+
 function fanChart(outcome, body) {
   const all = outcome.bands || [];
   if (all.length < 2) return el("div");
 
-  /*
-   * Trimmed to the part of the horizon the target lives in.
-   *
-   * The simulation runs fifteen years because a scenario may need it, but
-   * drawing all of it puts a EUR 30M line at the top and squashes the target
-   * onto the axis — a chart about compounding, when the question was "when do
-   * I reach EUR 250,000". Cut a couple of years past the point where even the
-   * unluckiest tenth has arrived.
-   */
   const target = outcome.target_eur;
-  const arrived = all.findIndex((b) => b.p05 >= target);
-  const cutoff =
-    arrived === -1 ? all.length : Math.min(all.length, arrived + Math.ceil(24 / 3) + 1);
-  const bands = all.slice(0, Math.max(cutoff, 8));
+  const bands = all.slice(0, Math.max(horizonCut(all, target), 8));
   const trimmed = bands.length < all.length;
 
   const box = el("div.chart");
   const pal = palette();
   const x = bands.map((b) => toTs(b.date));
 
+  /*
+   * Five lines in one colour is five lines nobody can tell apart, and the
+   * legend then names things the reader cannot find. Each band gets its own
+   * weight instead: the outer edges recede into grey, the middle half is
+   * coloured, and the median is the only heavy line on the chart.
+   */
   queueMicrotask(() =>
     timeChart(box, {
       x,
@@ -140,11 +207,11 @@ function fanChart(outcome, body) {
         [2, 3],
       ],
       series: [
-        { label: "Best 5%", data: bands.map((b) => b.p95), colour: pal.series[0], width: 1 },
-        { label: "Worst 5%", data: bands.map((b) => b.p05), colour: pal.series[0], width: 1 },
-        { label: "Upper quarter", data: bands.map((b) => b.p75), colour: pal.series[0], width: 1 },
-        { label: "Lower quarter", data: bands.map((b) => b.p25), colour: pal.series[0], width: 1 },
-        { label: "Middle", data: bands.map((b) => b.p50), colour: pal.series[0], width: 2 },
+        { label: "Best 5%", data: bands.map((b) => b.p95), colour: pal.muted, width: 1 },
+        { label: "Worst 5%", data: bands.map((b) => b.p05), colour: pal.muted, width: 1 },
+        { label: "Upper quarter", data: bands.map((b) => b.p75), colour: pal.series[1], width: 1 },
+        { label: "Lower quarter", data: bands.map((b) => b.p25), colour: pal.series[1], width: 1 },
+        { label: "Middle", data: bands.map((b) => b.p50), colour: pal.accent, width: 2.5 },
         {
           label: "Target",
           data: bands.map(() => target),
@@ -156,59 +223,290 @@ function fanChart(outcome, body) {
     }),
   );
 
+  // A fan drawn from too little history is a fan with nothing in it. Better
+  // to name that than to let the reader admire how precise it looks.
+  const last = bands[bands.length - 1];
+  const width = last.p95 > 0 ? (last.p95 - last.p05) / last.p95 : 0;
+
   return el(
     "section",
     heading("The range of outcomes"),
     box,
     el("p.chart-note", {
       text:
-        "Each shaded band is a share of resampled histories: the outer covers 90 " +
-        "of every 100, the inner covers half. The middle line is not a prediction " +
-        "— it is the middle of a spread, and the spread is the answer." +
+        "The grey band covers 90 of every 100 resampled histories; the coloured " +
+        "one covers the middle half. The blue line is not a prediction — it is " +
+        "the middle of a spread, and the spread is the answer. The green dashes " +
+        `are your ${f.eur(target, { compact: true })} target.` +
         (trimmed
-          ? " Cut off shortly after the target is reached in every band; the " +
-            "simulation itself runs further."
+          ? ` Drawn to ${f.month(last.date)}, about a year after ` +
+            "the target is reached in every band; the simulation itself runs to " +
+            `${f.month(all[all.length - 1].date)}.`
           : ""),
     }),
+    width < 0.1
+      ? el("p.note.warn", {
+          text:
+            `The bands are only ${f.pct(width, { digits: 0 })} apart, which is far ` +
+            "narrower than markets are. There is not enough price history yet for " +
+            "the simulation to draw genuinely different futures, so this reads as " +
+            "more certain than anything about a portfolio can be.",
+        })
+      : null,
   );
 }
 
 /* -------------------------------------------------------------- levers */
 
-function leverForm(base) {
-  const monthly = el("input", { type: "number", step: "50", placeholder: "300" });
+/** Whole months between an ISO date and a "YYYY-MM" from a month input. */
+function monthsBetween(fromIso, yearMonth) {
+  const [fy, fm] = fromIso.slice(0, 7).split("-").map(Number);
+  const [ty, tm] = String(yearMonth).slice(0, 7).split("-").map(Number);
+  return (ty - fy) * 12 + (tm - fm);
+}
+
+/** "YYYY-MM" a given number of months after an ISO date. */
+function monthAfter(fromIso, months) {
+  const d = new Date(`${fromIso.slice(0, 10)}T00:00:00`);
+  d.setMonth(d.getMonth() + months);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/*
+ * What the projection is already assuming, next to what actually happened.
+ *
+ * The old form asked for "Return, % a year more", which is unanswerable: more
+ * than what? The bootstrap never states a return -- it resamples this
+ * portfolio's own price history -- so the figure it works out to had to be
+ * computed and put on the screen before a reader could sensibly move it.
+ *
+ * The measured windows sit beside it as evidence, each with the number of days
+ * behind it, because "+24% a year" from twelve weeks of data and "+24% a year"
+ * from four years are not the same claim.
+ */
+function returnEvidence(returns, onPick) {
+  if (!returns) return el("div");
+
+  const rows = WINDOWS.map(([key, label]) => {
+    const w = returns.measured?.[key];
+    if (!w || w.annualised === null) {
+      return row([{ text: label, cls: "name" }, "—", "not enough history", ""]);
+    }
+    return row([
+      { text: label, cls: "name" },
+      { text: f.pct(w.period, { sign: true }), cls: f.tone(w.period) },
+      { text: f.pct(w.annualised, { sign: true }), cls: f.tone(w.annualised) },
+      {
+        // type="button": these live inside the form, and a bare <button>
+        // there defaults to submit -- picking a figure would run the
+        // simulation instead of filling the box.
+        node: el("button.small", {
+          type: "button",
+          text: "Use this",
+          onclick: () => onPick(w.annualised),
+        }),
+      },
+    ]);
+  });
+
+  const box = el(
+    "div.panel",
+    el(
+      "p",
+      el("span", { text: "The projection is using " }),
+      el("strong", { text: `${f.pct(returns.implied_annual)} a year` }),
+      el("span", {
+        text:
+          `, which is what ${returns.history_days} days of your own holdings' prices ` +
+          `(from ${f.month(returns.history_from)}) average out to. It is not typed in ` +
+          "anywhere — it falls out of resampling that history.",
+      }),
+    ),
+    el(
+      "div.wrap",
+      el(
+        "table",
+        el(
+          "thead",
+          el(
+            "tr",
+            ["Window", "Return over it", "Per year", ""].map((t) => el("th", { text: t })),
+          ),
+        ),
+        el("tbody", rows),
+      ),
+    ),
+    el("p.note", {
+      text:
+        "“Per year” scales a short window up to twelve months. Over three " +
+        "months that magnifies whatever happened to happen, so read it beside " +
+        "the window it came from rather than on its own.",
+    }),
+  );
+
+  if (returns.measured_reliable === false) {
+    box.append(
+      el("p.note.bad", {
+        text:
+          "These returns are overstated. Purchases exist that no recorded money " +
+          "paid for, and unit accounting reads that money as investment return. " +
+          "Fix it on the Trades page before using any of these figures as an " +
+          "assumption.",
+      }),
+    );
+  }
+  return box;
+}
+
+/*
+ * What was actually paid in, over each window, average beside median.
+ *
+ * The gap between the two is the reason this panel exists. One EUR 22,686
+ * transfer made two thirds of a six-month average on this ledger, and a plan
+ * built on that average quietly assumes the transfer repeats every month for
+ * fifteen years. The median month says what a normal month looked like, and
+ * seeing them side by side is what makes the choice between them a choice.
+ */
+function savingsEvidence(contributions, onPick) {
+  if (!contributions) return el("div");
+
+  const labels = [
+    ["6m", "Last 6 months"],
+    ["12m", "Last 12 months"],
+    ["24m", "Last 2 years"],
+  ];
+
+  const rows = labels.flatMap(([key, label]) => {
+    const w = contributions[key];
+    if (!w) return [];
+    const lumpy = w.median_monthly_eur !== null && w.average_monthly_eur > w.median_monthly_eur * 2;
+    return [
+      row([
+        { text: label, cls: "name" },
+        { text: f.eur(w.average_monthly_eur) },
+        { text: f.eur(w.median_monthly_eur), cls: lumpy ? "warn" : "" },
+        {
+          node: el(
+            "span.actions",
+            el("button.small", {
+              type: "button",
+              text: "Average",
+              onclick: () => onPick(w.average_monthly_eur),
+            }),
+            // A typical month of nothing is a true and useful fact -- you do
+            // not pay in every month -- but it is not a savings rate anybody
+            // means to plan on, so it is shown and not offered.
+            el("button.small", {
+              type: "button",
+              text: "Typical",
+              disabled: !w.median_monthly_eur,
+              onclick: () => onPick(w.median_monthly_eur),
+            }),
+          ),
+        },
+      ]),
+    ];
+  });
+
+  if (!rows.length) return el("div");
+
+  return el(
+    "div.panel",
+    el(
+      "div.wrap",
+      el(
+        "table",
+        el(
+          "thead",
+          el(
+            "tr",
+            ["Window", "Average month", "Typical month", ""].map((t) => el("th", { text: t })),
+          ),
+        ),
+        el("tbody", rows),
+      ),
+    ),
+    el("p.note", {
+      text:
+        "“Typical” is the middle month of the window. Where it sits well below " +
+        "the average, one large transfer is carrying the average — and a plan " +
+        "built on that number assumes the transfer happens again every month.",
+    }),
+  );
+}
+
+function leverForm(base, body) {
+  const returns = body.returns;
+  const contributions = body.contributions;
+  const asOf = body.as_of;
+
+  /*
+   * Every box starts holding what is true today rather than empty. An empty
+   * box beside the words "per month" is a question the reader has to answer
+   * before they can experiment; a filled one is a statement they can edit.
+   */
+  const target = el("input", {
+    type: "number",
+    step: "1000",
+    value: String(Math.round(base.target_eur)),
+  });
+  const monthly = el("input", {
+    type: "number",
+    step: "50",
+    value: String(Math.round(base.monthly_contribution_eur)),
+  });
   const lumpAmount = el("input", { type: "number", step: "100", placeholder: "5000" });
-  const lumpMonth = el("input", { type: "number", step: "1", min: "1", placeholder: "12" });
+  const lumpWhen = el("input", { type: "month", min: monthAfter(asOf, 1) });
   const growth = el("input", { type: "number", step: "0.5", placeholder: "2" });
-  const fee = el("input", { type: "number", step: "1", placeholder: "-10" });
-  const target = el("input", { type: "number", step: "1000", placeholder: String(base.target_eur) });
-  const ret = el("input", { type: "number", step: "0.5", placeholder: "1" });
+  const ret = el("input", {
+    type: "number",
+    step: "0.5",
+    value: returns ? (returns.implied_annual * 100).toFixed(1) : "",
+  });
   const name = el("input", { type: "text", placeholder: "Saving more" });
   const pin = el("input", { type: "checkbox" });
 
   const out = el("div");
   const button = el("button.primary", { type: "submit", text: "See what it changes" });
 
+  const reset = () => {
+    target.value = String(Math.round(base.target_eur));
+    monthly.value = String(Math.round(base.monthly_contribution_eur));
+    lumpAmount.value = "";
+    lumpWhen.value = "";
+    growth.value = "";
+    if (returns) ret.value = (returns.implied_annual * 100).toFixed(1);
+    out.replaceChildren();
+  };
+
   const run = async () => {
     button.disabled = true;
     button.textContent = "Running both…";
     out.replaceChildren(el("p.note", { text: "Simulating the baseline and the change…" }));
     try {
-      const body = {
+      const months = lumpWhen.value ? monthsBetween(asOf, lumpWhen.value) : null;
+      if (lumpAmount.value && (months === null || months < 1)) {
+        throw new Error("Pick a month for the one-off amount, later than this one.");
+      }
+      const request = {
         name: name.value.trim() || "Scenario",
         pin: pin.checked,
-        monthly_contribution_delta_eur: monthly.value || "0",
         contribution_growth_pct_annual: growth.value ? String(Number(growth.value) / 100) : "0",
-        return_delta_annual_pct: ret.value ? String(Number(ret.value) / 100) : "0",
-        ter_delta_bps: fee.value ? Number(fee.value) : 0,
-        lump_sums:
-          lumpAmount.value && lumpMonth.value
-            ? [[Number(lumpMonth.value), lumpAmount.value]]
-            : [],
+        lump_sums: lumpAmount.value ? [[months, lumpAmount.value]] : [],
       };
-      if (target.value) body.target_amount_eur = target.value;
-      const result = await post("/api/projection/scenario", body, { paths: 600, years: 15 });
-      out.replaceChildren(result_(result));
+      // Sent only when it differs from the measured or implied figure, so a
+      // scenario that changes nothing is recorded as changing nothing.
+      if (monthly.value && Number(monthly.value) !== Math.round(base.monthly_contribution_eur)) {
+        request.monthly_contribution_eur = monthly.value;
+      }
+      if (ret.value && returns && Number(ret.value) !== Number((returns.implied_annual * 100).toFixed(1))) {
+        request.return_annual_pct = String(Number(ret.value) / 100);
+      }
+      if (target.value && Number(target.value) !== Math.round(base.target_eur)) {
+        request.target_amount_eur = target.value;
+      }
+      const result = await post("/api/projection/scenario", request, { paths: 600, years: 15 });
+      out.replaceChildren(result_(result, base));
       if (pin.checked) router.refresh();
     } catch (err) {
       out.replaceChildren(el("p.note.bad", { text: err.message }));
@@ -218,7 +516,12 @@ function leverForm(base) {
   };
 
   const field = (label, node, hint) =>
-    el("label.field", el("span", { text: label }), node, hint ? el("span.note", { text: hint }) : null);
+    el(
+      "label.field",
+      el("span", { text: label }),
+      node,
+      hint ? el("span.note", { text: hint }) : null,
+    );
 
   return el(
     "section",
@@ -226,22 +529,31 @@ function leverForm(base) {
     el(
       "form",
       { onsubmit: (e) => (e.preventDefault(), run()) },
+      // The target comes first because everything under it is measured
+      // against it. Asking for it last made the whole form read as a set of
+      // adjustments to something the reader had not yet been shown.
+      el("h3", { text: "What you are aiming at" }),
+      el("div.entry", field("Target (EUR)", target, "what the dates below are measured against")),
       el("h3", { text: "Things you decide" }),
+      savingsEvidence(contributions, (amount) => {
+        monthly.value = String(Math.round(amount));
+      }),
       el(
         "div.entry",
-        field("Extra per month (EUR)", monthly),
+        field("Saving per month (EUR)", monthly, "starts at your last 12 months' average"),
         field("One-off amount (EUR)", lumpAmount),
-        field("…in how many months", lumpMonth),
+        field("…paid in", lumpWhen, "which month it arrives"),
         field("Contributions rise (% a year)", growth),
-        field("Fee change (basis points)", fee, "negative is cheaper, e.g. -10"),
-        field("Different target (EUR)", target),
       ),
       // Visually separated, and labelled, because the difference between a
       // decision and a wish is the most important thing on this screen.
       el("h3", { text: "Things you can only assume" }),
+      returnEvidence(returns, (annual) => {
+        ret.value = (annual * 100).toFixed(1);
+      }),
       el(
         "div.entry",
-        field("Return, % a year more", ret, "changing this changes nothing about the portfolio"),
+        field("Return (% a year)", ret, "changing this changes nothing about the portfolio"),
       ),
       el("h3", { text: "Keep it?" }),
       el(
@@ -249,7 +561,7 @@ function leverForm(base) {
         field("Name", name),
         el("label.check.wide", pin, el("span", { text: "Pin it, and re-run it as things move" })),
       ),
-      el("div.actions", button),
+      el("div.actions", button, el("button", { type: "button", text: "Reset", onclick: reset })),
     ),
     out,
   );
@@ -265,8 +577,90 @@ function monthsDelta(months) {
   });
 }
 
+/*
+ * Everything the answer rests on, printed with the answer.
+ *
+ * A date with no assumptions beside it is a number somebody will quote back
+ * six months later having forgotten it was conditional. Both columns are
+ * shown -- what it was, what it became -- so a reader can see at a glance
+ * which single thing they changed, and confirm they did not change two.
+ */
+function assumptions(r, base) {
+  const l = r.levers || {};
+  const asked = (value, fallback) => (value === null || value === undefined ? fallback : value);
 
-function result_(r) {
+  const lines = [
+    ["Target", f.eur(base.target_eur), f.eur(r.scenario.target_eur)],
+    [
+      "Saving per month",
+      f.eur(r.baseline.monthly_contribution_eur),
+      f.eur(r.scenario.monthly_contribution_eur),
+    ],
+    [
+      "Return assumed",
+      f.pct(r.returns?.implied_annual),
+      l.return_annual_pct === null || l.return_annual_pct === undefined
+        ? f.pct(r.returns?.implied_annual)
+        : f.pct(Number(l.return_annual_pct)),
+    ],
+    [
+      "One-off payments",
+      "none",
+      (l.lump_sums || []).length
+        ? l.lump_sums
+            .map(([m, a]) => `${f.eur(Number(a))} in ${f.month(monthAfter(r.as_of, Number(m)))}`)
+            .join(", ")
+        : "none",
+    ],
+    [
+      "Contributions rise",
+      "0.00% a year",
+      `${f.pct(Number(asked(l.contribution_growth_pct_annual, 0)))} a year`,
+    ],
+    ["Horizon", `${r.baseline.horizon_months} months`, `${r.scenario.horizon_months} months`],
+  ];
+
+  return el(
+    "details.assumptions",
+    { open: true },
+    el("summary", { text: "Everything this answer assumes" }),
+    el(
+      "div.wrap",
+      el(
+        "table",
+        el(
+          "thead",
+          el(
+            "tr",
+            ["", "As things stand", "In this scenario"].map((t) => el("th", { text: t })),
+          ),
+        ),
+        el(
+          "tbody",
+          lines.map(([label, was, now]) =>
+            row([
+              { text: label, cls: "name" },
+              { text: was },
+              { text: now, cls: was === now ? "muted" : "" },
+            ]),
+          ),
+        ),
+      ),
+    ),
+    el("p.note", {
+      text:
+        `Both runs start from the portfolio as it stood on ${f.date(r.as_of)} and draw ` +
+        `the identical sequence of return blocks (seed ${r.seed}), so the difference ` +
+        "between them is the change and not the sampling." +
+        (r.returns
+          ? ` Returns are resampled from ${r.returns.history_days} days of price ` +
+            `history starting ${f.month(r.returns.history_from)}.`
+          : ""),
+    }),
+  );
+}
+
+function result_(r, base) {
   const earlier = r.months_earlier[HEADLINE];
   const box = el("div.panel");
 
@@ -302,15 +696,20 @@ function result_(r) {
         "table",
         el(
           "thead",
-          el("tr", ["Confidence", "As things stand", "With the change", "Difference"].map((t) => el("th", { text: t }))),
+          el(
+            "tr",
+            ["Confidence", "As things stand", "With the change", "Difference"].map((t) =>
+              el("th", { text: t }),
+            ),
+          ),
         ),
         el(
           "tbody",
           CONFIDENCES.map(([key, label]) =>
             row([
               { text: label, cls: "name" },
-              r.baseline.dates[key] ? f.date(r.baseline.dates[key]) : "beyond horizon",
-              r.scenario.dates[key] ? f.date(r.scenario.dates[key]) : "beyond horizon",
+              r.baseline.dates[key] ? f.month(r.baseline.dates[key]) : "beyond horizon",
+              r.scenario.dates[key] ? f.month(r.scenario.dates[key]) : "beyond horizon",
               { node: monthsDelta(r.months_earlier[key]) },
             ]),
           ),
@@ -318,6 +717,8 @@ function result_(r) {
       ),
     ),
   );
+
+  box.append(assumptions(r, base));
 
   if (r.assumption_warning) {
     box.append(el("p.note.warn", { text: r.assumption_warning }));
@@ -360,7 +761,12 @@ function sensitivitySection(body) {
         "table",
         el(
           "thead",
-          el("tr", ["Extra per month", "Months earlier", "Months per EUR 100"].map((t) => el("th", { text: t }))),
+          el(
+            "tr",
+            ["Extra per month", "Months earlier", "Months per EUR 100"].map((t) =>
+              el("th", { text: t }),
+            ),
+          ),
         ),
         el(
           "tbody",
@@ -393,14 +799,17 @@ function pinnedSection(body) {
         "table",
         el(
           "thead",
-          el("tr", ["Scenario", "Reaches target", "vs today", "", ""].map((t) => el("th", { text: t }))),
+          el(
+            "tr",
+            ["Scenario", "Reaches target", "vs today", "", ""].map((t) => el("th", { text: t })),
+          ),
         ),
         el(
           "tbody",
           saved.map((s) =>
             row([
               { text: s.name, cls: "name" },
-              s.scenario.dates[HEADLINE] ? f.date(s.scenario.dates[HEADLINE]) : "beyond horizon",
+              s.scenario.dates[HEADLINE] ? f.month(s.scenario.dates[HEADLINE]) : "beyond horizon",
               {
                 text:
                   s.months_earlier[HEADLINE] === null
@@ -446,7 +855,6 @@ function caveats(list) {
   if (!list?.length) return el("div");
   return el("ul.caveats", list.map((c) => el("li", { text: c })));
 }
-
 
 /* ------------------------------------------------------------- savings */
 
