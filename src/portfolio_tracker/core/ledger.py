@@ -228,3 +228,49 @@ def row_json(row: sqlite3.Row) -> dict[str, Any]:
         key: (plain(row[key]) if isinstance(row[key], Decimal) else row[key])
         for key in row.keys()  # noqa: SIM118 - sqlite3.Row has no __iter__ over keys
     }
+
+
+def record_new_money(
+    conn: sqlite3.Connection,
+    *,
+    account_id: int,
+    on: date,
+    currency: str,
+    amount_local: Decimal,
+    rate: Decimal,
+    label: str | None = None,
+) -> int:
+    """Book money that arrived from outside, as a deposit.
+
+    Called when somebody says that part of a purchase was funded by new money.
+    It is asked rather than deduced: this tool used to infer a contribution
+    whenever a purchase exceeded the cash it knew about, and on real data that
+    invented 85% of the savings figure -- the money might equally have come
+    from an account it cannot see.
+
+    Marked USER and ACTUAL so no classifier second-guesses it and no re-import
+    undoes it. The euro leg is frozen at ``rate``, which the caller has already
+    pinned to ``on``; this function lives in core precisely so the HTTP layer
+    does no currency arithmetic of its own.
+    """
+    cursor = conn.execute(
+        """
+        INSERT INTO transaction_
+            (account_id, type, trade_date, currency, gross_amount_local,
+             gross_amount_eur, fx_rate, source, confidence, flow_class,
+             flow_class_source, is_new_savings, savings_label, note)
+        VALUES (?, 'DEPOSIT', ?, ?, ?, ?, ?, 'MANUAL', 'ACTUAL', 'EXTERNAL_IN',
+                'USER', 1, ?, ?)
+        """,
+        (
+            account_id,
+            on.isoformat(),
+            currency,
+            str(amount_local),
+            str(fx.to_eur(amount_local, rate)),
+            str(rate),
+            label,
+            "money from outside, recorded with the trade it funded",
+        ),
+    )
+    return int(cursor.lastrowid or 0)

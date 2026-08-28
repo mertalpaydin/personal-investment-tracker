@@ -382,3 +382,194 @@ def reclassify(
         "recomputed": {"breaks": result.breaks, "ok": result.ok},
         "note": "Recorded as your decision. Re-importing will not change it back.",
     }
+
+
+# ---------------------------------------------------------------------------
+# Cleaning up what an earlier version inferred
+# ---------------------------------------------------------------------------
+
+
+def _release_proposals(conn: sqlite3.Connection, txn_ids: list[int]) -> None:
+    """Detach the proposals that produced these rows, so they can be deleted.
+
+    `pending_entry.resulting_txn_id` points at the ledger row a confirmation
+    created, and the foreign key stops the row being removed while it does.
+    The proposal is an artefact of the inference being removed, so it is
+    reopened as rejected with the reason recorded rather than deleted -- the
+    decision trail is the one thing worth keeping from it.
+    """
+    if not txn_ids:
+        return
+    marks = ",".join("?" for _ in txn_ids)
+    conn.execute(
+        f"UPDATE pending_entry SET resulting_txn_id = NULL, status = 'REJECTED', "
+        f"note = 'the contribution this proposed was never recorded; the inference "
+        f"that produced it has been removed' WHERE resulting_txn_id IN ({marks})",
+        txn_ids,
+    )
+    conn.execute(
+        f"UPDATE pending_entry SET source_txn_id = NULL WHERE source_txn_id IN ({marks})",
+        txn_ids,
+    )
+
+
+class KeepDeposit(BaseModel):
+    """Confirming that an inferred contribution really was new money."""
+
+    amount_eur: Decimal | None = Field(default=None, gt=0, description="Correct it if wrong")
+    label: str | None = Field(default=None, max_length=40)
+
+
+@router.get("/api/savings/inferred")
+def inferred(
+    conn: sqlite3.Connection = Depends(get_db),
+    person_id: int = Query(1, alias="person"),
+) -> dict[str, Any]:
+    """Contributions an earlier version of this tool deduced rather than read.
+
+    The rule was: a purchase larger than the cash on record means money must
+    have arrived. On this ledger that produced EUR 131,479 of savings nobody
+    recorded, against EUR 23,367 that were. The money may have been a deposit
+    -- or it may have come from an account this tool cannot see, which is a
+    different fact with different consequences.
+
+    The inference is gone. These rows are what it left behind, for you to keep
+    or discard one at a time.
+    """
+    rows = conn.execute(
+        """
+        SELECT t.id, t.trade_date, t.currency, t.gross_amount_local, t.gross_amount_eur,
+               t.note, a.name AS account
+        FROM transaction_ t JOIN account a ON a.id = t.account_id
+        WHERE a.person_id = ? AND t.flow_class = 'EXTERNAL_IN'
+          AND t.confidence = 'RECONSTRUCTED'
+        ORDER BY t.trade_date
+        """,
+        (person_id,),
+    ).fetchall()
+
+    total = sum((Decimal(str(r["gross_amount_eur"] or 0)) for r in rows), Decimal(0))
+    return {
+        "deposits": [
+            {
+                "id": r["id"],
+                "date": r["trade_date"],
+                "account": r["account"],
+                "currency": r["currency"],
+                "amount_local": _num(r["gross_amount_local"]),
+                "amount_eur": _num(r["gross_amount_eur"]),
+                "why_it_was_guessed": r["note"],
+            }
+            for r in rows
+        ],
+        "count": len(rows),
+        "total_eur": float(total),
+        "what_to_do": (
+            "Keep the ones that really were money you paid in. Discard the rest "
+            "— those were funded by something this tool cannot see, and counting "
+            "them makes your savings look larger and your return smaller than "
+            "they were."
+        ),
+    }
+
+
+@router.post("/api/savings/inferred/{txn_id}/keep")
+def keep_inferred(
+    txn_id: int,
+    body: KeepDeposit,
+    conn: sqlite3.Connection = Depends(get_writable_db),
+) -> dict[str, Any]:
+    """This one really was new money. Optionally correct the amount."""
+    from datetime import date as _date
+
+    from portfolio_tracker.core import rebuild
+
+    row = conn.execute(
+        "SELECT * FROM transaction_ WHERE id = ? AND confidence = 'RECONSTRUCTED'", (txn_id,)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(404, f"no inferred contribution {txn_id}")
+
+    with transaction(conn):
+        if body.amount_eur is not None:
+            rate = Decimal(str(row["fx_rate"] or 1))
+            conn.execute(
+                "UPDATE transaction_ SET gross_amount_eur = ?, gross_amount_local = ? WHERE id = ?",
+                (str(body.amount_eur), str(body.amount_eur * rate), txn_id),
+            )
+        # ACTUAL and USER: a re-import will not undo this, and no classifier
+        # will second-guess it.
+        conn.execute(
+            "UPDATE transaction_ SET confidence = 'ACTUAL', flow_class_source = 'USER', "
+            "is_new_savings = 1, savings_label = ?, note = ? WHERE id = ?",
+            (body.label, "confirmed as money you paid in", txn_id),
+        )
+        result = rebuild.run(conn, end=_date.today(), strict=False, commit=False)
+
+    return {"id": txn_id, "kept": True, "recomputed_ok": result.ok}
+
+
+@router.delete("/api/savings/inferred/{txn_id}")
+def discard_inferred(
+    txn_id: int,
+    conn: sqlite3.Connection = Depends(get_writable_db),
+) -> dict[str, Any]:
+    """This was not new money. Remove it.
+
+    A hard delete, for the reason the ledger always hard-deletes: a flag would
+    have to be honoured by lots, cash, returns, tax and attribution alike, and
+    one missed filter is a quietly wrong figure rather than a visible bug.
+    """
+    from datetime import date as _date
+
+    from portfolio_tracker.core import rebuild
+
+    row = conn.execute(
+        "SELECT * FROM transaction_ WHERE id = ? AND confidence = 'RECONSTRUCTED'", (txn_id,)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(404, f"no inferred contribution {txn_id}")
+
+    with transaction(conn):
+        _release_proposals(conn, [txn_id])
+        conn.execute("DELETE FROM transaction_ WHERE id = ?", (txn_id,))
+        result = rebuild.run(conn, end=_date.today(), strict=False, commit=False)
+
+    return {"id": txn_id, "deleted": True, "recomputed_ok": result.ok}
+
+
+@router.delete("/api/savings/inferred")
+def discard_all_inferred(
+    conn: sqlite3.Connection = Depends(get_writable_db),
+    person_id: int = Query(1, alias="person"),
+) -> dict[str, Any]:
+    """Remove every remaining inferred contribution at once.
+
+    Offered because the honest starting point for most of these is "not mine to
+    claim": keep the few you recognise, then clear the rest in one action
+    rather than thirty.
+    """
+    from datetime import date as _date
+
+    from portfolio_tracker.core import rebuild
+
+    with transaction(conn):
+        doomed = [
+            int(r["id"])
+            for r in conn.execute(
+                "SELECT t.id FROM transaction_ t JOIN account a ON a.id = t.account_id "
+                "WHERE a.person_id = ? AND t.confidence = 'RECONSTRUCTED' "
+                "AND t.flow_class = 'EXTERNAL_IN'",
+                (person_id,),
+            )
+        ]
+        _release_proposals(conn, doomed)
+        marks = ",".join("?" for _ in doomed) or "NULL"
+        cursor = conn.execute(
+            f"DELETE FROM transaction_ WHERE id IN ({marks})",
+            doomed,
+        )
+        removed = cursor.rowcount
+        result = rebuild.run(conn, end=_date.today(), strict=False, commit=False)
+
+    return {"deleted": removed, "recomputed_ok": result.ok}

@@ -36,6 +36,7 @@ from portfolio_tracker.api.deps import configure, get_db, get_writable_db
 from portfolio_tracker.api.render import render_dashboard
 from portfolio_tracker.core import (
     attribution,
+    cash,
     fx,
     glossary,
     goal,
@@ -122,6 +123,25 @@ def _latest(conn: sqlite3.Connection, person_id: int) -> sqlite3.Row:
     return cast("sqlite3.Row", row)
 
 
+def _unexplained_funding(conn: sqlite3.Connection) -> tuple[int, float]:
+    """Purchases larger than any cash this tool knows about.
+
+    The single most consequential data gap there is. Unit accounting computes
+    the unit price as ``(value - external_flow) / units``, so money that funded
+    a purchase but was never recorded is read as pure investment return -- on
+    this ledger that is the difference between a 49% return and a 13,000% one.
+
+    Cheap enough to compute per request: it walks the transaction table once,
+    and this is a single-household ledger of a few hundred rows.
+    """
+    try:
+        report = cash.compute_flows(conn)
+    except Exception:
+        return 0, 0.0
+    total = sum(float(event.amount) for event in report.unfunded if event.currency == fx.BASE)
+    return len(report.unfunded), round(total, 2)
+
+
 def _data_quality(conn: sqlite3.Connection, person_id: int, as_of: str) -> dict[str, Any]:
     """What the reader needs in order to discount the numbers correctly."""
     counts = conn.execute(
@@ -154,7 +174,11 @@ def _data_quality(conn: sqlite3.Connection, person_id: int, as_of: str) -> dict[
         """,
         (person_id, as_of),
     ).fetchone()
-    return {key: counts[key] for key in counts.keys()}  # noqa: SIM118
+    quality = {key: counts[key] for key in counts.keys()}  # noqa: SIM118
+    unfunded, unfunded_eur = _unexplained_funding(conn)
+    quality["unexplained_purchases"] = unfunded
+    quality["unexplained_funding_eur"] = unfunded_eur
+    return quality
 
 
 @app.get("/api/health/data")
@@ -333,7 +357,25 @@ def performance(
     summary = returns.summarise(conn, person_id=person_id)
     if summary.days == 0:
         raise HTTPException(404, "no portfolio history; run `pt rebuild` first")
+
+    # A return computed over unexplained funding is not a weak figure, it is a
+    # wrong one: money that paid for a purchase but was never recorded is read
+    # as investment return. Reported as unreliable rather than quietly shown.
+    unfunded, unfunded_eur = _unexplained_funding(conn)
+    reliable = unfunded == 0
+
     return {
+        "reliable": reliable,
+        "unreliable_because": (
+            None
+            if reliable
+            else (
+                f"{unfunded} purchase(s) worth about EUR {unfunded_eur:,.0f} were made "
+                "with money this tool has no record of. Until you say where it came "
+                "from, that money is counted as investment return and every figure "
+                "below is overstated."
+            )
+        ),
         "start": summary.start.isoformat(),
         "end": summary.end.isoformat(),
         "days": summary.days,

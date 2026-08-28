@@ -81,16 +81,25 @@ def list_flows(db: DbPath = DEFAULT_DB_PATH, limit: int = 40) -> None:
 
 
 @app.command()
-def propose(db: DbPath = DEFAULT_DB_PATH) -> None:
-    """Infer the contributions the ledger implies, and queue them for review."""
+def unfunded(db: DbPath = DEFAULT_DB_PATH) -> None:
+    """List purchases larger than any cash this tool knows about.
+
+    These used to be proposed as contributions, on the reasoning that the money
+    must have arrived from somewhere. It might equally have come from an account
+    this tool cannot see, and assuming otherwise invented 85% of the savings
+    figure. They are questions now; marking one as new money on the Trades page
+    is what turns it into a contribution.
+    """
     conn = connect(db)
     try:
-        created, report = cash.propose_deposits(conn)
-        conn.commit()
-        typer.echo(f"queued {created} new proposal(s)")
-        for currency, amount in sorted(report.total_inferred.items()):
-            typer.echo(f"  inferred contributions in {currency}: {amount:,.2f}")
-        typer.echo("\nreview with:  pt flows list")
+        events = cash.unfunded_purchases(conn)
+        if not events:
+            typer.echo("every purchase is covered by cash this tool knows about")
+            return
+        typer.echo(f"{len(events)} purchase(s) this tool cannot account for:\n")
+        for event in events:
+            typer.echo(f"  {event.on}  {event.amount:>12,.2f} {event.currency}  {event.note}")
+        typer.echo("\nSay where each came from on the Trades page.")
     finally:
         conn.close()
 

@@ -1,18 +1,28 @@
-"""Cash, and the contributions the source data never recorded.
+"""Cash, and the purchases the source data cannot account for.
 
-A positions export says what was bought and sold. It does not say that the
-account was funded, so the money crossing into the portfolio is invisible --
-about EUR 114,000 of it here. That matters more than it sounds: unit accounting
-computes the daily unit price as ``(value - external_flow) / units``, so a
-contribution mistaken for zero flow is recorded as pure investment return. The
-owner's savings get played back as skill.
+A positions export says what was bought and sold. It does not say where the
+money came from, so a purchase can exceed every euro this tool knows about.
+
+**That shortfall is not a deposit.** An earlier version of this module assumed
+it was -- "you bought EUR 7,926 with EUR 0 of recorded cash, so EUR 7,926 must
+have arrived" -- and proposed a contribution for it. On the owner's real data
+that produced EUR 131,479 of invented savings against EUR 23,367 of recorded
+ones, which is not a small error at the edges: it is 85% of the figure. It
+also lumped a year of accumulated saving into whichever month a purchase
+happened, and the projection then took that as a monthly rate.
+
+The money may have been a deposit. It may equally have come from an account
+this tool does not see, or from selling something it has no record of. Those
+are different facts with different consequences, and nothing here can tell
+them apart -- so the shortfall is recorded as **unfunded**, surfaced for a
+person to explain, and counted as savings only once somebody says it was.
 
 The model is a running cash balance per account:
 
 * a sale credits it,
 * a purchase debits it,
-* a purchase exceeding the balance implies a **deposit of the shortfall**, dated
-  that day,
+* a purchase exceeding the balance is recorded as unfunded, and the balance
+  resets to zero rather than going negative,
 * a sale marked as a withdrawal debits it instead of leaving the money to be
   reinvested.
 
@@ -20,13 +30,11 @@ Proceeds waiting to be reinvested stay as cash, which is the point: money that
 sat in the account for three days really was held for three days, and dropping
 it would show as a loss followed by an identical gain.
 
-Nothing here writes to ``transaction_``. Inferences become proposals; only a
-confirmation turns one into a ledger entry.
+Nothing here writes to ``transaction_``.
 """
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -54,7 +62,7 @@ class FlowEvent:
     on: date
     account_id: int
     currency: str
-    kind: str  # SELL_PROCEEDS | PURCHASE | WITHDRAWAL | INFERRED_DEPOSIT
+    kind: str  # SELL_PROCEEDS | PURCHASE | WITHDRAWAL | UNFUNDED
     amount: Decimal  # signed: positive credits the balance
     balance_after: Decimal
     txn_id: int | None = None
@@ -77,16 +85,18 @@ INCOME_KINDS = frozenset({"DISTRIBUTION", "INTEREST"})
 @dataclass
 class FlowReport:
     events: list[FlowEvent] = field(default_factory=list)
-    inferred_deposits: list[FlowEvent] = field(default_factory=list)
+    #: Purchases larger than any cash this tool knows about. A question,
+    #: never an answer -- see the module docstring.
+    unfunded: list[FlowEvent] = field(default_factory=list)
     unresolved_sales: list[int] = field(default_factory=list)
     idle_periods: list[tuple[date, date, Decimal, int]] = field(default_factory=list)
 
     @property
-    def total_inferred(self) -> dict[str, Decimal]:
+    def total_unfunded(self) -> dict[str, Decimal]:
         """Per currency. Summing across them would add lira to euro."""
         totals: dict[str, Decimal] = defaultdict(lambda: ZERO)
-        for deposit in self.inferred_deposits:
-            totals[deposit.currency] += deposit.amount
+        for event in self.unfunded:
+            totals[event.currency] += event.amount
         return dict(totals)
 
 
@@ -227,9 +237,13 @@ def compute_flows(conn: sqlite3.Connection, *, account_id: int | None = None) ->
         else:
             shortfall = value - balance
             if shortfall > DUST:
-                # Only the part not covered by existing cash is new money.
-                deposit = record(
-                    "INFERRED_DEPOSIT",
+                # Recorded, not explained. Where this money came from is a
+                # question for the owner: it may have been a deposit, or an
+                # account this tool cannot see, or a sale it has no record of.
+                # Guessing "deposit" was how 85% of the savings figure came to
+                # be invented.
+                unfunded = record(
+                    "UNFUNDED",
                     quantize_money(shortfall),
                     ZERO,
                     ZERO,
@@ -237,7 +251,7 @@ def compute_flows(conn: sqlite3.Connection, *, account_id: int | None = None) ->
                     f"purchase of {quantize_money(value)} against a cash balance of "
                     f"{quantize_money(balance)}",
                 )
-                report.inferred_deposits.append(deposit)
+                report.unfunded.append(unfunded)
                 balance, income = ZERO, ZERO
             else:
                 balance, income = _spend(balance, income, value)
@@ -280,39 +294,17 @@ def _idle_periods(events: list[FlowEvent]) -> list[tuple[date, date, Decimal, in
     return periods
 
 
-def propose_deposits(
+def unfunded_purchases(
     conn: sqlite3.Connection, *, account_id: int | None = None
-) -> tuple[int, FlowReport]:
-    """Queue the inferred deposits for review. Returns how many are new.
+) -> list[FlowEvent]:
+    """Purchases this tool cannot account for, for a person to explain.
 
-    Idempotent: the table's uniqueness constraint means re-running does not
-    duplicate a proposal that is already waiting.
+    Replaces `propose_deposits`, which turned each one into a proposed
+    contribution. It is the same list; what changed is that it is now a
+    question rather than an answer. Marking one as new money is a decision
+    somebody makes on the Trades page, and only then does it become savings.
     """
-    report = compute_flows(conn, account_id=account_id)
-    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    created = 0
-
-    for deposit in report.inferred_deposits:
-        cursor = conn.execute(
-            """
-            INSERT OR IGNORE INTO pending_entry
-                (kind, account_id, proposed_date, currency, amount_local,
-                 basis, derivation, source_txn_id, created_at)
-            VALUES ('EXTERNAL_IN', ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                str(deposit.account_id),
-                deposit.on.isoformat(),
-                deposit.currency,
-                deposit.amount,
-                deposit.note,
-                json.dumps({"inferred": True, "rule": "purchase exceeded available cash"}),
-                deposit.txn_id,
-                now,
-            ),
-        )
-        created += cursor.rowcount
-    return created, report
+    return compute_flows(conn, account_id=account_id).unfunded
 
 
 def confirm(conn: sqlite3.Connection, pending_id: int) -> int:

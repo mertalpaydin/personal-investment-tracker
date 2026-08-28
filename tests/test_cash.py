@@ -67,7 +67,7 @@ def trade(
 def test_a_purchase_with_no_prior_sale_is_entirely_new_money(db: sqlite3.Connection) -> None:
     trade(db, "BUY", "2026-01-05", "1500")
     report = cash.compute_flows(db)
-    assert report.total_inferred == {"EUR": Decimal("1500.00")}
+    assert report.total_unfunded == {"EUR": Decimal("1500.00")}
 
 
 def test_only_the_shortfall_counts_as_new_money(db: sqlite3.Connection) -> None:
@@ -75,13 +75,13 @@ def test_only_the_shortfall_counts_as_new_money(db: sqlite3.Connection) -> None:
     trade(db, "SELL", "2026-01-05", "1000")
     trade(db, "BUY", "2026-01-08", "1500", instrument=2)
     report = cash.compute_flows(db)
-    assert report.total_inferred == {"EUR": Decimal("500.00")}
+    assert report.total_unfunded == {"EUR": Decimal("500.00")}
 
 
 def test_proceeds_fully_covering_a_purchase_infer_nothing(db: sqlite3.Connection) -> None:
     trade(db, "SELL", "2026-01-05", "2000")
     trade(db, "BUY", "2026-01-08", "1500", instrument=2)
-    assert cash.compute_flows(db).inferred_deposits == []
+    assert cash.compute_flows(db).unfunded == []
 
 
 def test_leftover_proceeds_remain_available_for_a_later_purchase(
@@ -91,7 +91,7 @@ def test_leftover_proceeds_remain_available_for_a_later_purchase(
     trade(db, "BUY", "2026-01-08", "1500", instrument=2)
     trade(db, "BUY", "2026-02-01", "600", instrument=2)
     # 500 was left over, so only 100 of the second purchase is new money.
-    assert cash.compute_flows(db).total_inferred == {"EUR": Decimal("100.00")}
+    assert cash.compute_flows(db).total_unfunded == {"EUR": Decimal("100.00")}
 
 
 def test_idle_proceeds_are_held_for_the_days_between(db: sqlite3.Connection) -> None:
@@ -120,7 +120,7 @@ def test_a_withdrawal_does_not_fund_a_later_purchase(db: sqlite3.Connection) -> 
     sale = trade(db, "SELL", "2026-01-05", "1000")
     trade(db, "BUY", "2026-01-08", "1500", instrument=2)
     cash.set_disposition(db, sale, "WITHDRAW")
-    assert cash.compute_flows(db).total_inferred == {"EUR": Decimal("1500.00")}
+    assert cash.compute_flows(db).total_unfunded == {"EUR": Decimal("1500.00")}
 
 
 def test_a_sale_defaults_to_reinvestment_but_is_reported_as_unresolved(
@@ -167,7 +167,7 @@ def test_balances_are_tracked_per_currency(db: sqlite3.Connection) -> None:
     )
     trade(db, "BUY", "2026-01-08", "1500", instrument=2)
 
-    totals = cash.compute_flows(db).total_inferred
+    totals = cash.compute_flows(db).total_unfunded
     assert totals == {"EUR": Decimal("1500.00")}
     assert "TRY" not in totals
 
@@ -188,7 +188,7 @@ def test_long_idle_cash_is_flagged_not_assumed_withdrawn(db: sqlite3.Connection)
     assert balance == Decimal("5000")
     assert days > cash.IDLE_FLAG_DAYS
     # Still available: it was flagged, not confiscated.
-    assert report.total_inferred == {}
+    assert report.total_unfunded == {}
 
 
 def test_short_gaps_are_not_flagged(db: sqlite3.Connection) -> None:
@@ -198,63 +198,61 @@ def test_short_gaps_are_not_flagged(db: sqlite3.Connection) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Proposals, not entries
+# Unfunded purchases: a question, never an answer
 # ---------------------------------------------------------------------------
 
 
-def test_inference_writes_no_transaction_until_confirmed(db: sqlite3.Connection) -> None:
-    """The rule from the original brief: nothing auto-generated reaches the
-    ledger. A plausible number nobody checked is how a tracker starts lying."""
+def test_an_unfunded_purchase_creates_nothing(db: sqlite3.Connection) -> None:
+    """The correction this module exists for.
+
+    A purchase larger than any recorded cash used to be turned into a proposed
+    contribution, on the reasoning that the money must have arrived. On the
+    owner's real data that invented EUR 131,479 of savings against EUR 23,367
+    of recorded ones -- 85% of the figure. The money may have been a deposit;
+    it may equally have come from an account this tool cannot see. Nothing here
+    can tell them apart, so nothing here decides.
+    """
     trade(db, "BUY", "2026-01-05", "1500")
     before = db.execute("SELECT count(*) n FROM transaction_").fetchone()["n"]
 
-    created, _ = cash.propose_deposits(db)
-    assert created == 1
+    events = cash.unfunded_purchases(db)
+
+    assert len(events) == 1
+    assert events[0].amount == D("1500.00")
+    assert events[0].kind == "UNFUNDED"
+    # Nothing written, anywhere.
     assert db.execute("SELECT count(*) n FROM transaction_").fetchone()["n"] == before
-
-    pending = db.execute("SELECT id FROM pending_entry").fetchone()
-    txn_id = cash.confirm(db, int(pending["id"]))
-    assert db.execute("SELECT count(*) n FROM transaction_").fetchone()["n"] == before + 1
-
-    row = db.execute("SELECT type, flow_class FROM transaction_ WHERE id = ?", (txn_id,)).fetchone()
-    assert row["type"] == "DEPOSIT"
-    assert row["flow_class"] == "EXTERNAL_IN"
+    assert db.execute("SELECT count(*) n FROM pending_entry").fetchone()["n"] == 0
 
 
-def test_proposing_twice_does_not_duplicate(db: sqlite3.Connection) -> None:
+def test_an_unfunded_purchase_is_not_counted_as_saving(db: sqlite3.Connection) -> None:
+    """It reaches neither the ledger nor the savings figure."""
+    from portfolio_tracker.core import savings
+
     trade(db, "BUY", "2026-01-05", "1500")
-    assert cash.propose_deposits(db)[0] == 1
-    assert cash.propose_deposits(db)[0] == 0
+    cash.unfunded_purchases(db)
+    savings.classify(db, person_id=1)
+    savings.build_periods(db, person_id=1)
+
+    assert savings.summarise(db, person_id=1).cumulative_eur == D("0.00")
 
 
-def test_a_confirmed_proposal_cannot_be_confirmed_again(db: sqlite3.Connection) -> None:
-    trade(db, "BUY", "2026-01-05", "1500")
-    cash.propose_deposits(db)
-    pending_id = int(db.execute("SELECT id FROM pending_entry").fetchone()["id"])
-    cash.confirm(db, pending_id)
-    with pytest.raises(LookupError, match="awaiting a decision"):
-        cash.confirm(db, pending_id)
-
-
-def test_a_rejected_proposal_records_why(db: sqlite3.Connection) -> None:
-    trade(db, "BUY", "2026-01-05", "1500")
-    cash.propose_deposits(db)
-    pending_id = int(db.execute("SELECT id FROM pending_entry").fetchone()["id"])
-    cash.reject(db, pending_id, "transferred from another broker, not new money")
-    row = db.execute(
-        "SELECT status, note FROM pending_entry WHERE id = ?", (pending_id,)
-    ).fetchone()
-    assert row["status"] == "REJECTED"
-    assert "another broker" in row["note"]
-
-
-def test_the_proposal_explains_its_own_arithmetic(db: sqlite3.Connection) -> None:
-    """A proposal the user cannot check is one they will rubber-stamp."""
+def test_only_the_uncovered_part_is_unfunded(db: sqlite3.Connection) -> None:
+    """Cash the tool does know about is not a mystery."""
     trade(db, "SELL", "2026-01-05", "1000")
     trade(db, "BUY", "2026-01-08", "1500", instrument=2)
-    cash.propose_deposits(db)
-    basis = db.execute("SELECT basis FROM pending_entry").fetchone()["basis"]
-    assert "1500" in basis and "1000" in basis
+
+    events = cash.unfunded_purchases(db)
+    assert len(events) == 1
+    assert events[0].amount == D("500.00")
+
+
+def test_an_unfunded_purchase_shows_its_arithmetic(db: sqlite3.Connection) -> None:
+    """A figure somebody has to explain must show what produced it."""
+    trade(db, "SELL", "2026-01-05", "1000")
+    trade(db, "BUY", "2026-01-08", "1500", instrument=2)
+    note = cash.unfunded_purchases(db)[0].note or ""
+    assert "1500" in note and "1000" in note
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +332,7 @@ def test_an_inferred_deposit_resets_both_pots(db: sqlite3.Connection) -> None:
     trade(db, "DIVIDEND", "2026-01-06", "100")
     trade(db, "BUY", "2026-01-07", "5000")
     report = cash.compute_flows(db)
-    assert report.inferred_deposits[0].amount == D("4900.00")
+    assert report.unfunded[0].amount == D("4900.00")
     state = final(report)
     assert state.balance_after == D(0)
     assert state.income_after == D(0)

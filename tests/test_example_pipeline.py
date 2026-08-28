@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 from portfolio_tracker import seeds as instrument_seeds
-from portfolio_tracker.core import attribution, cash, doctor, look_through, rebuild, returns
+from portfolio_tracker.core import attribution, cash, doctor, fx, look_through, rebuild, returns
 from portfolio_tracker.db import migrate as M
 from portfolio_tracker.db.connection import connect
 from portfolio_tracker.importers.investing_com.importer import import_positions
@@ -87,14 +87,40 @@ def _priced(conn: sqlite3.Connection) -> None:
 
 @pytest.fixture
 def built(tmp_path: Path) -> sqlite3.Connection:
-    """The full documented pipeline, contributions included."""
+    """The full documented pipeline, contributions recorded.
+
+    The contributions are entered here rather than inferred from purchases.
+    That inference used to run automatically and is gone: a purchase larger
+    than any recorded cash might have been funded by a deposit, or by an
+    account this tool cannot see, and assuming the first invented 85% of the
+    owner's savings figure. What a person records is what counts, so the
+    corpus records some.
+    """
     conn = _imported(tmp_path)
     _priced(conn)
-    cash.propose_deposits(conn)
+
+    # Each unfunded purchase, entered as the deposit that funded it -- the
+    # decision a person makes on the Trades page, made here in one line.
+    for event in cash.unfunded_purchases(conn):
+        rate = D(1)
+        if event.currency != fx.BASE:
+            rate = fx.get_rate(conn, event.currency, event.on, strict=False).rate
+        conn.execute(
+            "INSERT INTO transaction_ (account_id, type, trade_date, currency, "
+            "gross_amount_local, gross_amount_eur, fx_rate, source, confidence, "
+            "flow_class, note) VALUES (?, 'DEPOSIT', ?, ?, ?, ?, ?, 'MANUAL', 'ACTUAL', "
+            "'EXTERNAL_IN', 'recorded contribution')",
+            (
+                event.account_id,
+                event.on.isoformat(),
+                event.currency,
+                str(event.amount),
+                str(fx.to_eur(event.amount, rate)),
+                str(rate),
+            ),
+        )
     conn.commit()
-    for entry in conn.execute("SELECT id FROM pending_entry WHERE status = 'PROPOSED'").fetchall():
-        cash.confirm(conn, int(entry["id"]))
-    conn.commit()
+
     result = rebuild.run(conn, end=AS_OF)
     assert result.breaks == [], result.breaks
     return conn
@@ -142,14 +168,20 @@ def test_without_inferred_contributions_the_return_is_nonsense(tmp_path: Path) -
     assert summary.twr is not None and summary.twr > D(100)  # i.e. over 10,000%
 
 
-def test_inferring_contributions_makes_the_return_believable(
+def test_recorded_contributions_make_the_return_believable(
     built: sqlite3.Connection,
 ) -> None:
+    """Unit accounting needs the contributions to be there.
+
+    Without them the money crossing in is read as investment return, and the
+    owner's saving is played back as skill. The difference between recording
+    them and inferring them is only *who decided* -- the arithmetic below is
+    the same either way, and it is the arithmetic that makes the figure sane.
+    """
     summary = returns.summarise(built, person_id=1)
     assert summary.external_flows_eur > D(130_000)
     assert summary.twr_annualised is not None
     assert D("0.05") < summary.twr_annualised < D("0.50")
-    assert summary.xirr_reliability == "low"  # the flows were inferred, and it says so
 
 
 def test_the_headline_total_is_holdings_plus_deposits(built: sqlite3.Connection) -> None:

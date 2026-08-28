@@ -100,6 +100,18 @@ class TransactionIn(BaseModel):
     orig_cost_local: Decimal | None = Field(default=None, ge=0)
     note: str | None = None
 
+    #: How much of this purchase was funded by money arriving from outside --
+    #: a salary transfer, a bonus, a gift. Recorded as a separate DEPOSIT
+    #: alongside the trade.
+    #:
+    #: It is asked rather than deduced. This tool used to infer a contribution
+    #: whenever a purchase exceeded the cash it knew about, and on real data
+    #: that invented 85% of the savings figure: the money might equally have
+    #: come from an account it cannot see. Only the person knows, so only the
+    #: person says.
+    new_money_local: Decimal = Field(default=ZERO, ge=0)
+    new_money_label: str | None = Field(default=None, max_length=40)
+
 
 class Problem(BaseModel):
     code: str
@@ -497,6 +509,32 @@ def validate(
     return _response(conn, body, check(conn, body, person_id=person_id))
 
 
+def _record_new_money(
+    conn: sqlite3.Connection, body: TransactionIn, checked: Checked
+) -> int | None:
+    """Book the part of a trade that was funded from outside.
+
+    Dated the same day as the trade, which is a stated convention rather than
+    an observation: the money may have arrived earlier and waited. The trade
+    date is the one thing that is certain here.
+
+    The conversion itself is `core.ledger`'s -- this module hands over a
+    validated amount and a rate already pinned to a date, and converts nothing
+    (ADR 0004, enforced by tests/test_fx.py).
+    """
+    if body.new_money_local <= ZERO:
+        return None
+    return ledger.record_new_money(
+        conn,
+        account_id=body.account_id,
+        on=body.trade_date,
+        currency=checked.currency,
+        amount_local=body.new_money_local,
+        rate=checked.rate if checked.rate is not None else Decimal(1),
+        label=body.new_money_label,
+    )
+
+
 def _insert(conn: sqlite3.Connection, body: TransactionIn, checked: Checked) -> int:
     """Hand the validated trade to `core.ledger`, which owns the write.
 
@@ -599,6 +637,7 @@ def create(
     with transaction(conn):
         txn_id = _insert(conn, body, checked)
         _log(conn, "CREATE", txn_id, _normalised(conn, body, checked))
+        _record_new_money(conn, body, checked)
         rebuilt = _rebuild_after(conn)
 
     row = conn.execute("SELECT * FROM transaction_ WHERE id = ?", (txn_id,)).fetchone()

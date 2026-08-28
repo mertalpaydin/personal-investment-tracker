@@ -185,8 +185,8 @@ def test_booking_records_income_that_moves_no_money(db: sqlite3.Connection) -> N
     """
     from portfolio_tracker.core import cash
 
-    # The cash picture before the charge exists at all. The purchase implies a
-    # contribution; that is expected and has nothing to do with this.
+    # The cash picture before the charge exists at all. The purchase is
+    # unfunded; that is expected and has nothing to do with this.
     before = cash.compute_flows(db)
 
     vorabpauschale.propose(db, tax_year=YEAR)
@@ -198,11 +198,11 @@ def test_booking_records_income_that_moves_no_money(db: sqlite3.Connection) -> N
     assert row["gross_amount_eur"] == D("178.50")
 
     # Booking it changes nothing about the money: no event, no balance, no
-    # inferred contribution. A DIVIDEND here would credit EUR 178.50 of cash
+    # unfunded purchase. A DIVIDEND here would credit EUR 178.50 of cash
     # that does not exist and report a return the portfolio did not earn.
     after = cash.compute_flows(db)
     assert len(after.events) == len(before.events)
-    assert after.total_inferred == before.total_inferred
+    assert after.total_unfunded == before.total_unfunded
     assert all(e.kind != "VORABPAUSCHALE" for e in after.events)
 
 
