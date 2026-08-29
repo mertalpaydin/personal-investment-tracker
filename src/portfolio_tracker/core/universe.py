@@ -134,7 +134,7 @@ def load(conn: sqlite3.Connection, *, refresh: bool = False) -> LoadReport:
     report = LoadReport(total=len(entries))
 
     existing = {
-        str(r["import_key"]): r
+        str(r["import_key"] if isinstance(r, (sqlite3.Row, dict)) else r[1]): r
         for r in conn.execute("SELECT id, import_key, status FROM instrument")
     }
 
@@ -144,10 +144,12 @@ def load(conn: sqlite3.Connection, *, refresh: bool = False) -> LoadReport:
         level = spec.get("risk_level") or (DEFAULT_RISK_LEVEL.get(bucket, 4) if bucket else None)
 
         if row is not None:
-            if row["status"] == "OWNED":
+            r_status = row["status"] if isinstance(row, (sqlite3.Row, dict)) else row[2]
+            r_id = row["id"] if isinstance(row, (sqlite3.Row, dict)) else row[0]
+            if r_status == "OWNED":
                 report.owned.append(key)
                 continue
-            if row["status"] == "WATCH":
+            if r_status == "WATCH":
                 report.watched.append(key)
                 continue
             if not refresh:
@@ -169,7 +171,7 @@ def load(conn: sqlite3.Connection, *, refresh: bool = False) -> LoadReport:
                     spec.get("ter_bps"),
                     bucket,
                     level,
-                    row["id"],
+                    r_id,
                 ),
             )
             report.updated += 1
@@ -211,6 +213,14 @@ def unload(conn: sqlite3.Connection) -> int:
     """
     keys = list(catalogue())
     marks = ",".join("?" * len(keys))
+    conn.execute(
+        f"""
+        DELETE FROM price WHERE instrument_id IN (
+            SELECT id FROM instrument WHERE status = ? AND import_key IN ({marks})
+        )
+        """,
+        [UNIVERSE, *keys],
+    )
     cursor = conn.execute(
         f"DELETE FROM instrument WHERE status = ? AND import_key IN ({marks})",
         [UNIVERSE, *keys],
