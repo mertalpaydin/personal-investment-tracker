@@ -124,14 +124,16 @@ class WatchRequest(BaseModel):
     isin: str | None = None
     ter_bps: int | None = Field(default=None, ge=0, le=1000)
     risk_bucket: str | None = None
+    risk_level: int | None = Field(default=None, ge=1, le=7)
     notes: str | None = None
 
 
 class DetailsRequest(BaseModel):
-    """The two facts no free source supplies."""
+    """The facts no free source supplies."""
 
     ter_bps: int | None = Field(default=None, ge=0, le=1000)
     risk_bucket: str | None = None
+    risk_level: int | None = Field(default=None, ge=1, le=7)
 
 
 def _entry_json(entry: watchlist.WatchEntry) -> dict[str, Any]:
@@ -145,6 +147,7 @@ def _entry_json(entry: watchlist.WatchEntry) -> dict[str, Any]:
         "ter_bps": entry.ter_bps,
         "ter_pct": _num(watchlist.as_percent(entry.ter_bps)),
         "risk_bucket": entry.risk_bucket,
+        "risk_level": entry.risk_level,
         "prices": entry.prices,
         "first_price": entry.first_price.isoformat() if entry.first_price else None,
         "last_price": entry.last_price.isoformat() if entry.last_price else None,
@@ -166,6 +169,8 @@ def _metrics_json(m: performance.Metrics) -> dict[str, Any]:
         "vol_1y": _num(m.vol_1y),
         "vol_3y": _num(m.vol_3y),
         "max_dd_3y": _num(m.max_dd_3y),
+        "sharpe_1y": _num(m.sharpe_1y),
+        "sharpe_3y": _num(m.sharpe_3y),
         "caveats": m.caveats,
     }
 
@@ -221,6 +226,7 @@ def add(
                 isin=body.isin,
                 ter_bps=body.ter_bps,
                 risk_bucket=body.risk_bucket,
+                risk_level=body.risk_level,
                 notes=body.notes,
             )
     except watchlist.WatchlistError as exc:
@@ -271,7 +277,7 @@ def details(
     body: DetailsRequest,
     conn: sqlite3.Connection = Depends(get_writable_db),
 ) -> dict[str, Any]:
-    """Record the ongoing charge and the risk category.
+    """Record ongoing charge, risk category, and risk level.
 
     Neither can be fetched. No free source supplies a UCITS fund's ongoing
     charge -- it is on the key information document -- and a risk category is
@@ -280,7 +286,11 @@ def details(
     try:
         with transaction(conn):
             watchlist.set_details(
-                conn, import_key, ter_bps=body.ter_bps, risk_bucket=body.risk_bucket
+                conn,
+                import_key,
+                ter_bps=body.ter_bps,
+                risk_bucket=body.risk_bucket,
+                risk_level=body.risk_level,
             )
     except watchlist.WatchlistError as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -298,18 +308,21 @@ def series(
     conn: sqlite3.Connection = Depends(get_db),
     since: date | None = Query(None, alias="from"),
     until: date | None = Query(None, alias="to"),
+    basis: str = Query("auto"),
 ) -> dict[str, Any]:
-    """One instrument's level series, for charting against another."""
-    row = conn.execute(
-        "SELECT id, import_key, name, currency FROM instrument "
-        "WHERE import_key = ? OR isin = ? OR symbol = ?",
-        (import_key, import_key, import_key),
-    ).fetchone()
-    if row is None:
-        raise HTTPException(404, f"no instrument called {import_key!r}")
+    """Indexed price series for one instrument, in euros."""
+    try:
+        row = peers._instrument(conn, import_key)
+    except peers.PeerError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
     points, basis, caveats = performance.series(
-        conn, int(row["id"]), currency=row["currency"], start=since, end=until
+        conn,
+        int(row["id"]),
+        currency=row["currency"],
+        start=since,
+        end=until,
+        basis=basis,
     )
     return {
         "instrument": row["import_key"],
@@ -328,6 +341,7 @@ def _candidate_json(c: peers.Candidate) -> dict[str, Any]:
         "name": c.name,
         "status": c.status,
         "bucket": c.bucket,
+        "risk_level": c.risk_level,
         "vol_band": c.vol_band,
         "basis": c.basis,
         "comparable": c.comparable,
@@ -339,6 +353,8 @@ def _candidate_json(c: peers.Candidate) -> dict[str, Any]:
         "vol_1y": _num(c.vol_1y),
         "vol_3y": _num(c.vol_3y),
         "max_dd_3y": _num(c.max_dd_3y),
+        "sharpe_1y": _num(c.sharpe_1y),
+        "sharpe_3y": _num(c.sharpe_3y),
         "ret_1y_delta": _num(c.ret_1y_delta),
         "ret_3y_ann_delta": _num(c.ret_3y_ann_delta),
         "vol_3y_delta": _num(c.vol_3y_delta),
@@ -354,6 +370,7 @@ def _scan_json(scan: peers.PeerScan) -> dict[str, Any]:
         "as_of": scan.as_of.isoformat(),
         "subject": _candidate_json(scan.subject),
         "bucket": scan.bucket,
+        "risk_level": scan.risk_level,
         "bucket_method": scan.bucket_method,
         "vol_band": scan.vol_band,
         "universe_size": scan.universe_size,
@@ -364,6 +381,34 @@ def _scan_json(scan: peers.PeerScan) -> dict[str, Any]:
             "A difference in past return, not a prediction and not a "
             "recommendation. A fund that returned more took some risk to do "
             "it; the volatility and worst fall are shown so that is visible."
+        ),
+    }
+
+
+@router.get("/api/peers/leaderboard")
+def peer_leaderboard(
+    conn: sqlite3.Connection = Depends(get_db),
+    risk_level: int | None = Query(None, ge=1, le=7),
+    risk_bucket: str | None = Query(None),
+    top: int = Query(10, ge=1, le=50),
+    include_owned: bool = Query(True, alias="owned"),
+) -> dict[str, Any]:
+    """Top-performing instruments by risk group, ranked by Sharpe and returns."""
+    items = peers.leaderboard(
+        conn,
+        risk_level=risk_level,
+        risk_bucket=risk_bucket,
+        top=top,
+        include_owned=include_owned,
+    )
+    return {
+        "risk_level": risk_level,
+        "risk_bucket": risk_bucket,
+        "count": len(items),
+        "candidates": [_candidate_json(c) for c in items],
+        "note": (
+            "Ranked by risk-adjusted return (Sharpe ratio and 3Y/1Y returns). "
+            "Tickers with at least 1 year of history are fully included."
         ),
     }
 
@@ -523,7 +568,7 @@ def suggested_categories(
     """
     rows = conn.execute(
         """
-        SELECT DISTINCT i.import_key, i.name, i.asset_class, i.risk_bucket
+        SELECT DISTINCT i.import_key, i.name, i.asset_class, i.risk_bucket, i.risk_level
         FROM position_daily p
         JOIN instrument i ON i.id = p.instrument_id
         JOIN account a ON a.id = p.account_id
@@ -545,7 +590,9 @@ def suggested_categories(
                 "instrument": found.import_key,
                 "name": row["name"],
                 "current": row["risk_bucket"],
+                "current_risk_level": row["risk_level"] if "risk_level" in row.keys() else None,  # noqa: SIM118
                 "suggested": found.bucket,
+                "suggested_risk_level": found.risk_level,
                 "why": found.why,
                 "matched": found.matched,
                 "hedged": classify.is_hedged(row["name"]),
@@ -564,9 +611,10 @@ def suggested_categories(
 
 
 class CategoryDecisions(BaseModel):
-    """Categories the owner has agreed to, keyed by instrument."""
+    """Categories and risk levels the owner has agreed to, keyed by instrument."""
 
     categories: dict[str, str] = Field(default_factory=dict)
+    risk_levels: dict[str, int] = Field(default_factory=dict)
 
 
 @router.post("/api/instruments/categories")
@@ -582,8 +630,9 @@ def accept_categories(
     saved: list[str] = []
     with transaction(conn):
         for key, bucket in body.categories.items():
+            level = body.risk_levels.get(key)
             try:
-                watchlist.set_details(conn, key, risk_bucket=bucket)
+                watchlist.set_details(conn, key, risk_bucket=bucket, risk_level=level)
             except watchlist.WatchlistError as exc:
                 raise HTTPException(409, str(exc)) from exc
             saved.append(key)
