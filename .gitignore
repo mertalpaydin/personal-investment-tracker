@@ -117,7 +117,7 @@ htmlcov/
 # Claude Code: shared project settings are committable, per-machine
 # permission grants are not.
 .claude/settings.local.json
-
+claude.md
 .DS_Store
 Thumbs.db
 desktop.ini
