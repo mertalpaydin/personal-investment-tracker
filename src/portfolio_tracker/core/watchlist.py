@@ -64,7 +64,17 @@ class WatchEntry:
     caveats: list[str] = field(default_factory=list)
 
 
-def _existing(conn: sqlite3.Connection, import_key: str) -> sqlite3.Row | None:
+def _existing(
+    conn: sqlite3.Connection, import_key: str, price_symbol: str | None = None
+) -> sqlite3.Row | None:
+    if price_symbol:
+        row = conn.execute(
+            "SELECT * FROM instrument WHERE import_key = ? "
+            "OR (price_symbol IS NOT NULL AND price_symbol = ?)",
+            (import_key, price_symbol),
+        ).fetchone()
+        if row is not None:
+            return cast("sqlite3.Row", row)
     return cast(
         "sqlite3.Row | None",
         conn.execute("SELECT * FROM instrument WHERE import_key = ?", (import_key,)).fetchone(),
@@ -99,15 +109,6 @@ def add(
     if not key:
         raise WatchlistError("an instrument needs a key")
 
-    row = _existing(conn, key)
-    if row is not None:
-        if row["status"] == "OWNED":
-            raise WatchlistError(
-                f"You already hold {key}; it is on the Holdings page rather than the watchlist."
-            )
-        conn.execute("UPDATE instrument SET status = ? WHERE id = ?", (WATCHED, row["id"]))
-        return int(row["id"])
-
     fund = is_fund if is_fund is not None else asset_class in ("ETF", "FUND")
     clean_bucket = risk_bucket.strip().upper() if risk_bucket else None
     level = (
@@ -115,6 +116,27 @@ def add(
         if risk_level is not None
         else (DEFAULT_RISK_LEVEL.get(clean_bucket) if clean_bucket else None)
     )
+
+    row = _existing(conn, key, price_symbol)
+    if row is not None:
+        if row["status"] == "OWNED":
+            raise WatchlistError(
+                f"You already hold {key}; it is on the Holdings page rather than the watchlist."
+            )
+        updates = ["status = ?"]
+        params: list[object] = [WATCHED]
+        if clean_bucket and not row["risk_bucket"]:
+            updates.append("risk_bucket = ?")
+            params.append(clean_bucket)
+        if level and not row["risk_level"]:
+            updates.append("risk_level = ?")
+            params.append(level)
+        if ter_bps is not None and row["ter_bps"] is None:
+            updates.append("ter_bps = ?")
+            params.append(ter_bps)
+        params.append(row["id"])
+        conn.execute(f"UPDATE instrument SET {', '.join(updates)} WHERE id = ?", params)
+        return int(row["id"])
 
     cursor = conn.execute(
         """

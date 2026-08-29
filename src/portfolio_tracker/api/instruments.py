@@ -68,41 +68,87 @@ def _near_misses(symbol: str) -> list[dict[str, Any]]:
 
 
 @router.get("/api/watchlist/lookup")
-def lookup(symbol: str = Query(..., min_length=1)) -> dict[str, Any]:
+def lookup(
+    symbol: str = Query(..., min_length=1),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> dict[str, Any]:
     """What a ticker appears to be. Writes nothing.
 
     Answers 200 with ``found: false`` rather than an error status when the
     symbol is unknown: "I could not find that" is a normal outcome of typing
     a ticker, not a fault, and the form needs to say so beside the field.
     """
+    sym_clean = symbol.strip()
+    existing = conn.execute(
+        """
+        SELECT import_key, isin, name, asset_class, currency, price_symbol,
+               ter_bps, risk_bucket, risk_level
+        FROM instrument
+        WHERE import_key = ? OR price_symbol = ? OR import_key = ? OR price_symbol = ?
+        LIMIT 1
+        """,
+        (sym_clean, sym_clean, sym_clean.upper(), sym_clean.upper()),
+    ).fetchone()
+
     try:
-        found = YFinanceProvider().describe(symbol)
+        found = YFinanceProvider().describe(sym_clean)
     except ProviderUnavailable as exc:
-        # A ticker the feed does not know is usually the right fund on the
-        # wrong exchange -- IWDA trades in Amsterdam and London, and on Xetra
-        # the same fund is EUNL. Guessing is not on, but the catalogue already
-        # holds two hundred symbols verified against this feed, so it can
-        # offer the near misses instead of leaving a dead end.
+        if existing is not None:
+            return {
+                "found": True,
+                "symbol": existing["price_symbol"] or existing["import_key"],
+                "name": existing["name"],
+                "currency": existing["currency"],
+                "exchange": "XETRA",
+                "quote_type": existing["asset_class"],
+                "last_close": None,
+                "last_date": None,
+                "observations": 0,
+                "suggested_key": existing["import_key"],
+                "risk_bucket": existing["risk_bucket"],
+                "risk_level": existing["risk_level"],
+                "ter_bps": existing["ter_bps"],
+                "isin": existing["isin"],
+            }
         return {
             "found": False,
-            "symbol": symbol,
+            "symbol": sym_clean,
             "problem": str(exc),
-            "did_you_mean": _near_misses(symbol),
+            "did_you_mean": _near_misses(sym_clean),
         }
+
+    suggested_key = (
+        existing["import_key"]
+        if existing is not None
+        else (found.symbol if "." in sym_clean else found.symbol.split(".")[0].upper())
+    )
+
+    inferred_bucket = (
+        existing["risk_bucket"]
+        if existing and existing["risk_bucket"]
+        else classify.infer_category(found.name, found.quote_type or "ETF")
+    )
+    inferred_level = (
+        existing["risk_level"]
+        if existing and existing["risk_level"]
+        else (classify.DEFAULT_RISK_LEVEL.get(inferred_bucket) if inferred_bucket else None)
+    )
 
     return {
         "found": True,
         "symbol": found.symbol,
-        "name": found.name,
+        "name": existing["name"] if existing and existing["name"] else found.name,
         "currency": found.currency,
         "exchange": found.exchange,
         "quote_type": found.quote_type,
         "last_close": _num(found.last_close),
         "last_date": found.last_date.isoformat() if found.last_date else None,
         "observations": found.observations,
-        # The bare key is what the importer matches against, so proposing it
-        # here is what makes a watched ticker become the owned one if bought.
-        "suggested_key": found.symbol.split(".")[0].upper(),
+        "suggested_key": suggested_key,
+        "risk_bucket": inferred_bucket,
+        "risk_level": inferred_level,
+        "ter_bps": existing["ter_bps"] if existing else None,
+        "isin": existing["isin"] if existing else None,
         "note": (
             "Check the name and currency before adding. The currency in "
             "particular has to be right: prices in another one are refused."

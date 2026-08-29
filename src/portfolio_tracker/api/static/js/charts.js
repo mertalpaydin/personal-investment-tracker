@@ -141,7 +141,7 @@ export function timeChart(container, opts) {
         dash: s.dash || undefined,
         scale,
         fill: s.fill ? fade(colour, typeof s.fill === "number" ? s.fill : 0.13) : undefined,
-        spanGaps: false,
+        spanGaps: s.spanGaps !== undefined ? s.spanGaps : true,
         points: { show: false },
         value: LEGEND_VALUES[s.kind || kind] || LEGEND_VALUES.plain,
       });
@@ -182,6 +182,28 @@ export function timeChart(container, opts) {
       });
     }
 
+    // Draw prominent red dashed line for 100 baseline on index charts
+    const drawBaseline = (u) => {
+      const yVal = opts.baseline !== undefined ? opts.baseline : (kind === "index" ? 100 : null);
+      if (yVal === null) return;
+      const yPos = u.valToPos(yVal, "y", true);
+      if (yPos >= u.bbox.top && yPos <= u.bbox.top + u.bbox.height) {
+        const ctx = u.ctx;
+        ctx.save();
+        ctx.beginPath();
+        ctx.strokeStyle = "rgba(239, 68, 68, 0.75)";
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 4]);
+        ctx.moveTo(u.bbox.left, yPos);
+        ctx.lineTo(u.bbox.left + u.bbox.width, yPos);
+        ctx.stroke();
+        ctx.fillStyle = "rgba(239, 68, 68, 0.9)";
+        ctx.font = "600 11px system-ui, -apple-system, sans-serif";
+        ctx.fillText("100 (Base)", u.bbox.left + 8, yPos - 5);
+        ctx.restore();
+      }
+    };
+
     // A shaded band between two series -- the shape a range of outcomes
     // wants, as opposed to five lines the reader has to mentally fill in.
     const bands = (opts.fillBetween || []).map(([hi, lo], i) => ({
@@ -196,6 +218,7 @@ export function timeChart(container, opts) {
       series: uSeries,
       axes,
       bands,
+      hooks: { draw: [drawBaseline] },
       legend: { show: legend },
       cursor: sync ? { sync: { key: sync } } : {},
     };

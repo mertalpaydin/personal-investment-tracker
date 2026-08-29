@@ -39,8 +39,16 @@ def _mock_db() -> sqlite3.Connection:
     )
     conn.execute(
         """
+        CREATE TABLE account (
+            id INTEGER PRIMARY KEY,
+            person_id INTEGER NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE position_daily (
-            person_id INTEGER,
+            account_id INTEGER REFERENCES account (id),
             date TEXT,
             instrument_id INTEGER REFERENCES instrument (id),
             quantity REAL,
@@ -60,6 +68,7 @@ def _mock_db() -> sqlite3.Connection:
         "INSERT INTO instrument VALUES (3, 'XG01', 'Xtrackers EUR Govt Bond', 'EUR', 'BOND', 'BOND_EUR_GOVT', 2)"
     )
 
+    conn.execute("INSERT INTO account VALUES (1, 1)")
     conn.execute("INSERT INTO portfolio_daily VALUES (1, '2026-08-28')")
     conn.execute("INSERT INTO position_daily VALUES (1, '2026-08-28', 1, 100.0, 10000.0, 100.0)")
     conn.execute("INSERT INTO position_daily VALUES (1, '2026-08-28', 2, 20.0, 1000.0, 50.0)")

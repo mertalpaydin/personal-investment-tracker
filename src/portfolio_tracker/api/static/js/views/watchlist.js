@@ -63,9 +63,7 @@ export async function render() {
   const data = await all({
     watchlist: get("/api/watchlist"),
     positions: get("/api/positions"),
-    peers: get("/api/peers"),
     universe: get("/api/universe"),
-    suggested: get("/api/instruments/categories/suggested"),
     // Everything the tool can price, without computing 256 expensive metrics
     everything: get("/api/watchlist", { all: true, metrics: false }),
   });
@@ -85,9 +83,6 @@ export async function render() {
   const everything = isError(data.everything) ? [] : data.everything.watchlist || [];
   const holdings = isError(data.positions) ? [] : data.positions.positions || [];
 
-  // Always, not only when something is being watched. The chart is the
-  // reason to come to this page, and it was hidden behind having first added
-  // something by hand.
   if (holdings.length || everything.length) {
     view.append(comparisonChart(everything, holdings));
   }
@@ -97,8 +92,25 @@ export async function render() {
     view.append(catalogueSection(everything));
   }
 
-  const buckets = (!isError(data.universe) && data.universe.buckets) || Object.keys(BUCKET_LABEL);
-  if (!isError(data.peers)) view.append(peerSection(data.peers, buckets, data.suggested, addToComparison));
+  // Load heavier peer scan and suggestions asynchronously in background so page renders in ms
+  const peerSlot = el("div");
+  view.append(peerSlot);
+
+  queueMicrotask(async () => {
+    try {
+      const extra = await all({
+        peers: get("/api/peers"),
+        suggested: get("/api/instruments/categories/suggested"),
+      });
+      const buckets = (!isError(data.universe) && data.universe.buckets) || Object.keys(BUCKET_LABEL);
+      if (!isError(extra.peers)) {
+        peerSlot.replaceChildren(peerSection(extra.peers, buckets, extra.suggested, addToComparison));
+      }
+    } catch {
+      // Peer section fails gracefully if not ready
+    }
+  });
+
   return view;
 }
 
@@ -251,11 +263,32 @@ function notFound(found, input, recheck) {
 }
 
 function confirmForm(found) {
-  const key = el("input", { type: "text", value: found.suggested_key });
+  const key = el("input", { type: "text", value: found.suggested_key || found.symbol });
   const name = el("input", { type: "text", value: found.name || "" });
   const currency = el("input", { type: "text", value: found.currency || "EUR", maxlength: "3" });
-  const ter = el("input", { type: "number", step: "1", min: "0", placeholder: "e.g. 20" });
-  const bucket = el("input", { type: "text", placeholder: "e.g. EQ_GLOBAL_BROAD" });
+  const ter = el("input", {
+    type: "number",
+    step: "1",
+    min: "0",
+    value: found.ter_bps ? String(found.ter_bps) : "",
+    placeholder: "e.g. 20",
+  });
+  const bucket = el("input", {
+    type: "text",
+    value: found.risk_bucket || "",
+    placeholder: "e.g. EQ_GLOBAL_BROAD",
+  });
+  const riskLevelSelect = el(
+    "select",
+    {},
+    [1, 2, 3, 4, 5, 6, 7].map((lvl) =>
+      el("option", {
+        value: String(lvl),
+        text: `Level ${lvl} (${RISK_LEVEL_CONFIG[lvl]?.label || ""})`,
+        selected: lvl === (found.risk_level || 4),
+      }),
+    ),
+  );
   const status = el("p.note");
 
   const save = async () => {
@@ -270,6 +303,8 @@ function confirmForm(found) {
         asset_class: found.quote_type === "EQUITY" ? "STOCK" : "ETF",
         ter_bps: ter.value ? Number(ter.value) : null,
         risk_bucket: bucket.value.trim() || null,
+        risk_level: riskLevelSelect.value ? Number(riskLevelSelect.value) : null,
+        isin: found.isin || null,
       });
       router.refresh();
     } catch (err) {
@@ -288,11 +323,12 @@ function confirmForm(found) {
     el(
       "form.entry",
       { onsubmit: (e) => (e.preventDefault(), save()) },
-      field("Short key", key, "what an import would match on — no .DE suffix"),
+      field("Short key", key, "what an import would match on"),
       field("Name", name),
       field("Currency", currency),
-      field("Ongoing charge", ter, "basis points, from the fund's key information document"),
-      field("Risk category", bucket, "optional; sharpens the comparison"),
+      field("Ongoing charge (bps)", ter, "from the fund's key information document"),
+      field("Risk category", bucket, "e.g. EQ_SECTOR, EQ_GLOBAL_BROAD"),
+      field("Risk level (1-7)", riskLevelSelect, "1 = Lowest, 7 = Highest"),
       el("div.wide", el("button.primary", { type: "submit", text: "Add to watchlist" })),
     ),
     status,
@@ -392,10 +428,17 @@ function watchTable(entries, basis) {
         return {
           node: el(
             "span",
+            { style: "display: flex; gap: 0.35rem; align-items: center; justify-content: flex-end;" },
             e.prices === 0 ? el("span.tag.warn", { text: "no prices yet" }) : null,
             p.basis === "PRICE"
               ? el("span.tag.warn", { text: "price only", title: (p.caveats || [])[0] })
               : null,
+            el("button.small", {
+              type: "button",
+              text: "Chart",
+              title: `Add ${e.instrument} to the comparison chart above.`,
+              onclick: () => addToComparison(e.instrument),
+            }),
             buyButton(e),
             removeButton(e),
           ),
@@ -508,52 +551,100 @@ function catalogueSection(everything) {
   const pool = everything.filter((e) => e.status === "UNIVERSE");
   if (!pool.length) return el("div");
 
-  const byBucket = new Map();
-  for (const e of pool) {
-    const key = e.risk_bucket || "Uncategorised";
-    if (!byBucket.has(key)) byBucket.set(key, []);
-    byBucket.get(key).push(e);
-  }
+  const columns = [
+    {
+      label: "Ticker",
+      key: "instrument",
+      type: "str",
+      defaultSort: true,
+      defaultDir: "asc",
+      render: (e) => ({ node: el("strong", { text: e.instrument }), cls: "name" }),
+    },
+    {
+      label: "Risk",
+      key: (e) => e.risk_level || 0,
+      type: "num",
+      render: (e) => ({ node: riskBadge(e.risk_level) }),
+    },
+    {
+      label: "Name",
+      key: "name",
+      type: "str",
+      render: (e) => ({ text: e.name, cls: "name muted" }),
+    },
+    {
+      label: "Category",
+      key: (e) => BUCKET_LABEL[e.risk_bucket] || e.risk_bucket || "Uncategorised",
+      type: "str",
+      render: (e) => ({ text: BUCKET_LABEL[e.risk_bucket] || e.risk_bucket || "—" }),
+    },
+    {
+      label: "Fee",
+      key: (e) => e.ter_bps ?? -1,
+      type: "num",
+      render: (e) => ({
+        text: e.ter_pct !== null && e.ter_pct !== undefined ? f.pct(e.ter_pct) : (e.ter_bps ? f.bps(e.ter_bps) : "—"),
+      }),
+    },
+    {
+      label: "Prices",
+      key: (e) => e.prices || 0,
+      type: "num",
+      render: (e) => ({ text: e.prices ? `${e.prices} obs` : "none yet" }),
+    },
+    {
+      label: "",
+      sortable: false,
+      render: (e) => ({
+        node: el(
+          "span",
+          { style: "display: inline-flex; gap: 0.35rem;" },
+          el("button.small", {
+            type: "button",
+            text: "Chart",
+            title: `Add ${e.instrument} to the comparison chart above.`,
+            onclick: () => addToComparison(e.instrument),
+          }),
+          el("button.small", {
+            type: "button",
+            text: "Watch",
+            title: `Move ${e.instrument} to your active watchlist.`,
+            onclick: async () => {
+              try {
+                await post("/api/watchlist", {
+                  import_key: e.instrument,
+                  name: e.name,
+                  currency: e.currency,
+                  price_symbol: e.price_symbol,
+                  asset_class: e.asset_class,
+                  ter_bps: e.ter_bps,
+                  risk_bucket: e.risk_bucket,
+                  risk_level: e.risk_level,
+                });
+                router.refresh();
+              } catch (err) {
+                window.alert(err.message);
+              }
+            },
+          }),
+        ),
+      }),
+    },
+  ];
 
-  const groups = [...byBucket.entries()].sort((a, b) => b[1].length - a[1].length);
+  const tableNode = sortableTable(columns, pool, {
+    placeholder: "Search comparison universe tickers, categories, names…",
+    searchKeys: ["instrument", "name", "risk_bucket"],
+  });
+
   return el(
     "section",
     heading("What is in the comparison set"),
     el(
       "details.assumptions",
-      el("summary", { text: `${pool.length} instruments, by category` }),
-      ...groups.map(([b, list]) =>
-        el(
-          "div.wrap",
-          el("h3", { text: `${BUCKET_LABEL[b] || b} — ${list.length}` }),
-          el(
-            "table",
-            el(
-              "thead",
-              el("tr", ["Ticker", "Name", "Fee", "Prices", ""].map((h) => el("th", { text: h }))),
-            ),
-            el(
-              "tbody",
-              list.map((e) =>
-                row([
-                  { text: e.instrument, cls: "name" },
-                  { text: e.name, cls: "prose" },
-                  { text: e.ter_pct === null || e.ter_pct === undefined ? "—" : f.pct(e.ter_pct) },
-                  { text: e.prices ? `${e.prices}` : "none yet" },
-                  {
-                    node: el("button.small", {
-                      type: "button",
-                      text: "Chart it",
-                      title: `Add ${e.instrument} to the comparison chart.`,
-                      onclick: () => addToComparison(e.instrument),
-                    }),
-                  },
-                ]),
-              ),
-            ),
-          ),
-        ),
-      ),
+      { open: true },
+      el("summary", { text: `${pool.length} instruments in comparison catalogue` }),
+      tableNode,
     ),
   );
 }
@@ -625,37 +716,61 @@ function comparisonChart(entries, holdings) {
       cutoffStr = d.toISOString().slice(0, 10);
     }
 
-    const filteredPoints = {};
-    const dates = new Set();
+    const rawDates = new Set();
+    const seriesByInstrument = {};
+
     for (const k of keys) {
       if (!isError(loaded[k])) {
         const raw = loaded[k].points || [];
-        const sliced = cutoffStr ? raw.filter((p) => p.date >= cutoffStr) : raw;
-        const effective = sliced.length >= 2 ? sliced : raw;
-        filteredPoints[k] = effective;
-        for (const pt of effective) dates.add(pt.date);
+        seriesByInstrument[k] = raw;
+        for (const pt of raw) rawDates.add(pt.date);
       }
     }
 
-    const axis = [...dates].sort();
-    if (axis.length < 2) return;
+    const allDatesSorted = [...rawDates].sort();
+    if (allDatesSorted.length < 2) return;
+
+    let axis = allDatesSorted;
+    if (cutoffStr) {
+      const idx = axis.findIndex((d) => d >= cutoffStr);
+      if (idx !== -1) axis = axis.slice(idx);
+    }
+    if (axis.length < 2) axis = allDatesSorted;
 
     const series = [];
     keys.forEach((k, i) => {
-      const pts = filteredPoints[k];
-      if (!pts || !pts.length) return;
-      const byDate = new Map(pts.map((pt) => [pt.date, pt.level]));
-      series.push({
-        label: k,
-        data: indexTo100(axis.map((d) => byDate.get(d) ?? null)),
-        colour: pal.series[i % pal.series.length],
-        width: holdings.some((h) => h.instrument === k) ? 2.4 : 1.6,
-        dash: holdings.some((h) => h.instrument === k) ? undefined : [4, 3],
+      const raw = seriesByInstrument[k];
+      if (!raw || !raw.length) return;
+      const rawMap = new Map(raw.map((pt) => [pt.date, pt.level]));
+      const firstRawDate = raw[0].date;
+
+      // Forward fill across axis so weekly and daily lines plot continuously
+      let lastVal = null;
+      const filled = axis.map((d) => {
+        if (d < firstRawDate) return null;
+        const current = rawMap.get(d);
+        if (current !== null && current !== undefined && Number.isFinite(current)) {
+          lastVal = current;
+          return current;
+        }
+        return lastVal;
       });
+
+      const indexedData = indexTo100(filled);
+      if (indexedData.some((v) => v !== null)) {
+        series.push({
+          label: k,
+          data: indexedData,
+          colour: pal.series[i % pal.series.length],
+          width: holdings.some((h) => h.instrument === k) ? 2.4 : 1.8,
+          dash: holdings.some((h) => h.instrument === k) ? undefined : [4, 3],
+          spanGaps: true,
+        });
+      }
     });
 
     if (series.length) {
-      timeChart(box, { x: axis.map(toTs), height: 320, kind: "index", series });
+      timeChart(box, { x: axis.map(toTs), height: 320, kind: "index", series, baseline: 100 });
     }
   };
   redrawComparison = draw;
@@ -700,15 +815,17 @@ function comparisonChart(entries, holdings) {
   return el(
     "section",
     heading("Compare anything against anything"),
-    el("div.actions", picker),
-    chosen,
-    rangeBox,
-    box,
-    el("p.chart-note", {
-      text:
-        "All indexed to 100 at the start of the selected window, in euros, so lines of very different " +
-        "prices can be read together. Solid is held, dashed is not.",
-    }),
+    el(
+      "div.panel",
+      el("div.actions", picker),
+      chosen,
+      rangeBox,
+      box,
+      el("p.chart-note", {
+        text:
+          "All indexed to 100 at the start of the selected window, in euros. Solid line is held, dashed is watched. Red dashed line marks 100 break-even baseline.",
+      }),
+    ),
   );
 }
 

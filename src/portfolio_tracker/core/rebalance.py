@@ -125,8 +125,8 @@ def compute_rebalance(
         """
         SELECT
             i.import_key AS instrument,
-            p.quantity,
-            p.market_value_eur,
+            SUM(CAST(p.quantity AS REAL)) AS quantity,
+            SUM(CAST(p.market_value_eur AS REAL)) AS market_value_eur,
             p.price_local,
             i.name,
             i.currency,
@@ -134,14 +134,16 @@ def compute_rebalance(
             i.risk_bucket,
             i.risk_level
         FROM position_daily p
+        JOIN account a ON a.id = p.account_id
         JOIN (
             SELECT person_id, MAX(date) AS latest_date
             FROM portfolio_daily
             WHERE person_id = ?
-        ) l ON l.person_id = p.person_id AND p.date = l.latest_date
+        ) l ON l.person_id = a.person_id AND p.date = l.latest_date
         JOIN instrument i ON i.id = p.instrument_id
-        WHERE p.person_id = ? AND CAST(p.quantity AS REAL) > 0
-        ORDER BY CAST(p.market_value_eur AS REAL) DESC
+        WHERE a.person_id = ? AND CAST(p.quantity AS REAL) > 0
+        GROUP BY i.id
+        ORDER BY market_value_eur DESC
         """,
         (person_id, person_id),
     ).fetchall()
