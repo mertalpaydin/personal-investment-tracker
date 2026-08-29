@@ -16,6 +16,7 @@ import { el, row, heading } from "../dom.js";
 import { get, post, del, all, isError } from "../api.js";
 import * as f from "../fmt.js";
 import * as router from "../router.js";
+import { sortableTable } from "../tables.js";
 
 const NEEDS_INSTRUMENT = new Set(["BUY", "SELL", "DIVIDEND", "TRANSFER_IN", "TRANSFER_OUT"]);
 const NEEDS_QUANTITY = new Set(["BUY", "SELL"]);
@@ -682,43 +683,73 @@ function ledgerTable(body) {
     return el("section", heading("Everything recorded"), el("p.nodata", { text: "Nothing yet." }));
   }
 
-  const rows = txns.map((t) => {
-    const cells = [
-      f.date(t.trade_date),
-      t.type.toLowerCase().replace(/_/g, " "),
-      {
+  const columns = [
+    {
+      label: "Date",
+      key: "trade_date",
+      type: "date",
+      defaultSort: true,
+      defaultDir: "desc",
+      render: (t) => ({ text: f.date(t.trade_date) }),
+    },
+    {
+      label: "What",
+      key: "type",
+      type: "str",
+      render: (t) => ({ text: t.type.toLowerCase().replace(/_/g, " ") }),
+    },
+    {
+      label: "Holding",
+      key: (t) => t.instrument || t.shown_as || t.account || "",
+      type: "str",
+      render: (t) => ({
         node: !t.instrument
           ? document.createTextNode("—")
           : t.is_cash
-            ? // A cash proxy is a bookkeeping device. `CASH_TRY_3` where a
-              // fund name belongs makes a deposit look like a mystery holding.
-              el("span.muted", { text: t.shown_as || t.account })
+            ? el("span.muted", { text: t.shown_as || t.account })
             : el("a", {
                 href: `#/holdings/${encodeURIComponent(t.instrument)}`,
                 text: t.instrument,
                 title: t.shown_as || undefined,
               }),
-      },
-      f.qty(t.quantity),
-      f.eur(t.gross_amount_eur),
-      { node: badges(t) },
-      { node: t.editable ? deleteButton(t) : el("span.muted", { text: "imported" }) },
-    ];
-    return row(cells);
+      }),
+    },
+    {
+      label: "Units",
+      key: (t) => f.num(t.quantity),
+      type: "num",
+      render: (t) => ({ text: f.qty(t.quantity) }),
+    },
+    {
+      label: "Amount",
+      key: (t) => f.num(t.gross_amount_eur),
+      type: "num",
+      render: (t) => ({ text: f.eur(t.gross_amount_eur) }),
+    },
+    {
+      label: "Status",
+      sortable: false,
+      render: (t) => ({ node: badges(t) }),
+    },
+    {
+      label: "",
+      sortable: false,
+      render: (t) => ({
+        node: t.editable ? deleteButton(t) : el("span.muted", { text: "imported" }),
+      }),
+    },
+  ];
+
+  const tableNode = sortableTable(columns, txns, {
+    placeholder: "Search transactions by ticker, type, note…",
+    searchKeys: ["instrument", "type", "shown_as", "account", "source"],
   });
 
   return el(
     "section",
     heading("Everything recorded"),
     filterBar(body),
-    el(
-      "div.wrap",
-      el(
-        "table",
-        el("thead", el("tr", ["Date", "What", "Holding", "Units", "Amount", "", ""].map((t) => el("th", { text: t })))),
-        el("tbody", rows),
-      ),
-    ),
+    tableNode,
     body.total > txns.length
       ? el("p.note", { text: `Showing the most recent ${txns.length} of ${body.total}.` })
       : null,

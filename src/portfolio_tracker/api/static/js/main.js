@@ -85,8 +85,42 @@ function errorPanel(error) {
   );
 }
 
+const THEMES = ["system", "light", "dark"];
+const THEME_LABELS = {
+  system: "Theme: Auto 💻",
+  light: "Theme: Light ☀️",
+  dark: "Theme: Dark 🌙",
+};
+
+function initThemeToggle() {
+  const btn = document.getElementById("theme-toggle");
+  if (!btn) return;
+
+  const getSaved = () => localStorage.getItem("pt_theme") || "system";
+
+  const applyTheme = (theme) => {
+    if (theme === "dark" || theme === "light") {
+      document.documentElement.setAttribute("data-theme", theme);
+      localStorage.setItem("pt_theme", theme);
+    } else {
+      document.documentElement.removeAttribute("data-theme");
+      localStorage.removeItem("pt_theme");
+    }
+    btn.textContent = THEME_LABELS[theme] || THEME_LABELS.system;
+  };
+
+  btn.addEventListener("click", () => {
+    const current = getSaved();
+    const nextIndex = (THEMES.indexOf(current) + 1) % THEMES.length;
+    applyTheme(THEMES[nextIndex]);
+  });
+
+  applyTheme(getSaved());
+}
+
 function boot() {
   buildNav();
+  initThemeToggle();
 
   for (const [pattern, load] of Object.entries(VIEWS)) {
     router.route(pattern, async (ctx) => {

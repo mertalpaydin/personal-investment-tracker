@@ -20,6 +20,7 @@ import * as f from "../fmt.js";
 import { timeChart, toTs, palette, indexTo100 } from "../charts.js";
 import * as router from "../router.js";
 import { explainPanel } from "../narrative.js";
+import { sortableTable } from "../tables.js";
 
 /* Plain English for the category codes. The code is what the engine matches
    on; nobody should have to type EQ_GLOBAL_BROAD to be understood. */
@@ -324,48 +325,95 @@ function watchTable(entries, basis) {
     );
   }
 
-  const rows = entries.map((e) => {
-    const p = e.performance || {};
-    return row([
-      { node: el("strong", { text: e.instrument }), cls: "name" },
-      { node: riskBadge(e.risk_level) },
-      { text: e.name, cls: "name muted" },
-      { text: f.pct(p.ret_1y, { sign: true }), cls: f.tone(p.ret_1y) },
-      { text: f.pct(p.ret_3y_ann, { sign: true }), cls: f.tone(p.ret_3y_ann) },
-      f.pct(p.vol_1y),
-      { text: f.pct(p.max_dd_3y), cls: p.max_dd_3y ? "loss" : "" },
-      { node: terCell(e) },
-      {
-        node: el(
-          "span",
-          e.prices === 0 ? el("span.tag.warn", { text: "no prices yet" }) : null,
-          p.basis === "PRICE" ? el("span.tag.warn", { text: "price only", title: (p.caveats || [])[0] }) : null,
-          buyButton(e),
-          removeButton(e),
-        ),
+  const columns = [
+    {
+      label: "Ticker",
+      key: "instrument",
+      type: "str",
+      render: (e) => ({ node: el("strong", { text: e.instrument }), cls: "name" }),
+    },
+    {
+      label: "Risk",
+      key: (e) => e.risk_level || 0,
+      type: "num",
+      render: (e) => ({ node: riskBadge(e.risk_level) }),
+    },
+    {
+      label: "Name",
+      key: "name",
+      type: "str",
+      render: (e) => ({ text: e.name, cls: "name muted" }),
+    },
+    {
+      label: "1 year",
+      key: (e) => f.num(e.performance?.ret_1y),
+      type: "pct",
+      defaultSort: true,
+      defaultDir: "desc",
+      render: (e) => {
+        const p = e.performance || {};
+        return { text: f.pct(p.ret_1y, { sign: true }), cls: f.tone(p.ret_1y) };
       },
-    ]);
+    },
+    {
+      label: "3 years a year",
+      key: (e) => f.num(e.performance?.ret_3y_ann),
+      type: "pct",
+      render: (e) => {
+        const p = e.performance || {};
+        return { text: f.pct(p.ret_3y_ann, { sign: true }), cls: f.tone(p.ret_3y_ann) };
+      },
+    },
+    {
+      label: "Volatility",
+      key: (e) => f.num(e.performance?.vol_1y),
+      type: "pct",
+      render: (e) => ({ text: f.pct(e.performance?.vol_1y) }),
+    },
+    {
+      label: "Worst fall",
+      key: (e) => f.num(e.performance?.max_dd_3y),
+      type: "pct",
+      render: (e) => {
+        const p = e.performance || {};
+        return { text: f.pct(p.max_dd_3y), cls: p.max_dd_3y ? "loss" : "" };
+      },
+    },
+    {
+      label: "Fee",
+      key: (e) => e.ter_bps ?? -1,
+      type: "num",
+      render: (e) => ({ node: terCell(e) }),
+    },
+    {
+      label: "",
+      sortable: false,
+      render: (e) => {
+        const p = e.performance || {};
+        return {
+          node: el(
+            "span",
+            e.prices === 0 ? el("span.tag.warn", { text: "no prices yet" }) : null,
+            p.basis === "PRICE"
+              ? el("span.tag.warn", { text: "price only", title: (p.caveats || [])[0] })
+              : null,
+            buyButton(e),
+            removeButton(e),
+          ),
+        };
+      },
+    },
+  ];
+
+  const tableNode = sortableTable(columns, entries, {
+    placeholder: "Search watched tickers, names…",
+    searchKeys: ["instrument", "name", "risk_bucket"],
   });
 
   return el(
     "section",
     heading("Being watched"),
-    el(
-      "div.wrap",
-      el(
-        "table",
-        el(
-          "thead",
-          el(
-            "tr",
-            ["Ticker", "Risk", "Name", "1 year", "3 years a year", "Volatility", "Worst fall", "Fee", ""].map(
-              (t) => el("th", { text: t }),
-            ),
-          ),
-        ),
-        el("tbody", rows),
-      ),
-    ),
+    tableNode,
     basis ? el("p.note", { text: basis }) : null,
   );
 }
@@ -645,10 +693,12 @@ function leaderboardSection(onCompare) {
         return;
       }
 
-      const rows = candidates.map((c, idx) => {
-        const sharpeVal = c.sharpe_3y ?? c.sharpe_1y;
-        return row([
-          {
+      const columns = [
+        {
+          label: "Rank & Ticker",
+          key: "instrument",
+          type: "str",
+          render: (c, idx) => ({
             node: el(
               "span",
               el("strong", { text: `#${idx + 1}` }),
@@ -663,53 +713,80 @@ function leaderboardSection(onCompare) {
               el("span.muted", { text: c.name }),
             ),
             cls: "name",
+          }),
+        },
+        {
+          label: "Risk",
+          key: (c) => c.risk_level || 0,
+          type: "num",
+          render: (c) => ({ node: riskBadge(c.risk_level) }),
+        },
+        {
+          label: "Category",
+          key: (c) => BUCKET_LABEL[c.bucket] || c.bucket,
+          type: "str",
+          render: (c) => ({ text: BUCKET_LABEL[c.bucket] || c.bucket, cls: "muted" }),
+        },
+        {
+          label: "1 Year",
+          key: (c) => f.num(c.ret_1y),
+          type: "pct",
+          render: (c) => ({ text: f.pct(c.ret_1y, { sign: true }), cls: f.tone(c.ret_1y) }),
+        },
+        {
+          label: "3Y Ann.",
+          key: (c) => f.num(c.ret_3y_ann),
+          type: "pct",
+          render: (c) => ({ text: f.pct(c.ret_3y_ann, { sign: true }), cls: f.tone(c.ret_3y_ann) }),
+        },
+        {
+          label: "Volatility",
+          key: (c) => f.num(c.vol_1y ?? c.vol_3y),
+          type: "pct",
+          render: (c) => ({ text: f.pct(c.vol_1y ?? c.vol_3y) }),
+        },
+        {
+          label: "Sharpe",
+          key: (c) => f.num(c.sharpe_3y ?? c.sharpe_1y),
+          type: "num",
+          defaultSort: true,
+          defaultDir: "desc",
+          render: (c) => {
+            const sharpeVal = c.sharpe_3y ?? c.sharpe_1y;
+            return {
+              text:
+                sharpeVal !== null && sharpeVal !== undefined ? Number(sharpeVal).toFixed(2) : "—",
+              cls: sharpeVal && Number(sharpeVal) > 0 ? "gain" : "",
+              title: "Sharpe ratio: excess return over risk-free rate divided by volatility",
+            };
           },
-          { node: riskBadge(c.risk_level) },
-          { text: BUCKET_LABEL[c.bucket] || c.bucket, cls: "muted" },
-          { text: f.pct(c.ret_1y, { sign: true }), cls: f.tone(c.ret_1y) },
-          { text: f.pct(c.ret_3y_ann, { sign: true }), cls: f.tone(c.ret_3y_ann) },
-          { text: f.pct(c.vol_1y ?? c.vol_3y) },
-          {
-            text: sharpeVal !== null && sharpeVal !== undefined ? Number(sharpeVal).toFixed(2) : "—",
-            cls: sharpeVal && Number(sharpeVal) > 0 ? "gain" : "",
-            title: "Sharpe ratio: excess return over risk-free rate divided by volatility",
-          },
-          { text: c.ter_bps === null || c.ter_bps === undefined ? "—" : f.bps(c.ter_bps) },
-          {
+        },
+        {
+          label: "Fee",
+          key: (c) => c.ter_bps ?? -1,
+          type: "num",
+          render: (c) => ({
+            text: c.ter_bps === null || c.ter_bps === undefined ? "—" : f.bps(c.ter_bps),
+          }),
+        },
+        {
+          label: "",
+          sortable: false,
+          render: (c) => ({
             node: el("button.small", {
               type: "button",
               text: "Chart",
               onclick: () => onCompare && onCompare(c.instrument),
             }),
-          },
-        ]);
-      });
+          }),
+        },
+      ];
 
-      const tableWrap = el(
-        "div.wrap",
-        el(
-          "table",
-          el(
-            "thead",
-            el(
-              "tr",
-              [
-                "Rank & Ticker",
-                "Risk",
-                "Category",
-                "1 Year",
-                "3Y Ann.",
-                "Volatility",
-                "Sharpe",
-                "Fee",
-                "",
-              ].map((h) => el("th", { text: h })),
-            ),
-          ),
-          el("tbody", rows),
-        ),
-      );
-      container.replaceChildren(tableWrap);
+      const tableNode = sortableTable(columns, candidates, {
+        placeholder: `Search Level ${lvl} performers…`,
+        searchKeys: ["instrument", "name", "bucket"],
+      });
+      container.replaceChildren(tableNode);
     } catch (err) {
       container.replaceChildren(el("p.note.bad", { text: err.message }));
     }

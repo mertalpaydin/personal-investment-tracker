@@ -16,10 +16,11 @@
  * on the tooltip rather than hidden.
  */
 
-import { el, row, heading } from "../dom.js";
+import { el, heading } from "../dom.js";
 import { get, all, isError } from "../api.js";
 import * as f from "../fmt.js";
 import * as router from "../router.js";
+import { sortableTable } from "../tables.js";
 
 const RANGES = [
   ["1D", "1 day"],
@@ -33,36 +34,6 @@ const RANGES = [
 ];
 
 let range = "1M";
-let sortKey = "value_eur";
-let sortDesc = true;
-
-const COLUMNS = [
-  { key: "instrument", label: "Ticker", text: true, hint: null },
-  { key: "name", label: "Name", text: true, hint: null },
-  { key: "quantity", label: "Units", hint: null },
-  { key: "price_local", label: "Price", hint: "Latest close, in the currency it trades in." },
-  { key: "value_eur", label: "Value", hint: null },
-  {
-    key: "value_change_eur",
-    label: "Change",
-    hint: "How much its value moved over the window chosen above, in euros.",
-  },
-  {
-    key: "own_return",
-    label: "Its own return",
-    hint: "What this holding earned on its own money, per unit — so buying more of it does not read as a gain.",
-  },
-  {
-    key: "contribution",
-    label: "Share of the total",
-    hint: "How many percentage points of the whole portfolio's return came from this holding. A big gain on a small position is a small share.",
-  },
-  {
-    key: "unrealized_eur",
-    label: "Gain so far",
-    hint: "Gain on what you still hold, if you sold today. Frozen at the exchange rate you bought at, not today's.",
-  },
-];
 
 export async function render({ query }) {
   if (query.get("range")) range = query.get("range").toUpperCase();
@@ -125,80 +96,96 @@ function rangePicker(o) {
   return box;
 }
 
-function withHint(label, hint) {
-  return hint ? el("span.hint", { title: hint, text: label }) : el("span", { text: label });
-}
-
 function table(rows, o) {
-  const sorted = [...rows].sort((a, b) => {
-    const column = COLUMNS.find((c) => c.key === sortKey) || COLUMNS[4];
-    const x = column.text ? a[column.key] : f.num(a[column.key]);
-    const y = column.text ? b[column.key] : f.num(b[column.key]);
-    // Nulls last regardless of direction: a missing figure is not the
-    // smallest one, and sorting it to the top of a descending list claims it
-    // is the largest.
-    if (x === null || x === undefined) return 1;
-    if (y === null || y === undefined) return -1;
-    const cmp = column.text ? String(x).localeCompare(String(y)) : x - y;
-    return sortDesc ? -cmp : cmp;
-  });
+  const total = rows.reduce((sum, r) => sum + (f.num(r.value_eur) ?? 0), 0);
 
-  const head = el("tr");
-  for (const column of COLUMNS) {
-    head.append(
-      el(
-        "th.sortable",
-        {
-          role: "button",
-          tabindex: "0",
-          onclick: () => {
-            if (sortKey === column.key) sortDesc = !sortDesc;
-            else {
-              sortKey = column.key;
-              sortDesc = !column.text;
-            }
-            router.refresh();
-          },
-        },
-        withHint(column.label, column.hint),
-        sortKey === column.key ? el("span", { text: sortDesc ? " ↓" : " ↑" }) : null,
-      ),
-    );
-  }
-
-  const total = sorted.reduce((sum, r) => sum + (f.num(r.value_eur) ?? 0), 0);
-  const body = sorted.map((r) => {
-    const href = `#/holdings/${encodeURIComponent(r.instrument)}`;
-    const weight = total ? (f.num(r.value_eur) ?? 0) / total : null;
-    return row([
-      {
-        node: el(
-          "span",
-          el("a", { href, text: r.instrument }),
-          r.valuation_status && r.valuation_status !== "OK"
-            ? el("span.tag.warn", {
-                text: "stale",
-                title: `Priced from ${f.date(r.price_asof)}.`,
-              })
-            : null,
-        ),
-        cls: "name",
+  const columns = [
+    {
+      label: "Ticker",
+      key: "instrument",
+      type: "str",
+      render: (r) => {
+        const href = `#/holdings/${encodeURIComponent(r.instrument)}`;
+        return {
+          node: el(
+            "span",
+            el("a", { href, text: r.instrument }),
+            r.valuation_status && r.valuation_status !== "OK"
+              ? el("span.tag.warn", {
+                  text: "stale",
+                  title: `Priced from ${f.date(r.price_asof)}.`,
+                })
+              : null,
+          ),
+          cls: "name",
+        };
       },
-      { text: r.name, cls: "name muted" },
-      f.qty(r.quantity),
-      { text: `${f.qty(r.price_local)} ${r.currency}`, cls: "muted" },
-      {
-        text: f.eur(r.value_eur),
-        title: weight === null ? undefined : `${f.pct(weight, { digits: 1 })} of holdings`,
+    },
+    {
+      label: "Name",
+      key: "name",
+      type: "str",
+      render: (r) => ({ text: r.name, cls: "name muted" }),
+    },
+    {
+      label: "Units",
+      key: (r) => f.num(r.quantity),
+      type: "num",
+      render: (r) => ({ text: f.qty(r.quantity) }),
+    },
+    {
+      label: "Price",
+      key: (r) => f.num(r.price_local),
+      type: "num",
+      render: (r) => ({ text: `${f.qty(r.price_local)} ${r.currency || ""}`, cls: "muted" }),
+    },
+    {
+      label: "Value",
+      key: (r) => f.num(r.value_eur),
+      type: "num",
+      defaultSort: true,
+      defaultDir: "desc",
+      render: (r) => {
+        const weight = total ? (f.num(r.value_eur) ?? 0) / total : null;
+        return {
+          text: f.eur(r.value_eur),
+          title: weight === null ? undefined : `${f.pct(weight, { digits: 1 })} of holdings`,
+        };
       },
-      { text: f.eur(r.value_change_eur, { sign: true }), cls: f.tone(r.value_change_eur) },
-      {
+    },
+    {
+      label: "Change",
+      key: (r) => f.num(r.value_change_eur),
+      type: "num",
+      render: (r) => ({
+        text: f.eur(r.value_change_eur, { sign: true }),
+        cls: f.tone(r.value_change_eur),
+      }),
+    },
+    {
+      label: "Its own return",
+      key: (r) => f.num(r.own_return),
+      type: "pct",
+      render: (r) => ({
         text: f.pct(r.own_return, { sign: true }),
         cls: f.tone(r.own_return),
         title: r.held_from ? `measured from ${f.date(r.held_from)}` : undefined,
-      },
-      { text: f.pp(r.contribution), cls: f.tone(r.contribution) },
-      {
+      }),
+    },
+    {
+      label: "Share of the total",
+      key: (r) => f.num(r.contribution),
+      type: "pct",
+      render: (r) => ({
+        text: f.pp(r.contribution),
+        cls: f.tone(r.contribution),
+      }),
+    },
+    {
+      label: "Gain so far",
+      key: (r) => f.num(r.unrealized_eur),
+      type: "num",
+      render: (r) => ({
         text: f.eur(r.unrealized_eur, { sign: true }),
         cls: f.tone(r.unrealized_eur),
         title:
@@ -206,15 +193,18 @@ function table(rows, o) {
             ? undefined
             : `${f.eur(r.unrealized_local_eur, { sign: true })} from the price, ` +
               `${f.eur(r.unrealized_fx_eur, { sign: true })} from ${r.currency}`,
-      },
-    ]);
-  });
+      }),
+    },
+  ];
 
-  const foot = row([{ text: "Total", cls: "name" }, "", "", "", f.eur(total), "", "", "", ""]);
+  const tableNode = sortableTable(columns, rows, {
+    placeholder: "Search holdings by ticker, name…",
+    searchKeys: ["instrument", "name", "currency"],
+  });
 
   return el(
     "section",
-    el("div.wrap", el("table", el("thead", head), el("tbody", body), el("tfoot", foot))),
+    tableNode,
     el("p.note", {
       text: "Change and its own return follow the window above. Gain so far is life-to-date.",
     }),
