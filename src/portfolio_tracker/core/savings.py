@@ -367,6 +367,42 @@ def set_flow_class(
 # ---------------------------------------------------------------------------
 
 
+def opening_value_eur(conn: sqlite3.Connection, *, person_id: int = 1) -> Decimal:
+    """What the accounts were already worth on the first day of any record.
+
+    Neither saving nor return: it was not paid in during the tracked period,
+    and nothing here earned it. Every screen that draws value against money
+    put in needs it, and they all have to use the same figure -- the overview
+    chart once began its contribution line at zero while the value line began
+    at EUR 112,044, so the gap between them, which is precisely what that
+    chart exists to present as the return, opened a hundred thousand euros
+    too wide on its first day.
+
+    Net of anything already recorded by the close of that first day: the
+    column is an end-of-day figure, so a deposit made that morning is inside
+    it, and counting both would put the same money in twice.
+    """
+    row = conn.execute(
+        "SELECT date, valuation_basis_eur FROM portfolio_daily WHERE person_id = ? "
+        "ORDER BY date LIMIT 1",
+        (person_id,),
+    ).fetchone()
+    if row is None:
+        return ZERO
+    already = conn.execute(
+        """
+        SELECT total(CASE WHEN t.flow_class = 'EXTERNAL_IN'
+                          THEN CAST(t.gross_amount_eur AS REAL)
+                          WHEN t.flow_class = 'EXTERNAL_OUT'
+                          THEN -CAST(t.gross_amount_eur AS REAL) ELSE 0 END) AS net
+        FROM transaction_ t JOIN account a ON a.id = t.account_id
+        WHERE a.person_id = ? AND a.in_perimeter = 1 AND t.trade_date <= ?
+        """,
+        (person_id, str(row["date"])),
+    ).fetchone()["net"]
+    return quantize_money(Decimal(str(row["valuation_basis_eur"])) - Decimal(str(already or 0)))
+
+
 def build_periods(conn: sqlite3.Connection, *, person_id: int = 1) -> int:
     """Recompute `savings_period` from the ledger. Returns rows written."""
     conn.execute("DELETE FROM savings_period WHERE person_id = ?", (person_id,))
@@ -411,31 +447,7 @@ def build_periods(conn: sqlite3.Connection, *, person_id: int = 1) -> int:
     # Everything before it is outside what this tool claims to know, so it
     # belongs in "already yours" -- not in a residual that would call it
     # performance the portfolio never earned.
-    opening_row = conn.execute(
-        "SELECT date, valuation_basis_eur FROM portfolio_daily WHERE person_id = ? "
-        "ORDER BY date LIMIT 1",
-        (person_id,),
-    ).fetchone()
-    opening_value = ZERO
-    if opening_row is not None:
-        # Net of anything already recorded by the close of that first day.
-        # The column is an end-of-day figure, so a deposit made that morning
-        # is inside it; counting both would put the same money in the sum
-        # twice and drive growth negative by exactly that amount.
-        already = conn.execute(
-            """
-            SELECT total(CASE WHEN t.flow_class = 'EXTERNAL_IN'
-                              THEN CAST(t.gross_amount_eur AS REAL)
-                              WHEN t.flow_class = 'EXTERNAL_OUT'
-                              THEN -CAST(t.gross_amount_eur AS REAL) ELSE 0 END) AS net
-            FROM transaction_ t JOIN account a ON a.id = t.account_id
-            WHERE a.person_id = ? AND a.in_perimeter = 1 AND t.trade_date <= ?
-            """,
-            (person_id, str(opening_row["date"])),
-        ).fetchone()["net"]
-        opening_value = quantize_money(
-            Decimal(str(opening_row["valuation_basis_eur"])) - Decimal(str(already or 0))
-        )
+    opening_value = opening_value_eur(conn, person_id=person_id)
 
     # Every month that has either a movement or a valuation. Driving this off
     # the flows alone skipped months where nothing was paid in, which left the

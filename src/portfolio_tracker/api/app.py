@@ -47,6 +47,7 @@ from portfolio_tracker.core import (
     projection,
     rebuild,
     returns,
+    savings,
     scenario,
     tax,
     valuation,
@@ -492,7 +493,12 @@ def series(
     ).fetchall()
 
     points: list[dict[str, Any]] = []
-    contributed = ZERO
+    # Seeded with what the accounts already held, not with zero. Otherwise the
+    # contribution line starts at the origin while the value line starts at
+    # whatever was already there, and the gap between them -- which this chart
+    # exists to present as the return -- is overstated by that amount for the
+    # whole of its length.
+    contributed = savings.opening_value_eur(conn, person_id=person_id)
     for r in rows:
         contributed += r["net_external_flow_eur"] or ZERO
         points.append(
@@ -1970,8 +1976,17 @@ class RevalidatingStatics(StaticFiles):
         response = super().file_response(*args, **kwargs)
         path = str(response.path) if hasattr(response, "path") else ""
         immutable = "vendor" in path.replace("\\", "/").split("/")
+        # `no-store`, not merely `no-cache`. `no-cache` is the correct
+        # directive in principle -- revalidate, then reuse on a 304 -- but it
+        # cannot reach a copy a browser already holds and still considers
+        # fresh under its own heuristics, which is what a page cached before
+        # this class existed is. On a server on the same machine the saving
+        # was never measurable, and the failure is a page that silently
+        # refuses to show work that was done days ago.
         response.headers["Cache-Control"] = (
-            "public, max-age=31536000, immutable" if immutable else "no-cache"
+            "public, max-age=31536000, immutable"
+            if immutable
+            else "no-store, no-cache, must-revalidate"
         )
         return response
 

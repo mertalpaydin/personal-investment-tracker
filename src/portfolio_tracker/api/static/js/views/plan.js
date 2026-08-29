@@ -30,7 +30,7 @@
  */
 
 import { el, card, row, heading } from "../dom.js";
-import { get, post, del, all, isError } from "../api.js";
+import { get, post, put, del, all, isError } from "../api.js";
 import * as f from "../fmt.js";
 import { timeChart, toTs, palette } from "../charts.js";
 import * as router from "../router.js";
@@ -96,6 +96,47 @@ export async function render() {
  * deposits" and "assumed, because there is not enough history" are different
  * kinds of claim and the difference is the whole point.
  */
+/*
+ * The assumed return, with a way to change it.
+ *
+ * 4% is the tool's placeholder -- the middle of the spread this codebase
+ * already publishes as the range worth thinking in -- and nobody agreed to
+ * it. A figure the owner cannot change is one they are entitled to distrust,
+ * and the right answer to "who approved this" is "you do, here".
+ */
+function assumedReturnCard(returns) {
+  const input = el("input", {
+    type: "number",
+    step: "any",
+    value: (returns.implied_annual * 100).toFixed(2),
+    style: "width:5.5rem",
+  });
+  const save = async () => {
+    if (!input.value) return;
+    try {
+      await put("/api/projection/assumed-return", { annual: Number(input.value) / 100 });
+      router.refresh();
+    } catch (err) {
+      window.alert(err.message);
+    }
+  };
+  return el(
+    "div.card",
+    el("span.k", { text: "Return a year" }),
+    el(
+      "div.v.warn.inline",
+      input,
+      el("span", { text: "%" }),
+      el("button.small", { type: "button", text: "Set", onclick: save }),
+    ),
+    el("div.sub2", {
+      text: returns.assumed_is_default
+        ? "assumed by the tool, not measured — change it"
+        : "your figure, not measured",
+    }),
+  );
+}
+
 function standingAssumptions(base, body) {
   const returns = body.returns;
   const stated = returns && returns.from_history === false;
@@ -107,9 +148,8 @@ function standingAssumptions(base, body) {
       card("Saving per month", f.eur(base.monthly_contribution_eur), {
         sub: "measured from your last 12 months",
       }),
-      card("Return a year", returns ? f.pct(returns.implied_annual) : f.DASH, {
-        sub: stated ? "assumed — not enough history to measure" : "resampled from your holdings",
-        valueCls: stated ? "warn" : "",
+      stated ? assumedReturnCard(returns) : card("Return a year", f.pct(returns.implied_annual), {
+        sub: "resampled from your holdings",
       }),
       card("Target", f.eur(base.target_eur, { compact: true }), {
         sub: "what the dates below are measured against",
@@ -920,7 +960,11 @@ function caveats(list) {
  */
 function savingsSection(s) {
   const made = s.made_of || {};
-  const months = (s.months || []).slice(-24);
+  // From the first month that has anything in it. A fixed 24-month window
+  // padded the chart with empty months from before the records begin.
+  const all = s.months || [];
+  const firstReal = all.findIndex((m) => f.num(m.net_new_money_eur) || f.num(m.value_eur));
+  const months = firstReal === -1 ? all : all.slice(firstReal);
 
   const section = el(
     "section",
@@ -987,7 +1031,7 @@ function savingsSection(s) {
         zero: true,
         series: [
           {
-            label: "New money that month",
+            label: "Money you paid in",
             data: months.map((m) => f.num(m.net_new_money_eur)),
             colour: pal.series[1],
             fill: 0.15,

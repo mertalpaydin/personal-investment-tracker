@@ -50,6 +50,8 @@ def transaction(conn: sqlite3.Connection) -> Iterator[None]:
     with _transaction(conn):
         yield
     cache.clear()
+    cache.forget_stored(conn)
+    conn.commit()
 
 
 router = APIRouter(tags=["planning"])
@@ -122,6 +124,10 @@ def _return_context_json(context: scenarios.ReturnContext) -> dict[str, Any]:
         "history_from": context.history_from.isoformat() if context.history_from else None,
         "history_days": context.history_days,
         "measured_reliable": context.measured_reliable,
+        # Where the stand-in figure came from, so the page can say "assumed,
+        # and here is who assumed it" rather than presenting it as measured.
+        "assumed_is_default": context.from_history
+        or context.implied_annual == projection.FALLBACK_ANNUAL_RETURN,
     }
 
 
@@ -225,7 +231,7 @@ def baseline(
     by which the target is met at three levels of confidence.
     """
     key = ("projection", cache.fingerprint(conn), person_id, paths, years)
-    cached = cache.get(key)
+    cached = cache.recall(conn, key)
     if cached is not None:
         return cached
 
@@ -247,7 +253,7 @@ def baseline(
     body["contributions"] = _contribution_context_json(
         scenarios.contribution_context(conn, person_id=person_id)
     )
-    return cache.put(key, body)
+    return cache.remember(conn, key, body)
 
 
 @router.post("/api/projection/scenario")
@@ -269,6 +275,31 @@ def run_scenario(
         with transaction(conn):
             out["id"] = scenarios.save(conn, name=body.name, levers=levers, person_id=person_id)
     return out
+
+
+class AssumedReturn(BaseModel):
+    """The owner's own stand-in return, as a fraction."""
+
+    annual: Decimal = Field(ge=-1, le=1)
+
+
+@router.put("/api/projection/assumed-return")
+def set_assumed_return(
+    body: AssumedReturn,
+    conn: sqlite3.Connection = Depends(get_writable_db),
+) -> dict[str, Any]:
+    """Set the return to assume when the history cannot support one.
+
+    The tool ships 4% as a placeholder -- the middle of the spread it already
+    publishes as the range worth thinking in -- but nobody agreed to it, and a
+    number the owner cannot change is one they are entitled to distrust.
+    """
+    try:
+        with transaction(conn):
+            scenarios.set_assumed_return(conn, body.annual)
+    except scenarios.ScenarioError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"annual": _num(body.annual)}
 
 
 @router.get("/api/projection/scenarios")
@@ -326,7 +357,7 @@ def sensitivity(
     makes two different changes comparable.
     """
     key = ("sensitivity", cache.fingerprint(conn), person_id, paths)
-    cached = cache.get(key)
+    cached = cache.recall(conn, key)
     if cached is not None:
         return cached
 
@@ -334,7 +365,8 @@ def sensitivity(
         steps = scenarios.sweep(conn, person_id=person_id, paths=paths)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
-    return cache.put(
+    return cache.remember(
+        conn,
         key,
         {
             "steps": steps,

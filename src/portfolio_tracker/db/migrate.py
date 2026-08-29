@@ -39,6 +39,9 @@ DERIVED_TABLES: tuple[str, ...] = (
     "loss_pot",
     "vorabpauschale",
     "savings_period",
+    # A cache, not a derivation -- but a rebuild changes exactly the figures
+    # its answers were computed from, so it is emptied at the same moment.
+    "cached_answer",
 )
 
 

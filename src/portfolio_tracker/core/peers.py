@@ -108,6 +108,11 @@ class Candidate:
     comparable: bool
     observations: int
 
+    #: Shorter windows too. One year alone is a single number about a period
+    #: that may have been all of the story or none of it, and with a year of
+    #: history it is the only window the longer measures can fill at all.
+    ret_3m: Decimal | None = None
+    ret_6m: Decimal | None = None
     ret_1y: Decimal | None = None
     ret_3y_ann: Decimal | None = None
     vol_1y: Decimal | None = None
@@ -287,6 +292,8 @@ def _candidate(
         basis=m.basis,
         comparable=comparable,
         observations=m.observations,
+        ret_3m=m.ret_3m,
+        ret_6m=m.ret_6m,
         ret_1y=m.ret_1y,
         ret_3y_ann=m.ret_3y_ann,
         vol_1y=m.vol_1y,

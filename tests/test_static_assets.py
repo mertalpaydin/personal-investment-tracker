@@ -214,9 +214,10 @@ def test_modules_must_be_revalidated_before_reuse() -> None:
         for path in ("/static/js/main.js", "/static/js/fmt.js", "/static/app.css"):
             response = client.get(path)
             assert response.status_code == 200, path
-            assert response.headers.get("cache-control") == "no-cache", path
+            assert "no-store" in response.headers.get("cache-control", ""), path
 
-        # Revalidation has to be cheap, or "check every time" is a real cost.
+        # Still cheap when the browser does ask: the ETag turns a repeat
+        # request into a 304 with no body.
         first = client.get("/static/js/fmt.js")
         again = client.get("/static/js/fmt.js", headers={"If-None-Match": first.headers["etag"]})
         assert again.status_code == 304

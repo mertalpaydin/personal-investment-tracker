@@ -46,6 +46,27 @@ def _num(value: object) -> float | None:
 # ---------------------------------------------------------------------------
 
 
+def _near_misses(symbol: str) -> list[dict[str, Any]]:
+    """Catalogue entries whose ticker shares a stem with what was typed.
+
+    Matched on the part before the exchange suffix, which is where the
+    confusion lives: the fund is right and the listing is wrong.
+    """
+    stem = symbol.strip().upper().split(".")[0]
+    if len(stem) < 2:
+        return []
+    out: list[dict[str, Any]] = []
+    for key, spec in universe.catalogue().items():
+        other = key.upper().split(".")[0]
+        if (
+            other == stem
+            or (len(stem) >= 3 and stem in other)
+            or (len(other) >= 3 and other in stem)
+        ):
+            out.append({"symbol": key, "name": spec.get("name"), "currency": spec.get("currency")})
+    return out[:6]
+
+
 @router.get("/api/watchlist/lookup")
 def lookup(symbol: str = Query(..., min_length=1)) -> dict[str, Any]:
     """What a ticker appears to be. Writes nothing.
@@ -57,7 +78,17 @@ def lookup(symbol: str = Query(..., min_length=1)) -> dict[str, Any]:
     try:
         found = YFinanceProvider().describe(symbol)
     except ProviderUnavailable as exc:
-        return {"found": False, "symbol": symbol, "problem": str(exc)}
+        # A ticker the feed does not know is usually the right fund on the
+        # wrong exchange -- IWDA trades in Amsterdam and London, and on Xetra
+        # the same fund is EUNL. Guessing is not on, but the catalogue already
+        # holds two hundred symbols verified against this feed, so it can
+        # offer the near misses instead of leaving a dead end.
+        return {
+            "found": False,
+            "symbol": symbol,
+            "problem": str(exc),
+            "did_you_mean": _near_misses(symbol),
+        }
 
     return {
         "found": True,
@@ -301,6 +332,8 @@ def _candidate_json(c: peers.Candidate) -> dict[str, Any]:
         "basis": c.basis,
         "comparable": c.comparable,
         "observations": c.observations,
+        "ret_3m": _num(c.ret_3m),
+        "ret_6m": _num(c.ret_6m),
         "ret_1y": _num(c.ret_1y),
         "ret_3y_ann": _num(c.ret_3y_ann),
         "vol_1y": _num(c.vol_1y),
@@ -475,7 +508,7 @@ def universe_unload(conn: sqlite3.Connection = Depends(get_writable_db)) -> dict
 def suggested_categories(
     conn: sqlite3.Connection = Depends(get_db),
     person_id: int = Query(1, alias="person"),
-    unset_only: bool = Query(True),
+    unset_only: bool = Query(False),
 ) -> dict[str, Any]:
     """What each holding looks like, from its own name.
 

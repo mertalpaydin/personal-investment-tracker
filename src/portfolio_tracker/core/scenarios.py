@@ -37,7 +37,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
-from portfolio_tracker.core import cash, goal, projection
+from portfolio_tracker.core import cash, goal, projection, settings
 from portfolio_tracker.core.projection import Contributions
 from portfolio_tracker.money import ZERO, quantize_money
 
@@ -373,7 +373,7 @@ def return_context(
     resampled = implied_annual_return(factors, block_days)
     from_history = model.supports_its_own_return(block_days)
     return ReturnContext(
-        implied_annual=resampled if from_history else projection.FALLBACK_ANNUAL_RETURN,
+        implied_annual=resampled if from_history else assumed_return(conn),
         resampled_annual=resampled,
         from_history=from_history,
         measured=measured,
@@ -381,6 +381,36 @@ def return_context(
         history_days=model.days,
         measured_reliable=not cash.compute_flows(conn).unfunded,
     )
+
+
+#: Where the stand-in return is stored, so it is the owner's number and not
+#: one chosen for them and left in the code.
+ASSUMED_RETURN_SETTING = "assumed_annual_return"
+
+
+def assumed_return(conn: sqlite3.Connection) -> Decimal:
+    """The return to assume when the history cannot support one of its own.
+
+    Read from settings rather than hardcoded. The default is the middle of
+    `projection.DEFAULT_RATES`, which this codebase already publishes as the
+    range worth thinking in -- but it is a placeholder chosen by the tool, not
+    a figure anyone agreed to, and the owner is entitled to say otherwise and
+    have it stick.
+    """
+    stored = settings.get(conn, ASSUMED_RETURN_SETTING)
+    if stored:
+        try:
+            return Decimal(stored)
+        except (ArithmeticError, ValueError):
+            pass
+    return projection.FALLBACK_ANNUAL_RETURN
+
+
+def set_assumed_return(conn: sqlite3.Connection, annual: Decimal) -> None:
+    """Record the owner's own figure."""
+    if annual <= Decimal(-1):
+        raise ScenarioError("a return of -100% a year would wipe the portfolio out")
+    settings.set_value(conn, ASSUMED_RETURN_SETTING, str(annual))
 
 
 def contribution_context(
@@ -471,7 +501,7 @@ def run(
     # the average is replaced, and the caveats say so.
     resampled = implied_annual_return(factors, block_days)
     trusted = model.supports_its_own_return(block_days)
-    implied = resampled if trusted else projection.FALLBACK_ANNUAL_RETURN
+    implied = resampled if trusted else assumed_return(conn)
     house_drift = (
         ZERO if trusted else Levers(return_annual_pct=implied).return_delta_monthly(resampled)
     )

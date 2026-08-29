@@ -525,6 +525,42 @@ section.standing {
 }
 section.standing .card { background: none; border: none; padding-left: 0; }
 section.standing .v.warn { color: var(--warn); }
+section.standing .v.inline { display: flex; align-items: baseline; gap: .3rem; }
+section.standing .v.inline input { font: inherit; width: 5.5rem; }
+
+/* Charts side by side wherever there is room for two. A single column of
+   full-width charts wastes half a widescreen and makes every one of them a
+   flat line stretched to 1400 pixels. */
+/* A button that reads as a link. Used where a table cell needs an action but
+   an underlined word among buttons would look like a mistake. */
+button.linklike {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
+
+/* The instruments currently on the comparison chart. */
+.chips { display: flex; flex-wrap: wrap; gap: .4rem; margin: .5rem 0; }
+.chips .chip {
+  display: inline-flex;
+  gap: .35rem;
+  align-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 1rem;
+  padding: .1rem .55rem;
+  font-size: .82rem;
+}
+
+.chart-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
 
 /* A German statutory term shown beside its plain-English name. Never bold,
    never alone -- it is there so a figure can be matched against a bank

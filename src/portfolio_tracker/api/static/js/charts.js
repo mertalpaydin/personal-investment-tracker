@@ -127,8 +127,35 @@ export function timeChart(container, opts) {
       });
     });
 
+    /*
+     * Fit the axis to the data, not to zero.
+     *
+     * uPlot's default numeric range treats 0 as a soft minimum, so a series
+     * that moves from 54,000 to 54,800 is drawn on an axis from 0 to 55,000
+     * and the whole year's gain becomes a flat line one pixel thick. The
+     * information in a value chart is the *shape*, and an axis chosen to
+     * include a number the data never goes near throws it away.
+     *
+     * Padded by a twentieth of the span so the line does not touch the edges,
+     * and never below zero for a series that has no negative values -- an
+     * axis dipping under zero for a fund that cannot be worth less than
+     * nothing is its own small lie.
+     */
     for (const name of usedScales) {
-      scales[name] = zero && name === "y" ? { range: (_u, min, max) => [Math.min(0, min), max] } : {};
+      if (zero && name === "y") {
+        scales[name] = { range: (_u, min, max) => [Math.min(0, min), max] };
+        continue;
+      }
+      scales[name] = {
+        range: (_u, min, max) => {
+          if (min === max) {
+            const nudge = Math.abs(min) * 0.01 || 1;
+            return [min - nudge, max + nudge];
+          }
+          const pad = (max - min) / 20;
+          return [min >= 0 && min - pad < 0 ? 0 : min - pad, max + pad];
+        },
+      };
     }
 
     const axes = [

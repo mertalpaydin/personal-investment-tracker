@@ -39,7 +39,9 @@ const RANGES = [
 ];
 
 //: Kept across navigation, so returning to the page does not reset it.
-let range = "1D";
+// A day of movement is noise, and the page opened on it. A month is the
+// shortest window in which anything about a portfolio is visible.
+let range = "1M";
 
 export async function render({ query }) {
   if (query.get("range")) range = query.get("range").toUpperCase();
@@ -223,12 +225,15 @@ function valueChart(o, series) {
   return el(
     "section",
     heading("Value against money put in"),
-    box,
-    el("p.chart-note", {
-      text: "The gap between the lines is everything the portfolio earned.",
-    }),
-    el("h3", { text: "How far below its previous peak" }),
-    ddBox,
+    el(
+      "div.chart-pair",
+      el("div", box, el("p.chart-note", {
+        text:
+          "The gap between the lines is everything the portfolio earned. " +
+          "“Money put in” starts at what the accounts already held, not at zero.",
+      })),
+      el("div", el("h3", { text: "How far below its previous peak" }), ddBox),
+    ),
   );
 }
 
@@ -387,6 +392,16 @@ function goalSection(g) {
         card("Half the time", b.dates["0.50"] ? f.month(b.dates["0.50"]) : "—"),
         card("Nine times in ten", b.dates["0.90"] ? f.month(b.dates["0.90"]) : "—"),
         card("Adding", f.eur(b.monthly_contribution_eur), { sub: "a month, measured" }),
+        // A date with no assumptions beside it is a date somebody will quote
+        // back six months later having forgotten it was conditional.
+        card(
+          "Return assumed",
+          p.returns ? f.pct(p.returns.implied_annual) : f.DASH,
+          {
+            sub: p.returns?.from_history ? "from your own price history" : "assumed, not measured",
+            valueCls: p.returns?.from_history ? "" : "warn",
+          },
+        ),
       );
     } catch {
       when.replaceChildren(el("p.note", { text: "Not enough history to project yet." }));

@@ -45,6 +45,9 @@ export async function render() {
     peers: get("/api/peers"),
     universe: get("/api/universe"),
     suggested: get("/api/instruments/categories/suggested"),
+    // Everything the tool can price, for the chart picker and the catalogue
+    // listing. The watch table below still shows only what you chose.
+    everything: get("/api/watchlist", { all: true }),
   });
 
   const view = el(
@@ -59,15 +62,20 @@ export async function render() {
   if (!isError(data.universe)) view.append(universeSection(data.universe));
 
   const entries = isError(data.watchlist) ? [] : data.watchlist.watchlist || [];
-  view.append(watchTable(entries, isError(data.watchlist) ? null : data.watchlist.basis));
+  const everything = isError(data.everything) ? [] : data.everything.watchlist || [];
+  const holdings = isError(data.positions) ? [] : data.positions.positions || [];
 
-  if (entries.length) {
-    const holdings = isError(data.positions) ? [] : data.positions.positions || [];
-    view.append(comparisonChart(entries, holdings));
+  // Always, not only when something is being watched. The chart is the
+  // reason to come to this page, and it was hidden behind having first added
+  // something by hand.
+  if (holdings.length || everything.length) {
+    view.append(comparisonChart(everything, holdings));
   }
+  view.append(watchTable(entries, isError(data.watchlist) ? null : data.watchlist.basis));
+  if (everything.length) view.append(catalogueSection(everything));
 
   const buckets = (!isError(data.universe) && data.universe.buckets) || Object.keys(BUCKET_LABEL);
-  if (!isError(data.peers)) view.append(peerSection(data.peers, buckets, data.suggested));
+  if (!isError(data.peers)) view.append(peerSection(data.peers, buckets, data.suggested, addToComparison));
   return view;
 }
 
@@ -143,7 +151,10 @@ function universeSection(body) {
 /* ---------------------------------------------------------------- adding */
 
 function addSection() {
-  const symbol = el("input", { type: "text", placeholder: "IWDA.DE", autocapitalize: "characters" });
+  // Not IWDA.DE. That fund does not trade on Xetra -- it is IWDA.AS in
+  // Amsterdam and EUNL.DE here -- so the form was proposing a ticker the feed
+  // rejects, which is a poor first impression of a search box.
+  const symbol = el("input", { type: "text", placeholder: "EUNL.DE", autocapitalize: "characters" });
   const result = el("div");
   const checkButton = el("button.primary", { type: "submit", text: "Check" });
 
@@ -155,7 +166,7 @@ function addSection() {
     result.replaceChildren(el("p.note", { text: "Asking the price feed…" }));
     try {
       const found = await get("/api/watchlist/lookup", { symbol: ticker });
-      result.replaceChildren(found.found ? confirmForm(found) : el("p.note.bad", { text: found.problem }));
+      result.replaceChildren(found.found ? confirmForm(found) : notFound(found, symbol, check));
     } catch (err) {
       result.replaceChildren(el("p.note.bad", { text: err.message }));
     }
@@ -186,6 +197,36 @@ function addSection() {
  * what they typed; the feed is guessing, and the currency in particular has
  * to be right or every later fetch is rejected.
  */
+/** What to offer when the feed has never heard of the ticker. */
+function notFound(found, input, recheck) {
+  const box = el("div", el("p.note.bad", { text: found.problem }));
+  const near = found.did_you_mean || [];
+  if (near.length) {
+    box.append(
+      el("p.note", { text: "The comparison set has these, and the feed knows all of them:" }),
+      el(
+        "div.chips",
+        near.map((n) =>
+          el(
+            "span.chip",
+            el("button.linklike", {
+              type: "button",
+              text: n.symbol,
+              title: `${n.name} (${n.currency}) — check this one instead.`,
+              onclick: () => {
+                input.value = n.symbol;
+                recheck();
+              },
+            }),
+            el("span.muted", { text: n.name }),
+          ),
+        ),
+      ),
+    );
+  }
+  return box;
+}
+
 function confirmForm(found) {
   const key = el("input", { type: "text", value: found.suggested_key });
   const name = el("input", { type: "text", value: found.name || "" });
@@ -365,60 +406,191 @@ function removeButton(entry) {
 
 /* ----------------------------------------------------------------- chart */
 
+/*
+ * A chart you choose the lines for.
+ *
+ * It used to pick up to six instruments on your behalf -- every watched one,
+ * then the three largest holdings -- which is the one selection nobody wants:
+ * too many to read, and never the comparison you had in mind. Now it starts
+ * with your holdings and takes anything else you add, including a ticker
+ * clicked in the tables below.
+ */
+const compared = new Set();
+let redrawComparison = () => {};
+
+function addToComparison(key) {
+  compared.add(key);
+  redrawComparison();
+  document.getElementById("compare-chart")?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+/*
+ * What is actually in the comparison set.
+ *
+ * "There is no place for me to see the tickers" was exactly right: the panel
+ * said "243 loaded" and named none of them, which is a number to take on
+ * trust rather than a list to check. Collapsed by default because it is two
+ * hundred rows, and grouped by category because that is what decides which
+ * of them can be a peer for which of your holdings.
+ */
+function catalogueSection(everything) {
+  const pool = everything.filter((e) => e.status === "UNIVERSE");
+  if (!pool.length) return el("div");
+
+  const byBucket = new Map();
+  for (const e of pool) {
+    const key = e.risk_bucket || "Uncategorised";
+    if (!byBucket.has(key)) byBucket.set(key, []);
+    byBucket.get(key).push(e);
+  }
+
+  const groups = [...byBucket.entries()].sort((a, b) => b[1].length - a[1].length);
+  return el(
+    "section",
+    heading("What is in the comparison set"),
+    el(
+      "details.assumptions",
+      el("summary", { text: `${pool.length} instruments, by category` }),
+      ...groups.map(([b, list]) =>
+        el(
+          "div.wrap",
+          el("h3", { text: `${BUCKET_LABEL[b] || b} — ${list.length}` }),
+          el(
+            "table",
+            el(
+              "thead",
+              el("tr", ["Ticker", "Name", "Fee", "Prices", ""].map((h) => el("th", { text: h }))),
+            ),
+            el(
+              "tbody",
+              list.map((e) =>
+                row([
+                  { text: e.instrument, cls: "name" },
+                  { text: e.name, cls: "prose" },
+                  { text: e.ter_pct === null || e.ter_pct === undefined ? "—" : f.pct(e.ter_pct) },
+                  { text: e.prices ? `${e.prices}` : "none yet" },
+                  {
+                    node: el("button.small", {
+                      type: "button",
+                      text: "Chart it",
+                      title: `Add ${e.instrument} to the comparison chart.`,
+                      onclick: () => addToComparison(e.instrument),
+                    }),
+                  },
+                ]),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 function comparisonChart(entries, holdings) {
-  const box = el("div.chart");
-  const pal = palette();
-  const keys = [
-    ...entries.filter((e) => e.prices).map((e) => e.instrument),
-    ...holdings.slice(0, 3).map((h) => h.instrument),
-  ].slice(0, 6);
+  const pool = [
+    ...holdings.map((h) => ({ key: h.instrument, name: h.name, held: true })),
+    ...entries.filter((e) => e.prices).map((e) => ({ key: e.instrument, name: e.name })),
+  ];
+  if (!pool.length) return el("div");
 
-  if (!keys.length) return el("div");
+  if (!compared.size) for (const h of holdings.slice(0, 4)) compared.add(h.instrument);
 
-  queueMicrotask(async () => {
+  const box = el("div.chart", { id: "compare-chart" });
+  const chosen = el("div.chips");
+
+  const draw = async () => {
+    const keys = [...compared];
+    chosen.replaceChildren(
+      ...keys.map((k) =>
+        el(
+          "span.chip",
+          el("span", { text: k }),
+          el("button.linklike", {
+            type: "button",
+            text: "×",
+            title: `Take ${k} off the chart.`,
+            onclick: () => {
+              compared.delete(k);
+              draw();
+            },
+          }),
+        ),
+      ),
+      keys.length ? null : el("span.muted", { text: "Nothing selected." }),
+    );
+    if (!keys.length) {
+      box.replaceChildren();
+      return;
+    }
+    const pal = palette();
     const loaded = await all(
       Object.fromEntries(
         keys.map((k) => [k, get(`/api/instruments/${encodeURIComponent(k)}/series`)]),
       ),
     );
     // A shared date axis: the union of every series, so lines with different
-    // start dates still line up rather than being drawn against each other's
+    // start dates line up rather than being drawn against each other's
     // indices.
     const dates = new Set();
-    for (const k of keys) if (!isError(loaded[k])) for (const p of loaded[k].points) dates.add(p.date);
+    for (const k of keys) {
+      if (!isError(loaded[k])) for (const pt of loaded[k].points) dates.add(pt.date);
+    }
     const axis = [...dates].sort();
     if (axis.length < 2) return;
 
     const series = [];
     keys.forEach((k, i) => {
       if (isError(loaded[k])) return;
-      const byDate = new Map(loaded[k].points.map((p) => [p.date, p.level]));
-      const aligned = axis.map((d) => byDate.get(d) ?? null);
+      const byDate = new Map(loaded[k].points.map((pt) => [pt.date, pt.level]));
       series.push({
         label: k,
-        data: indexTo100(aligned),
+        data: indexTo100(axis.map((d) => byDate.get(d) ?? null)),
         colour: pal.series[i % pal.series.length],
         width: holdings.some((h) => h.instrument === k) ? 2.4 : 1.6,
         dash: holdings.some((h) => h.instrument === k) ? undefined : [4, 3],
       });
     });
-    if (!series.length) return;
-    timeChart(box, { x: axis.map(toTs), height: 300, kind: "index", series });
-  });
+    if (series.length) timeChart(box, { x: axis.map(toTs), height: 320, kind: "index", series });
+  };
+  redrawComparison = draw;
+
+  const option = (x) => el("option", { value: x.key, text: `${x.key} — ${x.name}` });
+  const held = pool.filter((x) => x.held);
+  const rest = pool.filter((x) => !x.held);
+  // The attributes object has to be the *second* argument; passing it last
+  // made the handler a child node and printed it as [object Object].
+  const picker = el(
+    "select",
+    {
+      onchange: (e) => {
+        if (e.target.value) addToComparison(e.target.value);
+        e.target.value = "";
+      },
+    },
+    el("option", { value: "", text: "Add an instrument…" }),
+    held.length ? el("optgroup", { label: "You hold" }, held.map(option)) : null,
+    rest.length
+      ? el("optgroup", { label: "Watched and comparison set" }, rest.map(option))
+      : null,
+  );
+
+  queueMicrotask(draw);
 
   return el(
     "section",
-    heading("Watched against held"),
+    heading("Compare anything against anything"),
+    el("div.actions", picker),
+    chosen,
     box,
     el("p.chart-note", {
       text:
-        "All indexed to 100 at the start, in euros. Solid lines are holdings, " +
-        "dashed are watched. Lines starting later simply had no price before then.",
+        "All indexed to 100 at the start, in euros, so lines of very different " +
+        "prices can be read together. Solid is held, dashed is not. A line " +
+        "starting later simply had no price before then.",
     }),
   );
 }
-
-/* ----------------------------------------------------------------- peers */
 
 /*
  * A category picker for one holding.
@@ -430,7 +602,8 @@ function comparisonChart(entries, holdings) {
  * A guess is not offered as a default. `core/peers.py` refuses to compare on
  * a derived category precisely because it cannot tell a semiconductor fund
  * from a world tracker, and prefilling the box with that guess would hand the
- * refusal straight back as a click-through.
+ * refusal straight back as a click-through -- so the proposal comes from the
+ * fund's own name instead, with the words it matched shown beside it.
  */
 function categoryRow(key, buckets, proposal) {
   const select = el(
@@ -440,10 +613,7 @@ function categoryRow(key, buckets, proposal) {
       el("option", {
         value: b,
         text: BUCKET_LABEL[b] || b,
-        // Pre-selected from the fund's own name, with the reason shown
-        // beside it. A proposal a person can see the basis of is a very
-        // different thing from a guess made on their behalf.
-        selected: proposal ? b === proposal.suggested : false,
+        selected: proposal ? b === (proposal.current || proposal.suggested) : false,
       }),
     ),
   );
@@ -475,17 +645,18 @@ function categoryRow(key, buckets, proposal) {
 
 /** Accept every proposal at once, then let the page re-read the result. */
 function acceptAllButton(proposals) {
-  const usable = proposals.filter((p) => p.suggested);
+  const usable = proposals.filter((x) => x.suggested && !x.current);
   if (!usable.length) return null;
   const button = el("button.primary", {
     type: "button",
     text: `Accept all ${usable.length}`,
+    title: "Save every suggested category above, in one go.",
     onclick: async () => {
       button.disabled = true;
       button.textContent = "Saving…";
       try {
         const categories = {};
-        for (const p of usable) categories[p.instrument] = p.suggested;
+        for (const x of usable) categories[x.instrument] = x.suggested;
         await post("/api/instruments/categories", { categories });
         router.refresh();
       } catch (err) {
@@ -498,7 +669,7 @@ function acceptAllButton(proposals) {
   return button;
 }
 
-function peerSection(body, buckets, suggested) {
+function peerSection(body, buckets, suggested, onCompare) {
   const scans = body.scans || [];
   const needs = body.needs_category || [];
   const proposals = isError(suggested) ? [] : suggested?.suggestions || [];
@@ -510,26 +681,32 @@ function peerSection(body, buckets, suggested) {
   // separately is eleven calls against a free tier to say what one says.
   if (scans.length) {
     section.append(
-      explainPanel("/api/peers", {}, "Compare my whole portfolio in words"),
+      explainPanel(
+        "/api/peers",
+        {},
+        "Write the whole comparison up in sentences",
+      ),
     );
   }
 
-  for (const scan of scans) section.append(scanPanel(scan));
+  for (const scan of scans) section.append(scanPanel(scan, onCompare));
   if (scans.length) section.append(el("p.note", { text: scans[0].disclaimer }));
   else section.append(el("p.note", { text: body.note }));
 
   // Listed, not compared. A guessed category would pair a semiconductor ETF
   // with a world tracker and report the difference to two decimal places.
-  if (needs.length) {
+  if (needs.length || proposals.length) {
     section.append(
       el(
-        "div.panel.warn",
-        el("h3", { text: "Not compared yet" }),
+        needs.length ? "div.panel.warn" : "div.panel",
+        el("h3", { text: needs.length ? "Not compared yet" : "Risk categories" }),
         el("p", {
-          text:
-            `${needs.join(", ")} have no risk category recorded, so there is nothing ` +
-            "to say they are like. Comparing them against a broad tracker would " +
-            "produce a precise number about two unlike things.",
+          text: needs.length
+            ? `${needs.join(", ")} have no risk category recorded, so there is nothing ` +
+              "to say they are like. Comparing them against a broad tracker would " +
+              "produce a precise number about two unlike things."
+            : "What each holding is treated as when looking for alternatives. " +
+              "Change any of them and the comparisons below are redrawn.",
         }),
         el("p.note", {
           text:
@@ -551,7 +728,12 @@ function peerSection(body, buckets, suggested) {
                 ["Holding", "Name", "Category", "Why", ""].map((h) => el("th", { text: h })),
               ),
             ),
-            el("tbody", needs.map((key) => categoryRow(key, buckets, byKey.get(key)))),
+            el(
+              "tbody",
+              (needs.length ? needs : proposals.map((x) => x.instrument)).map((key) =>
+                categoryRow(key, buckets, byKey.get(key)),
+              ),
+            ),
           ),
         ),
         el("div.actions", acceptAllButton(proposals)),
@@ -561,87 +743,113 @@ function peerSection(body, buckets, suggested) {
   return section;
 }
 
-function scanPanel(scan) {
+function scanPanel(scan, onCompare) {
   const s = scan.subject;
+
+  /*
+   * Your own holding is the first row of the table.
+   *
+   * It used to show a candidate's volatility and fee with nothing to measure
+   * them against, and 23% or 15bp mean nothing until they sit beside yours.
+   *
+   * Two columns are gone. "3 years a year" was empty in every row, because
+   * there is one year of history to work from; "Overlap" needs a published
+   * holdings file for both funds and so read "unknown" all the way down. A
+   * column that is always empty is worse than an absent one -- it suggests a
+   * figure exists and is being withheld.
+   */
+  const columns = ["Instrument", "3 months", "6 months", "1 year", "vs yours", "Volatility", "Fee"];
+
   const panel = el(
     "div.panel",
-    el(
-      "h3",
-      { text: `${s.instrument} — ${s.name}` },
-    ),
+    el("h3", { text: `${s.instrument} — ${s.name}` }),
     el("p.note", {
       text:
         `Risk category ${scan.bucket}` +
         (scan.vol_band ? `, ${scan.vol_band.toLowerCase()} volatility` : "") +
-        `. ${scan.considered} comparable instrument(s) considered.`,
+        `. ${scan.considered} comparable instrument(s) considered. Returns are ` +
+        "in euros over the period named, not annualised. Volatility is over one year.",
     }),
-  );
-
-  panel.append(
     el(
       "div.wrap",
       el(
         "table",
-        el(
-          "thead",
-          el(
-            "tr",
-            ["Alternative", "3 years a year", "vs yours", "Volatility", "Fee", "Overlap", ""].map(
-              (t) => el("th", { text: t }),
-            ),
-          ),
-        ),
+        el("thead", el("tr", columns.map((c) => el("th", { text: c })))),
         el(
           "tbody",
-          scan.candidates.map((c) => sentenceRow(c, s)),
+          [
+            candidateRow(s, { yours: true }),
+            ...scan.candidates.map((c) => candidateRow(c, { onCompare })),
+          ],
         ),
       ),
     ),
   );
+
+  // Overlap only where there is one, as a sentence rather than a column of
+  // "unknown".
+  const overlaps = scan.candidates.filter(
+    (c) => c.overlap_pct !== null && c.overlap_pct !== undefined,
+  );
+  if (overlaps.length) {
+    panel.append(
+      el("p.note", {
+        text:
+          "Holds some of the same things as yours: " +
+          overlaps.map((c) => `${c.instrument} ${f.pct(c.overlap_pct)}`).join(", ") +
+          ".",
+      }),
+    );
+  }
 
   if (scan.caveats?.length) {
     panel.append(el("ul.caveats", scan.caveats.map((x) => el("li", { text: x }))));
   }
   panel.append(
-    explainPanel(`/api/peers/${encodeURIComponent(s.instrument)}`, {}, "Put this in words"),
+    explainPanel(
+      `/api/peers/${encodeURIComponent(s.instrument)}`,
+      {},
+      `Write ${s.instrument} and its alternatives up in sentences`,
+    ),
   );
   return panel;
 }
 
-function sentenceRow(c, subject) {
-  const delta = c.ret_3y_ann_delta ?? c.ret_1y_delta;
-  return row([
-    {
-      node: el(
+/** One row of the comparison: yours, or an alternative to it. */
+function candidateRow(c, { yours = false, onCompare = null } = {}) {
+  const label = yours
+    ? el(
         "span",
         el("strong", { text: c.instrument }),
+        " ",
+        el("span.tag.ok", { text: "what you hold" }),
+      )
+    : el(
+        "span",
+        // Clicking a ticker puts it on the chart above, which is what you
+        // actually want to do with it. A link to a holdings page would 404:
+        // nothing in the comparison set is held.
+        el("button.linklike", {
+          type: "button",
+          text: c.instrument,
+          title: `Add ${c.instrument} to the comparison chart above.`,
+          onclick: () => onCompare && onCompare(c.instrument),
+        }),
         " ",
         el("span.muted", { text: c.name }),
         c.comparable
           ? null
-          : el("span.tag.warn", {
-              text: "not like-for-like",
-              title: c.caveats.join(" "),
-            }),
-      ),
-      cls: "name",
-    },
-    { text: f.pct(c.ret_3y_ann, { sign: true }), cls: f.tone(c.ret_3y_ann) },
-    { text: f.pp(delta), cls: f.tone(delta) },
-    {
-      text: f.pct(c.vol_3y ?? c.vol_1y),
-      title:
-        c.vol_3y_delta === null || c.vol_3y_delta === undefined
-          ? undefined
-          : `${f.pp(c.vol_3y_delta)} vs yours`,
-    },
-    {
-      text: c.ter_bps === null || c.ter_bps === undefined ? "—" : f.bps(c.ter_bps),
-      cls: c.ter_bps_delta !== null && c.ter_bps_delta !== undefined && c.ter_bps_delta < 0 ? "gain" : "",
-    },
-    // Null overlap is unknown, not zero: it needs a published holdings file
-    // for both funds, and saying 0% would claim they share nothing.
-    { text: c.overlap_pct === null || c.overlap_pct === undefined ? "unknown" : f.pct(c.overlap_pct) },
-    { node: el("a", { href: `#/holdings/${encodeURIComponent(subject.instrument)}`, text: "yours" }) },
+          : el("span.tag.warn", { text: "not like-for-like", title: (c.caveats || []).join(" ") }),
+      );
+
+  const delta = yours ? null : c.ret_1y_delta;
+  return row([
+    { node: label, cls: "name" },
+    { text: f.pct(c.ret_3m, { sign: true }), cls: f.tone(c.ret_3m) },
+    { text: f.pct(c.ret_6m, { sign: true }), cls: f.tone(c.ret_6m) },
+    { text: f.pct(c.ret_1y, { sign: true }), cls: f.tone(c.ret_1y) },
+    yours ? { text: "—", cls: "muted" } : { text: f.pp(delta), cls: f.tone(delta) },
+    { text: f.pct(c.vol_1y ?? c.vol_3y) },
+    { text: c.ter_bps === null || c.ter_bps === undefined ? "—" : f.bps(c.ter_bps) },
   ]);
 }

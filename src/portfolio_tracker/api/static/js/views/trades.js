@@ -13,7 +13,7 @@
  */
 
 import { el, row, heading } from "../dom.js";
-import { get, post, put, del, all, isError } from "../api.js";
+import { get, post, del, all, isError } from "../api.js";
 import * as f from "../fmt.js";
 import * as router from "../router.js";
 
@@ -45,8 +45,9 @@ export async function render({ query }) {
       type: filterType || null,
     }),
     funding: get("/api/savings/inferred"),
-    opening: get("/api/accounts/opening-balances"),
-    watching: get("/api/watchlist"),
+    // `all` includes the comparison set, so anything the tool can price
+    // can be bought -- not merely what is already held or watched.
+    watching: get("/api/watchlist", { all: true }),
   });
 
   const view = el(
@@ -62,23 +63,6 @@ export async function render({ query }) {
     view.append(fundingReview(data.funding));
   }
 
-  // Once the guessed contributions are settled, what is left is money that
-  // was in the account before this tool's records begin. There is no earlier
-  // data to fetch, so it has to be stated.
-  //
-  // Shown once anything is set as well as while something is outstanding. It
-  // used to vanish the moment the last purchase was explained, which left a
-  // figure underpinning every return in the app with nowhere on the screen
-  // that admitted it existed, let alone allowed it to be corrected.
-  if (
-    !isError(data.opening) &&
-    (data.opening.unexplained_purchases > 0 ||
-      data.opening.suggested?.length ||
-      data.opening.set?.length)
-  ) {
-    view.append(openingBalances(data.opening));
-  }
-
   const holdings = isError(data.positions) ? [] : data.positions.positions || [];
   const watching = isError(data.watching) ? [] : data.watching.watchlist || [];
   view.append(entryForm(holdings, watching, query));
@@ -86,166 +70,6 @@ export async function render({ query }) {
   if (!isError(data.ledger)) view.append(ledgerTable(data.ledger));
   return view;
 }
-
-/* ---------------------------------------------------- opening balances */
-
-/*
- * What each account already held.
- *
- * Every figure here is built from a ledger that starts on whatever day the
- * first export happens to cover. The accounts did not start then, and a
- * purchase funded by money that was already sitting there is unexplainable
- * for ever -- there is no earlier data to go and fetch.
- *
- * The suggested figure is the deepest the running balance would go with
- * nothing assumed, which is exactly the least the account can have held. A
- * floor, not a guess: it is offered to correct, not applied on anyone's
- * behalf.
- */
-function openingBalances(body) {
-  const outstanding = body.unexplained_purchases > 0;
-
-  /** One editable row. `existing` when it is already recorded. */
-  const balanceRow = (entry, { existing }) => {
-    const input = el("input", {
-      type: "number",
-      step: "any",
-      min: "0",
-      value: String(entry.amount_local),
-      style: "width:11rem",
-    });
-    const save = async () => {
-      try {
-        await put("/api/accounts/opening-balances", {
-          account_id: entry.account_id,
-          currency: entry.currency,
-          amount_local: input.value || "0",
-          on_date: entry.on_date,
-          source: "entered by hand",
-        });
-        router.refresh();
-      } catch (err) {
-        window.alert(err.message);
-      }
-    };
-    const clear = async () => {
-      if (!window.confirm(`Remove the opening balance for ${entry.account} ${entry.currency}?`)) {
-        return;
-      }
-      try {
-        await del(`/api/accounts/opening-balances/${entry.account_id}/${entry.currency}`);
-        router.refresh();
-      } catch (err) {
-        window.alert(err.message);
-      }
-    };
-
-    return row([
-      { text: entry.account, cls: "name" },
-      entry.currency,
-      existing
-        ? { text: f.date(entry.on_date), title: "Counted from this date onwards." }
-        : {
-            text: f.money(entry.amount_local, entry.currency),
-            title: "The least it can have held for every purchase to be funded.",
-          },
-      existing
-        ? { text: entry.source || "—" }
-        : `${entry.explains} purchase${entry.explains === 1 ? "" : "s"}`,
-      { node: input },
-      {
-        node: el(
-          "span.actions",
-          el("button.primary", { type: "button", text: "Save", onclick: save }),
-          existing
-            ? el("button.danger", { type: "button", text: "Remove", onclick: clear })
-            : null,
-        ),
-      },
-    ]);
-  };
-
-  const section = el("section", heading("What your accounts already held"));
-
-  // The unfinished business first, and only while it is unfinished.
-  if (outstanding) {
-    section.append(
-      el(
-        "div.panel.warn",
-        el("h3", {
-          text: `${body.unexplained_purchases} purchases used money this tool has no record of`,
-        }),
-        el("p", {
-          text:
-            "Your accounts did not start at zero. This tool's records begin when your " +
-            "first export does, and anything already sitting in the account before " +
-            "then funded purchases it cannot otherwise explain.",
-        }),
-        el("p.note", { text: body.what_this_is }),
-        el(
-          "div.wrap",
-          el(
-            "table",
-            el(
-              "thead",
-              el(
-                "tr",
-                ["Account", "Currency", "At least", "Explains", "It actually held", ""].map((x) =>
-                  el("th", { text: x }),
-                ),
-              ),
-            ),
-            el("tbody", (body.suggested || []).map((s) => balanceRow(s, { existing: false }))),
-          ),
-        ),
-        el("p.note", {
-          text:
-            "The suggested figure is the smallest that makes every purchase add up. " +
-            "If you know the real balance, enter that instead — it is very likely higher.",
-        }),
-      ),
-    );
-  }
-
-  // What is recorded, always. These figures sit underneath every return the
-  // app reports, so they have to be visible and correctable long after the
-  // question that prompted them has gone away.
-  if (body.set?.length) {
-    section.append(
-      el(
-        "div.panel",
-        el("h3", { text: "Recorded starting balances" }),
-        el("p.note", { text: body.what_this_is }),
-        el(
-          "div.wrap",
-          el(
-            "table",
-            el(
-              "thead",
-              el(
-                "tr",
-                ["Account", "Currency", "Counted from", "Source", "Amount", ""].map((x) =>
-                  el("th", { text: x }),
-                ),
-              ),
-            ),
-            el("tbody", body.set.map((s) => balanceRow(s, { existing: true }))),
-          ),
-        ),
-        el("p.note", {
-          text:
-            outstanding
-              ? "Change one and every return, savings and projection figure is recomputed."
-              : "Every purchase now adds up. Change one of these and every return, " +
-                "savings and projection figure is recomputed.",
-        }),
-      ),
-    );
-  }
-
-  return section;
-}
-
 
 /* ---------------------------------------------------- inferred funding */
 
