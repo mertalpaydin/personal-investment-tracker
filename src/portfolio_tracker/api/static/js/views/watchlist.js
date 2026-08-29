@@ -38,6 +38,26 @@ const BUCKET_LABEL = {
   OTHER: "Something else",
 };
 
+export const RISK_LEVEL_CONFIG = {
+  1: { num: 1, label: "Level 1 · Ultra Low (Cash & Overnight)", bg: "rgba(13, 148, 136, 0.15)", color: "#0f766e" },
+  2: { num: 2, label: "Level 2 · Very Low (Short Bonds)", bg: "rgba(22, 163, 74, 0.15)", color: "#15803d" },
+  3: { num: 3, label: "Level 3 · Low-Mid (Aggregate Bonds)", bg: "rgba(8, 145, 178, 0.15)", color: "#0e7490" },
+  4: { num: 4, label: "Level 4 · Moderate (Core Global Equity)", bg: "rgba(37, 99, 235, 0.15)", color: "#1d4ed8" },
+  5: { num: 5, label: "Level 5 · Mid-High (EM & Commodities)", bg: "rgba(217, 119, 6, 0.15)", color: "#b45309" },
+  6: { num: 6, label: "Level 6 · High Risk (Sectors & Stocks)", bg: "rgba(234, 88, 12, 0.15)", color: "#c2410c" },
+  7: { num: 7, label: "Level 7 · Speculative (Crypto)", bg: "rgba(220, 38, 38, 0.15)", color: "#b91c1c" },
+};
+
+export function riskBadge(level) {
+  if (!level) return null;
+  const cfg = RISK_LEVEL_CONFIG[level] || { label: `Level ${level}`, bg: "rgba(100, 116, 139, 0.15)", color: "#475569" };
+  return el("span.tag", {
+    text: `Risk ${level}/7`,
+    title: cfg.label,
+    style: `background: ${cfg.bg}; color: ${cfg.color}; font-weight: 600; border-radius: 4px; padding: 2px 6px; font-size: 0.75rem; display: inline-block; white-space: nowrap;`,
+  });
+}
+
 export async function render() {
   const data = await all({
     watchlist: get("/api/watchlist"),
@@ -52,9 +72,9 @@ export async function render() {
 
   const view = el(
     "div",
-    el("h1", { text: "Watchlist" }),
+    el("h1", { text: "Watchlist & Risk Rankings" }),
     el("p.sub", {
-      text: "Instruments you do not own, measured the same way as the ones you do.",
+      text: "Track instruments, compare risk groups (1-7 scale), and identify top-performing tickers.",
     }),
   );
 
@@ -72,7 +92,10 @@ export async function render() {
     view.append(comparisonChart(everything, holdings));
   }
   view.append(watchTable(entries, isError(data.watchlist) ? null : data.watchlist.basis));
-  if (everything.length) view.append(catalogueSection(everything));
+  if (everything.length) {
+    view.append(leaderboardSection(addToComparison));
+    view.append(catalogueSection(everything));
+  }
 
   const buckets = (!isError(data.universe) && data.universe.buckets) || Object.keys(BUCKET_LABEL);
   if (!isError(data.peers)) view.append(peerSection(data.peers, buckets, data.suggested, addToComparison));
@@ -305,6 +328,7 @@ function watchTable(entries, basis) {
     const p = e.performance || {};
     return row([
       { node: el("strong", { text: e.instrument }), cls: "name" },
+      { node: riskBadge(e.risk_level) },
       { text: e.name, cls: "name muted" },
       { text: f.pct(p.ret_1y, { sign: true }), cls: f.tone(p.ret_1y) },
       { text: f.pct(p.ret_3y_ann, { sign: true }), cls: f.tone(p.ret_3y_ann) },
@@ -334,7 +358,7 @@ function watchTable(entries, basis) {
           "thead",
           el(
             "tr",
-            ["Ticker", "Name", "1 year", "3 years a year", "Volatility", "Worst fall", "Fee", ""].map(
+            ["Ticker", "Risk", "Name", "1 year", "3 years a year", "Volatility", "Worst fall", "Fee", ""].map(
               (t) => el("th", { text: t }),
             ),
           ),
@@ -605,15 +629,154 @@ function comparisonChart(entries, holdings) {
  * refusal straight back as a click-through -- so the proposal comes from the
  * fund's own name instead, with the words it matched shown beside it.
  */
+function leaderboardSection(onCompare) {
+  const container = el("div");
+  let activeLevel = 4; // Default to Core Global Equity (Level 4)
+
+  const loadData = async (lvl) => {
+    container.replaceChildren(el("p.note", { text: "Loading top performers in risk group…" }));
+    try {
+      const res = await get("/api/peers/leaderboard", { risk_level: lvl, top: 10 });
+      const candidates = res.candidates || [];
+      if (!candidates.length) {
+        container.replaceChildren(
+          el("p.note", { text: `No priced instruments found for Risk Level ${lvl}.` }),
+        );
+        return;
+      }
+
+      const rows = candidates.map((c, idx) => {
+        const sharpeVal = c.sharpe_3y ?? c.sharpe_1y;
+        return row([
+          {
+            node: el(
+              "span",
+              el("strong", { text: `#${idx + 1}` }),
+              " ",
+              el("button.linklike", {
+                type: "button",
+                text: c.instrument,
+                title: `Add ${c.instrument} to comparison chart.`,
+                onclick: () => onCompare && onCompare(c.instrument),
+              }),
+              " ",
+              el("span.muted", { text: c.name }),
+            ),
+            cls: "name",
+          },
+          { node: riskBadge(c.risk_level) },
+          { text: BUCKET_LABEL[c.bucket] || c.bucket, cls: "muted" },
+          { text: f.pct(c.ret_1y, { sign: true }), cls: f.tone(c.ret_1y) },
+          { text: f.pct(c.ret_3y_ann, { sign: true }), cls: f.tone(c.ret_3y_ann) },
+          { text: f.pct(c.vol_1y ?? c.vol_3y) },
+          {
+            text: sharpeVal !== null && sharpeVal !== undefined ? Number(sharpeVal).toFixed(2) : "—",
+            cls: sharpeVal && Number(sharpeVal) > 0 ? "gain" : "",
+            title: "Sharpe ratio: excess return over risk-free rate divided by volatility",
+          },
+          { text: c.ter_bps === null || c.ter_bps === undefined ? "—" : f.bps(c.ter_bps) },
+          {
+            node: el("button.small", {
+              type: "button",
+              text: "Chart",
+              onclick: () => onCompare && onCompare(c.instrument),
+            }),
+          },
+        ]);
+      });
+
+      const tableWrap = el(
+        "div.wrap",
+        el(
+          "table",
+          el(
+            "thead",
+            el(
+              "tr",
+              [
+                "Rank & Ticker",
+                "Risk",
+                "Category",
+                "1 Year",
+                "3Y Ann.",
+                "Volatility",
+                "Sharpe",
+                "Fee",
+                "",
+              ].map((h) => el("th", { text: h })),
+            ),
+          ),
+          el("tbody", rows),
+        ),
+      );
+      container.replaceChildren(tableWrap);
+    } catch (err) {
+      container.replaceChildren(el("p.note.bad", { text: err.message }));
+    }
+  };
+
+  const nav = el(
+    "div.chips",
+    { style: "margin-bottom: 1rem; display: flex; flex-wrap: wrap; gap: 0.5rem;" },
+    [1, 2, 3, 4, 5, 6, 7].map((lvl) => {
+      const cfg = RISK_LEVEL_CONFIG[lvl];
+      const btn = el("button.chip", {
+        type: "button",
+        text: `Level ${lvl}: ${cfg.label.split("·")[1]?.trim() || ""}`,
+        style: lvl === activeLevel ? `font-weight: bold; border-color: ${cfg.color}; background: ${cfg.bg};` : "",
+        onclick: () => {
+          activeLevel = lvl;
+          for (const sibling of nav.children) {
+            sibling.style.fontWeight = "normal";
+            sibling.style.borderColor = "";
+            sibling.style.background = "";
+          }
+          btn.style.fontWeight = "bold";
+          btn.style.borderColor = cfg.color;
+          btn.style.background = cfg.bg;
+          loadData(lvl);
+        },
+      });
+      return btn;
+    }),
+  );
+
+  loadData(activeLevel);
+
+  return el(
+    "section",
+    heading("Best performers by risk group"),
+    el("p.note", {
+      text:
+        "Find the top-returning tickers in each numerical risk tier (1-7 SRI scale). " +
+        "Ranked by risk-adjusted efficiency (Sharpe ratio and annualized returns). " +
+        "Tickers with at least 1 year of history are fully supported.",
+    }),
+    nav,
+    container,
+  );
+}
+
 function categoryRow(key, buckets, proposal) {
   const select = el(
     "select",
-    el("option", { value: "", text: "Choose…" }),
+    el("option", { value: "", text: "Choose category…" }),
     buckets.map((b) =>
       el("option", {
         value: b,
         text: BUCKET_LABEL[b] || b,
         selected: proposal ? b === (proposal.current || proposal.suggested) : false,
+      }),
+    ),
+  );
+  const levelSelect = el(
+    "select",
+    { title: "Risk Level (1-7 scale)" },
+    [1, 2, 3, 4, 5, 6, 7].map((lvl) =>
+      el("option", {
+        value: `${lvl}`,
+        text: `Risk ${lvl}/7`,
+        selected: proposal ? lvl === (proposal.current_risk_level || proposal.suggested_risk_level) : lvl === 4,
       }),
     ),
   );
@@ -626,6 +789,7 @@ function categoryRow(key, buckets, proposal) {
       try {
         await patch(`/api/instruments/${encodeURIComponent(key)}/details`, {
           risk_bucket: select.value,
+          risk_level: levelSelect.value ? Number(levelSelect.value) : undefined,
         });
         router.refresh();
       } catch (err) {
@@ -637,7 +801,7 @@ function categoryRow(key, buckets, proposal) {
   return row([
     { text: key, cls: "name" },
     { text: proposal?.name || "", cls: "prose" },
-    { node: select },
+    { node: el("span", select, " ", levelSelect) },
     { text: proposal?.why || "", cls: "prose muted" },
     { node: save },
   ]);
@@ -656,8 +820,12 @@ function acceptAllButton(proposals) {
       button.textContent = "Saving…";
       try {
         const categories = {};
-        for (const x of usable) categories[x.instrument] = x.suggested;
-        await post("/api/instruments/categories", { categories });
+        const risk_levels = {};
+        for (const x of usable) {
+          categories[x.instrument] = x.suggested;
+          if (x.suggested_risk_level) risk_levels[x.instrument] = x.suggested_risk_level;
+        }
+        await post("/api/instruments/categories", { categories, risk_levels });
         router.refresh();
       } catch (err) {
         window.alert(err.message);
@@ -676,9 +844,6 @@ function peerSection(body, buckets, suggested, onCompare) {
   const byKey = new Map(proposals.map((p) => [p.instrument, p]));
   const section = el("section", heading("Comparable to what you hold"));
 
-  // One paragraph across every holding, not one per holding. The question is
-  // "is there something better than what I have", and asking it eleven times
-  // separately is eleven calls against a free tier to say what one says.
   if (scans.length) {
     section.append(
       explainPanel(
@@ -693,8 +858,6 @@ function peerSection(body, buckets, suggested, onCompare) {
   if (scans.length) section.append(el("p.note", { text: scans[0].disclaimer }));
   else section.append(el("p.note", { text: body.note }));
 
-  // Listed, not compared. A guessed category would pair a semiconductor ETF
-  // with a world tracker and report the difference to two decimal places.
   if (needs.length || proposals.length) {
     section.append(
       el(
@@ -725,7 +888,7 @@ function peerSection(body, buckets, suggested, onCompare) {
               "thead",
               el(
                 "tr",
-                ["Holding", "Name", "Category", "Why", ""].map((h) => el("th", { text: h })),
+                ["Holding", "Name", "Category & Risk", "Why", ""].map((h) => el("th", { text: h })),
               ),
             ),
             el(
@@ -745,27 +908,15 @@ function peerSection(body, buckets, suggested, onCompare) {
 
 function scanPanel(scan, onCompare) {
   const s = scan.subject;
-
-  /*
-   * Your own holding is the first row of the table.
-   *
-   * It used to show a candidate's volatility and fee with nothing to measure
-   * them against, and 23% or 15bp mean nothing until they sit beside yours.
-   *
-   * Two columns are gone. "3 years a year" was empty in every row, because
-   * there is one year of history to work from; "Overlap" needs a published
-   * holdings file for both funds and so read "unknown" all the way down. A
-   * column that is always empty is worse than an absent one -- it suggests a
-   * figure exists and is being withheld.
-   */
-  const columns = ["Instrument", "3 months", "6 months", "1 year", "vs yours", "Volatility", "Fee"];
+  const columns = ["Instrument", "Risk", "3 months", "6 months", "1 year", "vs yours", "Volatility", "Sharpe", "Fee"];
 
   const panel = el(
     "div.panel",
     el("h3", { text: `${s.instrument} — ${s.name}` }),
     el("p.note", {
       text:
-        `Risk category ${scan.bucket}` +
+        `Risk category ${BUCKET_LABEL[scan.bucket] || scan.bucket}` +
+        (scan.risk_level ? ` (Risk Level ${scan.risk_level}/7)` : "") +
         (scan.vol_band ? `, ${scan.vol_band.toLowerCase()} volatility` : "") +
         `. ${scan.considered} comparable instrument(s) considered. Returns are ` +
         "in euros over the period named, not annualised. Volatility is over one year.",
@@ -786,8 +937,6 @@ function scanPanel(scan, onCompare) {
     ),
   );
 
-  // Overlap only where there is one, as a sentence rather than a column of
-  // "unknown".
   const overlaps = scan.candidates.filter(
     (c) => c.overlap_pct !== null && c.overlap_pct !== undefined,
   );
@@ -826,9 +975,6 @@ function candidateRow(c, { yours = false, onCompare = null } = {}) {
       )
     : el(
         "span",
-        // Clicking a ticker puts it on the chart above, which is what you
-        // actually want to do with it. A link to a holdings page would 404:
-        // nothing in the comparison set is held.
         el("button.linklike", {
           type: "button",
           text: c.instrument,
@@ -843,13 +989,20 @@ function candidateRow(c, { yours = false, onCompare = null } = {}) {
       );
 
   const delta = yours ? null : c.ret_1y_delta;
+  const sharpeVal = c.sharpe_3y ?? c.sharpe_1y;
   return row([
     { node: label, cls: "name" },
+    { node: riskBadge(c.risk_level) },
     { text: f.pct(c.ret_3m, { sign: true }), cls: f.tone(c.ret_3m) },
     { text: f.pct(c.ret_6m, { sign: true }), cls: f.tone(c.ret_6m) },
     { text: f.pct(c.ret_1y, { sign: true }), cls: f.tone(c.ret_1y) },
     yours ? { text: "—", cls: "muted" } : { text: f.pp(delta), cls: f.tone(delta) },
     { text: f.pct(c.vol_1y ?? c.vol_3y) },
+    {
+      text: sharpeVal !== null && sharpeVal !== undefined ? Number(sharpeVal).toFixed(2) : "—",
+      cls: sharpeVal && Number(sharpeVal) > 0 ? "gain" : "",
+      title: "Sharpe ratio (risk-adjusted return)",
+    },
     { text: c.ter_bps === null || c.ter_bps === undefined ? "—" : f.bps(c.ter_bps) },
   ]);
 }
