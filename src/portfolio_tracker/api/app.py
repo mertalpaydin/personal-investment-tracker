@@ -31,6 +31,7 @@ from portfolio_tracker.api import (
     narrative,
     overview,
     planning,
+    rebalance,
     transactions,
 )
 from portfolio_tracker.api.deps import configure, get_db, get_writable_db
@@ -1950,6 +1951,7 @@ app.include_router(instruments.router)
 app.include_router(narrative.router)
 app.include_router(planning.router)
 app.include_router(overview.router)
+app.include_router(rebalance.router)
 
 
 class RevalidatingStatics(StaticFiles):

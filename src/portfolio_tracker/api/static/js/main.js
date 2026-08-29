@@ -17,6 +17,7 @@ import { ApiError } from "./api.js";
 const NAV = [
   { href: "#/", pattern: "/", label: "Overview" },
   { href: "#/holdings", pattern: "/holdings", label: "Holdings" },
+  { href: "#/rebalance", pattern: "/rebalance", label: "Rebalance" },
   { href: "#/trades", pattern: "/trades", label: "Trades" },
   { href: "#/plan", pattern: "/plan", label: "Plan" },
   { href: "#/tax", pattern: "/tax", label: "Tax" },
@@ -29,6 +30,7 @@ const VIEWS = {
   "/": () => import("./views/overview.js"),
   "/holdings": () => import("./views/holdings.js"),
   "/holdings/:key": () => import("./views/holding.js"),
+  "/rebalance": () => import("./views/rebalance.js"),
   "/trades": () => import("./views/trades.js"),
   "/plan": () => import("./views/plan.js"),
   "/tax": () => import("./views/tax.js"),
