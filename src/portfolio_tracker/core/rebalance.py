@@ -124,11 +124,10 @@ def compute_rebalance(
     rows = conn.execute(
         """
         SELECT
-            p.instrument,
+            i.import_key AS instrument,
             p.quantity,
             p.market_value_eur,
             p.price_local,
-            p.price_eur,
             i.name,
             i.currency,
             i.asset_class,
@@ -140,9 +139,9 @@ def compute_rebalance(
             FROM portfolio_daily
             WHERE person_id = ?
         ) l ON l.person_id = p.person_id AND p.date = l.latest_date
-        JOIN instrument i ON i.import_key = p.instrument
-        WHERE p.person_id = ? AND p.quantity > 0
-        ORDER BY p.market_value_eur DESC
+        JOIN instrument i ON i.id = p.instrument_id
+        WHERE p.person_id = ? AND CAST(p.quantity AS REAL) > 0
+        ORDER BY CAST(p.market_value_eur AS REAL) DESC
         """,
         (person_id, person_id),
     ).fetchall()
@@ -166,7 +165,7 @@ def compute_rebalance(
         val_eur = Decimal(str(r["market_value_eur"]))
         qty = Decimal(str(r["quantity"]))
         px_local = Decimal(str(r["price_local"])) if r["price_local"] is not None else None
-        px_eur = Decimal(str(r["price_eur"])) if r["price_eur"] is not None else None
+        px_eur = val_eur / qty if qty > ZERO else None
 
         inst = InstrumentAllocation(
             instrument=r["instrument"],

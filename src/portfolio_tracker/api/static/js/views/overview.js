@@ -190,11 +190,9 @@ function valueChart(o, series) {
   queueMicrotask(() => {
     timeChart(box, {
       x: pts.map((r) => toTs(r.date)),
-      height: 340,
+      height: 280,
       kind: "eur",
       sync: "overview",
-      // No forced zero: over a one-month window an axis starting at zero
-      // squashes the whole line into the top centimetre.
       series: [
         { label: "What it is worth", data: pts.map((r) => f.num(r.total_value_eur)), fill: 0.14 },
         {
@@ -208,7 +206,7 @@ function valueChart(o, series) {
     });
     timeChart(ddBox, {
       x: pts.map((r) => toTs(r.date)),
-      height: 200,
+      height: 280,
       kind: "pct",
       sync: "overview",
       series: [
@@ -375,8 +373,8 @@ function goalSection(g) {
 
   // The date, without being asked for. "How much is left" is the one thing a
   // target does not need help with; when you get there is the question.
-  const when = el("div.cards");
-  box.append(when, el("p.note", el("a", { href: "#/plan", text: "Change the plan" })));
+  const when = el("div.cards", { style: "margin-top: 1rem;" });
+  box.append(when, el("p.note", { style: "margin-top: 0.75rem;" }, el("a", { href: "#/plan", text: "Change the plan" })));
 
   queueMicrotask(async () => {
     try {

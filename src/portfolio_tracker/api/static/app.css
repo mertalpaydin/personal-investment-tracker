@@ -228,7 +228,7 @@ h3 { font-size: 1.08rem; margin: 1.5rem 0 .5rem; }
 
 .sub { color: var(--muted); margin: 0 0 1.75rem; font-size: .96rem; }
 
-section { margin-bottom: .5rem; }
+section { margin-bottom: 2rem; }
 
 /* ---------------------------------------------------------------- cards */
 
@@ -599,10 +599,12 @@ button.linklike {
 
 .chart-pair {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr));
-  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr));
+  gap: 1.5rem;
   align-items: start;
+  margin-bottom: 1.5rem;
 }
+.chart-pair > * { min-width: 0; }
 
 /* A German statutory term shown beside its plain-English name. Never bold,
    never alone -- it is there so a figure can be matched against a bank
@@ -701,13 +703,60 @@ abbr[title] { text-decoration: underline dotted; cursor: help; }
 
 .entry {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
-  gap: .75rem 1rem;
-  align-items: end;
+  grid-template-columns: repeat(auto-fit, minmax(13.5rem, 1fr));
+  gap: 1rem 1.25rem;
+  align-items: start;
+  margin-bottom: 1.25rem;
 }
 .entry .wide { grid-column: 1 / -1; }
-label.check { display: flex; gap: .45rem; align-items: baseline; font-size: .92rem; }
-label.check input { width: auto; }
+
+label.field {
+  display: flex;
+  flex-direction: column;
+  gap: .35rem;
+  min-width: 0;
+}
+label.field > span:first-child {
+  font-size: .8rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+}
+label.field input,
+label.field select,
+label.field textarea {
+  width: 100%;
+  padding: .45rem .65rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: .92rem;
+  height: 2.35rem;
+  box-sizing: border-box;
+}
+label.field textarea {
+  height: auto;
+  min-height: 4rem;
+}
+label.field input:focus,
+label.field select:focus,
+label.field textarea:focus {
+  outline: 2px solid var(--accent);
+  border-color: transparent;
+}
+label.field .note {
+  font-size: .8rem;
+  color: var(--muted);
+  margin-top: .15rem;
+  line-height: 1.35;
+}
+
+label.check { display: flex; gap: .45rem; align-items: center; font-size: .92rem; }
+label.check input { width: auto; height: auto; margin: 0; }
+label.check.wide { grid-column: 1 / -1; padding-top: .25rem; }
 
 /* ------------------------------------------- what else was going on */
 

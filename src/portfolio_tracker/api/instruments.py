@@ -179,6 +179,7 @@ def _metrics_json(m: performance.Metrics) -> dict[str, Any]:
 def index(
     conn: sqlite3.Connection = Depends(get_db),
     include_universe: bool = Query(False, alias="all"),
+    include_metrics: bool = Query(True, alias="metrics"),
 ) -> dict[str, Any]:
     """Watched instruments, each with how it has actually done."""
     entries = watchlist.listing(conn, include_universe=include_universe)
@@ -188,7 +189,7 @@ def index(
             "SELECT id, currency FROM instrument WHERE import_key = ?", (entry.import_key,)
         ).fetchone()
         body = _entry_json(entry)
-        if row is not None and entry.prices:
+        if include_metrics and row is not None and entry.prices:
             body["performance"] = _metrics_json(
                 performance.metrics(
                     conn,

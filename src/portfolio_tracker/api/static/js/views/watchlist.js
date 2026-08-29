@@ -66,9 +66,8 @@ export async function render() {
     peers: get("/api/peers"),
     universe: get("/api/universe"),
     suggested: get("/api/instruments/categories/suggested"),
-    // Everything the tool can price, for the chart picker and the catalogue
-    // listing. The watch table below still shows only what you chose.
-    everything: get("/api/watchlist", { all: true }),
+    // Everything the tool can price, without computing 256 expensive metrics
+    everything: get("/api/watchlist", { all: true, metrics: false }),
   });
 
   const view = el(
@@ -559,6 +558,17 @@ function catalogueSection(everything) {
   );
 }
 
+const COMPARE_RANGES = [
+  ["1M", "1 month", 31],
+  ["3M", "3 months", 92],
+  ["6M", "6 months", 183],
+  ["YTD", "This year", null],
+  ["1Y", "1 year", 366],
+  ["3Y", "3 years", 1096],
+  ["ALL", "All", null],
+];
+let compareRange = "1Y";
+
 function comparisonChart(entries, holdings) {
   const pool = [
     ...holdings.map((h) => ({ key: h.instrument, name: h.name, held: true })),
@@ -566,55 +576,75 @@ function comparisonChart(entries, holdings) {
   ];
   if (!pool.length) return el("div");
 
-  if (!compared.size) for (const h of holdings.slice(0, 4)) compared.add(h.instrument);
+  if (!compared.size && holdings.length) compared.add(holdings[0].instrument);
 
   const box = el("div.chart", { id: "compare-chart" });
   const chosen = el("div.chips");
+  const rangeBox = el("div.ranges", { style: "margin: 0.5rem 0 0.8rem;" });
 
   const draw = async () => {
     const keys = [...compared];
-    chosen.replaceChildren(
-      ...keys.map((k) =>
-        el(
-          "span.chip",
-          el("span", { text: k }),
-          el("button.linklike", {
-            type: "button",
-            text: "×",
-            title: `Take ${k} off the chart.`,
-            onclick: () => {
-              compared.delete(k);
-              draw();
-            },
-          }),
-        ),
+    const chipNodes = keys.map((k) =>
+      el(
+        "span.chip",
+        el("span", { text: k }),
+        el("button.linklike", {
+          type: "button",
+          text: "×",
+          title: `Take ${k} off the chart.`,
+          onclick: () => {
+            compared.delete(k);
+            draw();
+          },
+        }),
       ),
-      keys.length ? null : el("span.muted", { text: "Nothing selected." }),
     );
+
     if (!keys.length) {
+      chosen.replaceChildren(el("span.muted", { text: "No instruments selected. Pick one above or click 'Chart' on any ticker." }));
       box.replaceChildren();
       return;
     }
+    chosen.replaceChildren(...chipNodes);
+
     const pal = palette();
     const loaded = await all(
       Object.fromEntries(
         keys.map((k) => [k, get(`/api/instruments/${encodeURIComponent(k)}/series`)]),
       ),
     );
-    // A shared date axis: the union of every series, so lines with different
-    // start dates line up rather than being drawn against each other's
-    // indices.
+
+    // Compute window cutoff date for rebasing
+    let cutoffStr = null;
+    const today = new Date();
+    const rangeOpt = COMPARE_RANGES.find(([k]) => k === compareRange);
+    if (compareRange === "YTD") {
+      cutoffStr = `${today.getFullYear()}-01-01`;
+    } else if (rangeOpt && rangeOpt[2]) {
+      const d = new Date(today.getTime() - rangeOpt[2] * 86400000);
+      cutoffStr = d.toISOString().slice(0, 10);
+    }
+
+    const filteredPoints = {};
     const dates = new Set();
     for (const k of keys) {
-      if (!isError(loaded[k])) for (const pt of loaded[k].points) dates.add(pt.date);
+      if (!isError(loaded[k])) {
+        const raw = loaded[k].points || [];
+        const sliced = cutoffStr ? raw.filter((p) => p.date >= cutoffStr) : raw;
+        const effective = sliced.length >= 2 ? sliced : raw;
+        filteredPoints[k] = effective;
+        for (const pt of effective) dates.add(pt.date);
+      }
     }
+
     const axis = [...dates].sort();
     if (axis.length < 2) return;
 
     const series = [];
     keys.forEach((k, i) => {
-      if (isError(loaded[k])) return;
-      const byDate = new Map(loaded[k].points.map((pt) => [pt.date, pt.level]));
+      const pts = filteredPoints[k];
+      if (!pts || !pts.length) return;
+      const byDate = new Map(pts.map((pt) => [pt.date, pt.level]));
       series.push({
         label: k,
         data: indexTo100(axis.map((d) => byDate.get(d) ?? null)),
@@ -623,15 +653,33 @@ function comparisonChart(entries, holdings) {
         dash: holdings.some((h) => h.instrument === k) ? undefined : [4, 3],
       });
     });
-    if (series.length) timeChart(box, { x: axis.map(toTs), height: 320, kind: "index", series });
+
+    if (series.length) {
+      timeChart(box, { x: axis.map(toTs), height: 320, kind: "index", series });
+    }
   };
   redrawComparison = draw;
+
+  const updateRangeButtons = () => {
+    rangeBox.replaceChildren(
+      ...COMPARE_RANGES.map(([key, label]) =>
+        el("button", {
+          text: label,
+          "aria-pressed": String(key === compareRange),
+          onclick: () => {
+            compareRange = key;
+            updateRangeButtons();
+            draw();
+          },
+        }),
+      ),
+    );
+  };
+  updateRangeButtons();
 
   const option = (x) => el("option", { value: x.key, text: `${x.key} — ${x.name}` });
   const held = pool.filter((x) => x.held);
   const rest = pool.filter((x) => !x.held);
-  // The attributes object has to be the *second* argument; passing it last
-  // made the handler a child node and printed it as [object Object].
   const picker = el(
     "select",
     {
@@ -640,7 +688,7 @@ function comparisonChart(entries, holdings) {
         e.target.value = "";
       },
     },
-    el("option", { value: "", text: "Add an instrument…" }),
+    el("option", { value: "", text: "Add an instrument to compare…" }),
     held.length ? el("optgroup", { label: "You hold" }, held.map(option)) : null,
     rest.length
       ? el("optgroup", { label: "Watched and comparison set" }, rest.map(option))
@@ -654,12 +702,12 @@ function comparisonChart(entries, holdings) {
     heading("Compare anything against anything"),
     el("div.actions", picker),
     chosen,
+    rangeBox,
     box,
     el("p.chart-note", {
       text:
-        "All indexed to 100 at the start, in euros, so lines of very different " +
-        "prices can be read together. Solid is held, dashed is not. A line " +
-        "starting later simply had no price before then.",
+        "All indexed to 100 at the start of the selected window, in euros, so lines of very different " +
+        "prices can be read together. Solid is held, dashed is not.",
     }),
   );
 }

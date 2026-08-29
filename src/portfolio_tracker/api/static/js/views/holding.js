@@ -66,12 +66,21 @@ export async function render({ params }) {
 
   const window = sliceToRange(h.history);
   view.append(rangePicker(window));
-  view.append(valueVsCost(h, window));
-  view.append(vsPortfolio(h, window, isError(data.portfolio) ? null : data.portfolio));
+
+  const chartPair1 = el(
+    "div.chart-pair",
+    valueVsCost(h, window),
+    vsPortfolio(h, window, isError(data.portfolio) ? null : data.portfolio),
+  );
+  view.append(chartPair1);
 
   if (h.currency !== "EUR") {
-    view.append(priceAndFx(h, window));
-    view.append(currencySplit(h, window));
+    const chartPair2 = el(
+      "div.chart-pair",
+      priceAndFx(h, window),
+      currencySplit(h, window),
+    );
+    view.append(chartPair2);
   }
 
   view.append(dividendsSection(h));
@@ -201,10 +210,8 @@ function valueVsCost(h, pts) {
   queueMicrotask(() =>
     timeChart(box, {
       x: pts.map((p) => toTs(p.date)),
-      height: 320,
+      height: 270,
       kind: "eur",
-      // No forced zero: over a one-month window it squashes the lines into
-      // the top of the chart and hides the very movement being looked at.
       sync: `holding-${h.instrument}`,
       series: [
         { label: "Value", data: pts.map((p) => f.num(p.market_value_eur)), fill: 0.14 },
@@ -221,6 +228,7 @@ function valueVsCost(h, pts) {
 
   return el(
     "section",
+    heading("Value against cost"),
     box,
     el("p.chart-note", {
       text:
@@ -284,7 +292,7 @@ function vsPortfolio(h, pts, portfolio) {
   queueMicrotask(() =>
     timeChart(box, {
       x: pts.map((p) => toTs(p.date)),
-      height: 260,
+      height: 270,
       kind: "index",
       sync: `holding-${h.instrument}`,
       series,
@@ -312,7 +320,7 @@ function priceAndFx(h, pts) {
   queueMicrotask(() =>
     timeChart(box, {
       x: pts.map((p) => toTs(p.date)),
-      height: 240,
+      height: 270,
       kind: "plain",
       sync: `holding-${h.instrument}`,
       axes: [{ scale: "fx", kind: "plain" }],
@@ -353,7 +361,7 @@ function currencySplit(h, pts) {
   queueMicrotask(() =>
     timeChart(box, {
       x: pts.map((p) => toTs(p.date)),
-      height: 240,
+      height: 270,
       kind: "eur",
       sync: `holding-${h.instrument}`,
       series: [

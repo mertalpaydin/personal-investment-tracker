@@ -50,6 +50,26 @@ const axisBase = (p) => ({
 const money = new Intl.NumberFormat("en-IE", { notation: "compact", maximumFractionDigits: 1 });
 const plain = new Intl.NumberFormat("en-IE", { maximumFractionDigits: 2 });
 
+function formatTimeAxis(self, splits) {
+  if (!splits || !splits.length) return [];
+  const minTs = self.scales.x.min;
+  const maxTs = self.scales.x.max;
+  const spanDays = (maxTs - minTs) / (24 * 3600);
+
+  return splits.map((ts) => {
+    if (ts === null || ts === undefined) return "";
+    const d = new Date(ts * 1000);
+    const day = d.getDate();
+    const month = d.toLocaleDateString("en-GB", { month: "short" });
+    const year = d.getFullYear();
+
+    if (spanDays > 730) {
+      return d.getMonth() === 0 ? `${year}` : `${month} ${year}`;
+    }
+    return `${day} ${month}`;
+  });
+}
+
 /** Value formatters by axis kind. */
 const AXIS_VALUES = {
   eur: (_u, splits) => splits.map((v) => (v === null ? "" : `€${money.format(v)}`)),
@@ -129,17 +149,6 @@ export function timeChart(container, opts) {
 
     /*
      * Fit the axis to the data, not to zero.
-     *
-     * uPlot's default numeric range treats 0 as a soft minimum, so a series
-     * that moves from 54,000 to 54,800 is drawn on an axis from 0 to 55,000
-     * and the whole year's gain becomes a flat line one pixel thick. The
-     * information in a value chart is the *shape*, and an axis chosen to
-     * include a number the data never goes near throws it away.
-     *
-     * Padded by a twentieth of the span so the line does not touch the edges,
-     * and never below zero for a series that has no negative values -- an
-     * axis dipping under zero for a fund that cannot be worth less than
-     * nothing is its own small lie.
      */
     for (const name of usedScales) {
       if (zero && name === "y") {
@@ -159,7 +168,7 @@ export function timeChart(container, opts) {
     }
 
     const axes = [
-      { ...axisBase(p), grid: { show: false } },
+      { ...axisBase(p), grid: { show: false }, values: formatTimeAxis },
       { ...axisBase(p), scale: "y", values: AXIS_VALUES[kind] || AXIS_VALUES.plain, size: 62 },
     ];
     for (const extra of opts.axes || []) {
