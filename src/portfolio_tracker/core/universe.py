@@ -36,6 +36,8 @@ from typing import Any
 
 import yaml
 
+from portfolio_tracker.core.peers import DEFAULT_RISK_LEVEL
+
 #: Ships inside the package: it is public market data with nothing personal in
 #: it, which is why it does not live in the gitignored seeds/ directory.
 CATALOGUE = Path(__file__).resolve().parent.parent / "data" / "universe.yaml"
@@ -138,6 +140,9 @@ def load(conn: sqlite3.Connection, *, refresh: bool = False) -> LoadReport:
 
     for key, spec in entries.items():
         row = existing.get(key)
+        bucket = spec.get("risk_bucket")
+        level = spec.get("risk_level") or (DEFAULT_RISK_LEVEL.get(bucket, 4) if bucket else None)
+
         if row is not None:
             if row["status"] == "OWNED":
                 report.owned.append(key)
@@ -151,7 +156,7 @@ def load(conn: sqlite3.Connection, *, refresh: bool = False) -> LoadReport:
                 """
                 UPDATE instrument SET name = ?, asset_class = ?, currency = ?,
                        price_symbol = ?, trading_calendar = ?, is_fund = ?,
-                       ter_bps = ?, risk_bucket = ?, price_source = 'yfinance'
+                       ter_bps = ?, risk_bucket = ?, risk_level = ?, price_source = 'yfinance'
                 WHERE id = ?
                 """,
                 (
@@ -162,7 +167,8 @@ def load(conn: sqlite3.Connection, *, refresh: bool = False) -> LoadReport:
                     spec.get("trading_calendar", "XETRA"),
                     1 if spec.get("is_fund") else 0,
                     spec.get("ter_bps"),
-                    spec.get("risk_bucket"),
+                    bucket,
+                    level,
                     row["id"],
                 ),
             )
@@ -174,8 +180,8 @@ def load(conn: sqlite3.Connection, *, refresh: bool = False) -> LoadReport:
             INSERT INTO instrument
                 (import_key, name, asset_class, currency, price_symbol,
                  price_source, trading_calendar, is_fund, ter_bps, risk_bucket,
-                 status)
-            VALUES (?, ?, ?, ?, ?, 'yfinance', ?, ?, ?, ?, ?)
+                 risk_level, status)
+            VALUES (?, ?, ?, ?, ?, 'yfinance', ?, ?, ?, ?, ?, ?)
             """,
             (
                 key,
@@ -186,10 +192,8 @@ def load(conn: sqlite3.Connection, *, refresh: bool = False) -> LoadReport:
                 spec.get("trading_calendar", "XETRA"),
                 1 if spec.get("is_fund") else 0,
                 spec.get("ter_bps"),
-                # Stated, not guessed. `core/peers.py` compares only within a
-                # bucket and only where the bucket was stated -- its fallback
-                # cannot tell a semiconductor fund from a world tracker.
-                spec.get("risk_bucket"),
+                bucket,
+                level,
                 UNIVERSE,
             ),
         )

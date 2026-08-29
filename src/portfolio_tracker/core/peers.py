@@ -87,6 +87,22 @@ BUCKETS = (
     "OTHER",
 )
 
+#: Standard mapping from risk bucket to numerical risk level (1 to 7 SRI standard).
+DEFAULT_RISK_LEVEL: dict[str, int] = {
+    "CASH": 1,
+    "MONEY_MARKET": 1,
+    "BOND": 3,
+    "EQ_GLOBAL_BROAD": 4,
+    "EQ_US_LARGE": 4,
+    "EQ_EUROPE": 4,
+    "EQ_EM": 5,
+    "COMMODITY": 5,
+    "EQ_SECTOR": 6,
+    "EQ_SINGLE_STOCK": 6,
+    "CRYPTO": 7,
+    "OTHER": 4,
+}
+
 
 class PeerError(ValueError):
     """The scan cannot be run as asked."""
@@ -107,6 +123,7 @@ class Candidate:
     #: does not. Such candidates are ranked last and say why.
     comparable: bool
     observations: int
+    risk_level: int | None = None
 
     #: Shorter windows too. One year alone is a single number about a period
     #: that may have been all of the story or none of it, and with a year of
@@ -118,6 +135,8 @@ class Candidate:
     vol_1y: Decimal | None = None
     vol_3y: Decimal | None = None
     max_dd_3y: Decimal | None = None
+    sharpe_1y: Decimal | None = None
+    sharpe_3y: Decimal | None = None
 
     ret_1y_delta: Decimal | None = None
     ret_3y_ann_delta: Decimal | None = None
@@ -139,6 +158,7 @@ class PeerScan:
     subject: Candidate
     bucket: str
     vol_band: str | None
+    risk_level: int | None = None
     #: SEEDED when the risk category was stated, DERIVED when guessed from
     #: asset class. A whole-portfolio sweep shows only the stated ones.
     bucket_method: str = "DERIVED"
@@ -203,6 +223,21 @@ def bucket_for(row: sqlite3.Row) -> tuple[str, str]:
     if seeded:
         return str(seeded), "SEEDED"
     return derive_bucket(row), "DERIVED"
+
+
+def risk_level_for(row: sqlite3.Row, bucket: str | None = None) -> int:
+    """The instrument's integer risk level (1 to 7 SRI standard)."""
+    if "risk_level" in row.keys() and row["risk_level"] is not None:  # noqa: SIM118
+        try:
+            return int(row["risk_level"])
+        except (ValueError, TypeError):
+            pass
+    b = bucket or (
+        row["risk_bucket"]
+        if "risk_bucket" in row.keys() and row["risk_bucket"]  # noqa: SIM118
+        else derive_bucket(row)
+    )
+    return DEFAULT_RISK_LEVEL.get(str(b), 4)
 
 
 # ---------------------------------------------------------------------------
@@ -278,16 +313,19 @@ def _candidate(
     m: performance.Metrics,
     bucket: str,
     *,
+    risk_level: int | None = None,
     subject: performance.Metrics | None = None,
 ) -> Candidate:
     band = vol_band_for(m.vol_3y or m.vol_1y)
     comparable = subject is None or m.basis == subject.basis
+    level = risk_level if risk_level is not None else risk_level_for(row, bucket)
 
     out = Candidate(
         import_key=row["import_key"],
         name=row["name"],
         status=row["status"],
         bucket=bucket,
+        risk_level=level,
         vol_band=band,
         basis=m.basis,
         comparable=comparable,
@@ -299,6 +337,8 @@ def _candidate(
         vol_1y=m.vol_1y,
         vol_3y=m.vol_3y,
         max_dd_3y=m.max_dd_3y,
+        sharpe_1y=m.sharpe_1y,
+        sharpe_3y=m.sharpe_3y,
         ter_bps=row["ter_bps"],
         caveats=list(m.caveats),
     )
@@ -349,10 +389,11 @@ def scan(
 ) -> PeerScan:
     """Instruments in the same bucket and band as ``instrument``, ranked.
 
-    Ranked by three-year return difference, with instruments that cannot be
-    fairly compared placed last however well they scored. A cheaper fee breaks
-    a tie, because between two funds that did the same thing the fee is the
-    only difference that is certain in advance.
+    Ranked by three-year return difference where available (falling back to
+    one-year), with instruments that cannot be fairly compared placed last
+    however well they scored. A cheaper fee breaks a tie, because between two
+    funds that did the same thing the fee is the only difference that is
+    certain in advance.
     """
     horizon = as_of or date.today()
     subject_row = _instrument(conn, instrument)
@@ -366,13 +407,15 @@ def scan(
         as_of=horizon,
     )
     subject_bucket, method = bucket_for(subject_row)
-    subject = _candidate(subject_row, subject_metrics, subject_bucket)
+    subject_level = risk_level_for(subject_row, subject_bucket)
+    subject = _candidate(subject_row, subject_metrics, subject_bucket, risk_level=subject_level)
     band = subject.vol_band
 
     result = PeerScan(
         as_of=horizon,
         subject=subject,
         bucket=subject_bucket,
+        risk_level=subject_level,
         vol_band=band,
         bucket_method=method,
     )
@@ -407,27 +450,15 @@ def scan(
                 as_of=horizon,
             )
         except fx.FxUnavailable:
-            # A candidate priced in a currency the tool has no rates for
-            # cannot be put on a euro footing, so it is dropped from the
-            # comparison rather than compared in its own currency -- that
-            # would report a sterling return against a euro one and call the
-            # difference performance.
-            #
-            # Dropped, emphatically not raised. One unconvertible instrument
-            # in a two-hundred-name catalogue used to take down the whole
-            # panel with a 500, which is a far worse answer than a list one
-            # shorter.
             result.excluded.append((str(row["import_key"]), "no exchange rate for its currency"))
             continue
         if not _has_enough_history(m, horizon, min_observations):
             continue
         result.considered += 1
 
-        candidate = _candidate(row, m, row_bucket, subject=subject_metrics)
+        row_level = risk_level_for(row, row_bucket)
+        candidate = _candidate(row, m, row_bucket, risk_level=row_level, subject=subject_metrics)
         if band is not None and candidate.vol_band is not None and candidate.vol_band != band:
-            # Adjacent bands are still worth showing; the same bucket with a
-            # different level of movement is a real alternative, just not a
-            # like-for-like one.
             candidate.caveats.append(
                 f"Moves {_band_words(candidate.vol_band)} than your holding "
                 f"({candidate.vol_band.lower()} vs {band.lower()})."
@@ -466,6 +497,83 @@ def scan(
             "differences are not shown. It is on the fund's key information document."
         )
     return result
+
+
+def leaderboard(
+    conn: sqlite3.Connection,
+    *,
+    risk_level: int | None = None,
+    risk_bucket: str | None = None,
+    top: int = 10,
+    as_of: date | None = None,
+    include_owned: bool = True,
+    min_observations: int = 60,
+) -> list[Candidate]:
+    """Top-performing instruments for a given risk level or bucket.
+
+    Ranked primarily by 3-year Sharpe / return where available, falling back
+    gracefully to 1-year Sharpe / return so that instruments with shorter
+    history are never dropped or disqualified.
+    """
+    horizon = as_of or date.today()
+    where_clauses = ["asset_class NOT IN ('CASH')"]
+    params: list[object] = []
+
+    if risk_level is not None:
+        where_clauses.append("risk_level = ?")
+        params.append(risk_level)
+    elif risk_bucket is not None:
+        where_clauses.append("risk_bucket = ?")
+        params.append(risk_bucket.upper())
+
+    if not include_owned:
+        where_clauses.append("status <> 'OWNED'")
+
+    sql = f"SELECT * FROM instrument WHERE {' AND '.join(where_clauses)} ORDER BY import_key"
+    rows = conn.execute(sql, params).fetchall()
+
+    candidates: list[Candidate] = []
+    for row in rows:
+        bucket, _ = bucket_for(row)
+        level = risk_level_for(row, bucket)
+        if risk_level is not None and level != risk_level:
+            continue
+        try:
+            m = performance.metrics(
+                conn,
+                int(row["id"]),
+                import_key=row["import_key"],
+                currency=row["currency"],
+                as_of=horizon,
+            )
+        except fx.FxUnavailable:
+            continue
+
+        if not _has_enough_history(m, horizon, min_observations):
+            continue
+
+        c = _candidate(row, m, bucket, risk_level=level)
+        candidates.append(c)
+
+    def rank_key(c: Candidate) -> tuple[int, Decimal, Decimal]:
+        sharpe = (
+            c.sharpe_3y
+            if c.sharpe_3y is not None
+            else (c.sharpe_1y if c.sharpe_1y is not None else Decimal("-999"))
+        )
+        ret = (
+            c.ret_3y_ann
+            if c.ret_3y_ann is not None
+            else (c.ret_1y if c.ret_1y is not None else Decimal("-999"))
+        )
+        return (
+            0 if c.comparable else 1,
+            -sharpe,
+            -ret,
+        )
+
+    candidates.sort(key=rank_key)
+    return candidates[:top]
 
 
 def _band_words(band: str) -> str:

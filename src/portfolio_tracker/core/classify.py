@@ -29,6 +29,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from portfolio_tracker.core.peers import DEFAULT_RISK_LEVEL
+
 #: (bucket, why, patterns). Tried in order; the first match wins. The `why` is
 #: shown to the owner beside the suggestion, so it has to read as a reason.
 RULES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
@@ -196,11 +198,12 @@ BY_ASSET_CLASS = {
 
 @dataclass(frozen=True)
 class Suggestion:
-    """A proposed category, and the reason to accept or reject it."""
+    """A proposed category, numeric risk level, and the reason to accept or reject it."""
 
     import_key: str
     bucket: str | None
     why: str
+    risk_level: int | None = None
     #: The words in the name that produced it, so the owner can see the
     #: evidence rather than take the answer on trust.
     matched: str | None = None
@@ -211,7 +214,7 @@ class Suggestion:
 
 
 def suggest(import_key: str, name: str | None, asset_class: str | None) -> Suggestion:
-    """Propose a risk category. Never saves; never guesses silently.
+    """Propose a risk category and numerical risk level. Never saves; never guesses silently.
 
     Asset class settles the easy cases -- a share is a share, a cryptocurrency
     is a cryptocurrency -- and the fund's own name settles the rest. Where
@@ -221,7 +224,8 @@ def suggest(import_key: str, name: str | None, asset_class: str | None) -> Sugge
     cls = (asset_class or "").upper()
     if cls in BY_ASSET_CLASS:
         bucket, why = BY_ASSET_CLASS[cls]
-        return Suggestion(import_key, bucket, why)
+        level = DEFAULT_RISK_LEVEL.get(bucket, 4)
+        return Suggestion(import_key, bucket, why, risk_level=level)
 
     text = (name or "").lower()
     if not text:
@@ -230,7 +234,10 @@ def suggest(import_key: str, name: str | None, asset_class: str | None) -> Sugge
     for bucket, why, patterns in RULES:
         for pattern in patterns:
             if pattern in text:
-                return Suggestion(import_key, bucket, why, matched=pattern.strip())
+                level = DEFAULT_RISK_LEVEL.get(bucket, 4)
+                return Suggestion(
+                    import_key, bucket, why, risk_level=level, matched=pattern.strip()
+                )
 
     if cls in ("ETF", "FUND"):
         # A fund whose name says nothing. Not filed as a world tracker on the

@@ -28,6 +28,8 @@ from datetime import date
 from decimal import Decimal
 from typing import cast
 
+from portfolio_tracker.core.peers import DEFAULT_RISK_LEVEL
+
 #: Statuses this module will move an instrument between. `OWNED` is not among
 #: them: ownership is established by a transaction existing, never by a click.
 WATCHED = "WATCH"
@@ -55,6 +57,7 @@ class WatchEntry:
     price_source: str
     ter_bps: int | None = None
     risk_bucket: str | None = None
+    risk_level: int | None = None
     prices: int = 0
     first_price: date | None = None
     last_price: date | None = None
@@ -82,6 +85,7 @@ def add(
     trading_calendar: str = "XETRA",
     ter_bps: int | None = None,
     risk_bucket: str | None = None,
+    risk_level: int | None = None,
     is_fund: bool | None = None,
     notes: str | None = None,
 ) -> int:
@@ -105,12 +109,19 @@ def add(
         return int(row["id"])
 
     fund = is_fund if is_fund is not None else asset_class in ("ETF", "FUND")
+    clean_bucket = risk_bucket.strip().upper() if risk_bucket else None
+    level = (
+        risk_level
+        if risk_level is not None
+        else (DEFAULT_RISK_LEVEL.get(clean_bucket) if clean_bucket else None)
+    )
+
     cursor = conn.execute(
         """
         INSERT INTO instrument (
             import_key, isin, symbol, name, asset_class, currency, price_source,
-            price_symbol, trading_calendar, ter_bps, risk_bucket, is_fund, status, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            price_symbol, trading_calendar, ter_bps, risk_bucket, risk_level, is_fund, status, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             key,
@@ -123,15 +134,13 @@ def add(
             price_symbol,
             trading_calendar,
             ter_bps,
-            risk_bucket,
+            clean_bucket,
+            level,
             1 if fund else 0,
             WATCHED,
             notes,
         ),
     )
-    # `teilfreistellung_pct` is deliberately left NULL. It is a tax input, and
-    # nothing is taxed on an instrument nobody owns; guessing it here would put
-    # an unverified rate in the table ready to be believed the day it is bought.
     return int(cast("int", cursor.lastrowid))
 
 
@@ -153,8 +162,9 @@ def set_details(
     *,
     ter_bps: int | None = None,
     risk_bucket: str | None = None,
+    risk_level: int | None = None,
 ) -> None:
-    """Record the two facts no free data source supplies.
+    """Record ongoing charge, risk category, and numerical risk level.
 
     An ongoing charge is on the fund's key information document and a risk
     category is a judgement; neither can be fetched, and both make a
@@ -170,7 +180,14 @@ def set_details(
             raise WatchlistError("An ongoing charge is in basis points: 20 means 0.20% a year.")
         updates["ter_bps"] = ter_bps
     if risk_bucket is not None:
-        updates["risk_bucket"] = risk_bucket.strip().upper() or None
+        clean_bucket = risk_bucket.strip().upper() or None
+        updates["risk_bucket"] = clean_bucket
+        if risk_level is None and clean_bucket is not None:
+            updates["risk_level"] = DEFAULT_RISK_LEVEL.get(clean_bucket, 4)
+    if risk_level is not None:
+        if risk_level < 1 or risk_level > 7:
+            raise WatchlistError("Risk level must be between 1 (ultra-low) and 7 (speculative).")
+        updates["risk_level"] = risk_level
     if not updates:
         return
     assignments = ", ".join(f"{column} = ?" for column in updates)
@@ -208,6 +225,7 @@ def listing(conn: sqlite3.Connection, *, include_universe: bool = False) -> list
             price_source=row["price_source"],
             ter_bps=row["ter_bps"],
             risk_bucket=row["risk_bucket"],
+            risk_level=row["risk_level"] if "risk_level" in row.keys() else None,  # noqa: SIM118
             prices=int(row["prices"] or 0),
             first_price=date.fromisoformat(row["first_price"]) if row["first_price"] else None,
             last_price=date.fromisoformat(row["last_price"]) if row["last_price"] else None,

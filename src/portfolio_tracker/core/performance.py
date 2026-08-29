@@ -101,6 +101,8 @@ class Metrics:
     vol_1y: Decimal | None = None
     vol_3y: Decimal | None = None
     max_dd_3y: Decimal | None = None
+    sharpe_1y: Decimal | None = None
+    sharpe_3y: Decimal | None = None
 
     caveats: list[str] = field(default_factory=list)
 
@@ -309,6 +311,13 @@ def metrics(
     result.max_dd_3y = returns.deepest_fall(
         [p.level for p in _window(points, horizon, WINDOWS["3y"])]
     )
+
+    # Risk-free rate baseline (standard euro deposit / overnight ~3.0%)
+    rf = Decimal("0.03")
+    if result.ret_1y is not None and result.vol_1y is not None and result.vol_1y > ZERO:
+        result.sharpe_1y = (result.ret_1y - rf) / result.vol_1y
+    if result.ret_3y_ann is not None and result.vol_3y is not None and result.vol_3y > ZERO:
+        result.sharpe_3y = (result.ret_3y_ann - rf) / result.vol_3y
 
     if in_eur and currency != fx.BASE:
         result.caveats.append(
