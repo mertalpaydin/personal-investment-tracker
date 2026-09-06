@@ -224,6 +224,27 @@ def run_update(
             return _skipped(conn, trigger, str(exc))
 
 
+def _snapshot_scores(conn: sqlite3.Connection, outcome: UpdateOutcome, *, end: date) -> None:
+    """Re-score the stocks from stored fundamentals and write today's score snapshot.
+
+    No network: the fundamentals are whatever the last sync stored; only the
+    price-derived parts (volatility, worst fall) and the snapshot price move.
+    Skipped silently when fundamentals were never synced.
+    """
+    if not conn.execute("SELECT 1 FROM stock_fundamental LIMIT 1").fetchone():
+        return
+    # Imported here: stock_indicators pulls in performance and fx, which is
+    # more than a price update needs on its import path.
+    from portfolio_tracker.core.stock_indicators import rescore_stock_fundamentals
+
+    try:
+        n = rescore_stock_fundamentals(conn, source="DAILY", calc_date=end)
+        log.info("score snapshots written: %d", n)
+    except Exception as exc:  # a scoring fault must not fail the price update
+        log.exception("score snapshot failed")
+        outcome.problems.append(f"score snapshot: {type(exc).__name__}: {exc}")
+
+
 def _run_locked(
     conn: sqlite3.Connection,
     *,
@@ -251,6 +272,8 @@ def _run_locked(
         outcome.last_price_date = after
         outcome.price_rows = sum(report.written for report in coverage)
         outcome.days_covered = business_days_between(before, after) if before and after else None
+
+        _snapshot_scores(conn, outcome, end=end)
 
         if rebuild_after and conn.execute("SELECT 1 FROM transaction_ LIMIT 1").fetchone():
             # One transaction, so readers never see a half-rebuilt derived layer.

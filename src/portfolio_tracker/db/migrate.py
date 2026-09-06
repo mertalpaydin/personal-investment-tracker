@@ -259,7 +259,8 @@ def reset_derived(conn: sqlite3.Connection) -> dict[str, int]:
     """Empty every recomputable table. Returns rows deleted per table.
 
     Deliberately does NOT touch `transaction_`, `price`, `fx_rate`,
-    `instrument`, `account`, `person` or `tax_constant` -- those are facts.
+    `instrument`, `account`, `person`, `tax_constant` or `stock_score_snapshot`
+    -- those are facts (the last one is a dated observation of a formula).
     Everything else is a cached derivation and is safe to throw away.
     """
     deleted: dict[str, int] = {}

@@ -149,3 +149,48 @@ def test_a_missing_exchange_rate_is_a_message_not_a_traceback(tmp_path: Path) ->
     assert result.exit_code == 1
     assert "fetch-fx" in result.output
     assert "Traceback" not in result.output
+
+
+def test_score_backtest_on_an_empty_database_says_so_and_exits_zero(tmp_path: Path) -> None:
+    target = tmp_path / "portfolio.db"
+    runner.invoke(app, ["init-db", "--db", str(target)])
+    result = runner.invoke(app, ["score-backtest", "--db", str(target)])
+    assert result.exit_code == 0, result.output
+    assert "No score snapshots yet" in result.output
+
+    result = runner.invoke(app, ["score-backtest", "--db", str(target), "--json"])
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["coverage"]["snapshots"] == 0
+
+
+def test_score_backtest_refuses_bad_arguments_and_unknown_benchmarks(tmp_path: Path) -> None:
+    target = tmp_path / "portfolio.db"
+    runner.invoke(app, ["init-db", "--db", str(target)])
+    bad_score = runner.invoke(app, ["score-backtest", "--db", str(target), "--score", "x"])
+    assert bad_score.exit_code == 2
+    bad_horizon = runner.invoke(app, ["score-backtest", "--db", str(target), "--horizon", "2y"])
+    assert bad_horizon.exit_code == 2
+    result = runner.invoke(app, ["score-backtest", "--db", str(target), "--set-benchmark", "NOPE"])
+    assert result.exit_code == 1
+    assert "No instrument" in result.output
+
+
+def test_score_backtest_stores_the_benchmark(tmp_path: Path) -> None:
+    target = tmp_path / "portfolio.db"
+    runner.invoke(app, ["init-db", "--db", str(target)])
+    conn = connect(target)
+    conn.execute(
+        "INSERT INTO instrument (import_key, name, asset_class, currency, price_source) "
+        "VALUES ('WORLD', 'World ETF', 'ETF', 'EUR', 'manual')"
+    )
+    conn.commit()
+    conn.close()
+    result = runner.invoke(app, ["score-backtest", "--db", str(target), "--set-benchmark", "WORLD"])
+    assert result.exit_code == 0, result.output
+    assert "Benchmark set to WORLD" in result.output
+    conn = connect(target)
+    row = conn.execute(
+        "SELECT value FROM setting WHERE key = 'score_backtest_benchmark'"
+    ).fetchone()
+    conn.close()
+    assert row["value"] == "WORLD"

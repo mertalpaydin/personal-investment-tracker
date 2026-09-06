@@ -275,3 +275,44 @@ def test_a_run_that_writes_nothing_still_reports_a_status(db_path: Path) -> None
     row = conn.execute("SELECT * FROM update_run WHERE id = ?", (outcome.run_id,)).fetchone()
     assert row["status"] != "RUNNING", "a run left RUNNING is indistinguishable from a crash"
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Score snapshots
+# ---------------------------------------------------------------------------
+
+
+def test_the_daily_run_records_a_score_snapshot_when_fundamentals_exist(db_path: Path) -> None:
+    conn: sqlite3.Connection = connect(db_path)
+    conn.execute(
+        "INSERT INTO instrument (id, import_key, name, asset_class, currency, price_source) "
+        "VALUES (2, 'SAP', 'SAP SE', 'STOCK', 'EUR', 'manual')"
+    )
+    conn.execute(
+        "INSERT INTO stock_fundamental (instrument_id, forward_pe, fcf_yield, pct_off_52w_high, "
+        "ev_ebitda, debt_to_equity, operating_margin, fetched_at) "
+        "VALUES (2, '12', '0.06', '-0.15', '9', '50', '0.2', '2026-06-01T00:00:00Z')"
+    )
+    conn.commit()
+    conn.close()
+
+    outcome = update.run_update(db_path, trigger="SCHEDULED", end=date(2026, 6, 30))
+    assert not any("score snapshot" in p for p in outcome.problems), outcome.problems
+    conn = connect(db_path)
+    rows = conn.execute(
+        "SELECT instrument_id, calc_date, source, value_score FROM stock_score_snapshot"
+    ).fetchall()
+    conn.close()
+    assert [(r["instrument_id"], r["calc_date"], r["source"]) for r in rows] == [
+        (2, "2026-06-30", "DAILY")
+    ]
+    assert rows[0]["value_score"] is not None
+
+
+def test_the_daily_run_writes_no_snapshot_without_fundamentals(db_path: Path) -> None:
+    outcome = update.run_update(db_path, trigger="SCHEDULED", end=date(2026, 6, 30))
+    assert outcome.status in ("OK", "PARTIAL")
+    conn: sqlite3.Connection = connect(db_path)
+    n = conn.execute("SELECT count(*) AS n FROM stock_score_snapshot").fetchone()["n"]
+    conn.close()
+    assert n == 0

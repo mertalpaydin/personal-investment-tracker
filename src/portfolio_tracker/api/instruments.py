@@ -692,6 +692,54 @@ def stock_fundamentals_status(
         }
 
 
+@router.get("/api/stocks/score-backtest")
+def stock_score_backtest(
+    score: str = Query("value", pattern="^(value|quality)$"),
+    sample: str = Query("monthly", pattern="^(all|weekly|monthly)$"),
+    formula_version: str | None = Query(None),
+    benchmark: str | None = Query(None),
+    max_age: int = Query(120, ge=1, le=3650),
+    conn: sqlite3.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """How well the stock scores predicted forward returns so far. See core/score_backtest.py."""
+    from portfolio_tracker.core.score_backtest import evaluate
+
+    return evaluate(
+        conn,
+        score=score,
+        sample=sample,
+        formula_version=formula_version,
+        benchmark=benchmark,
+        max_fundamentals_age_days=max_age,
+    ).to_dict()
+
+
+class ScoreBacktestBenchmarkBody(BaseModel):
+    import_key: str | None = Field(None, description="Instrument key, or null to clear.")
+
+
+@router.put("/api/stocks/score-backtest/benchmark")
+def set_score_backtest_benchmark(
+    body: ScoreBacktestBenchmarkBody,
+    conn: sqlite3.Connection = Depends(get_writable_db),
+) -> dict[str, Any]:
+    """Store which instrument the score backtest compares against."""
+    from portfolio_tracker.core import settings
+    from portfolio_tracker.core.score_backtest import BENCHMARK_SETTING_KEY
+
+    key = (body.import_key or "").strip() or None
+    if key is not None:
+        row = conn.execute("SELECT 1 FROM instrument WHERE import_key = ?", (key,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"No instrument with key {key!r}")
+    with transaction(conn):
+        if key is None:
+            settings.clear(conn, BENCHMARK_SETTING_KEY)
+        else:
+            settings.set_value(conn, BENCHMARK_SETTING_KEY, key)
+    return {"benchmark": key}
+
+
 @router.post("/api/stocks/fundamentals/sync")
 def trigger_stock_fundamentals_sync(
     workers: int = Query(4, ge=1, le=10),

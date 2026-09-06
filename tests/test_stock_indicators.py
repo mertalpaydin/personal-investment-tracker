@@ -888,3 +888,107 @@ def test_sync_keeps_old_row_when_yahoo_answers_blank(db: sqlite3.Connection, mon
     (kept,) = get_stock_fundamentals(db, instrument_id=1)
     assert kept.forward_pe == Decimal("9")
     assert kept.fetched_at == "2026-01-01T00:00:00Z"
+
+
+# ------------------------------------------------ breakdown for snapshots
+
+
+def test_breakdown_components_sum_to_the_raw_total():
+    b = si.value_breakdown(**GOOD)
+    assert b.score == 100
+    assert set(b.components) == set(si.VALUE_COMPONENTS)
+    assert sum(b.components.values()) == b.raw_total
+    assert b.raw_total >= 100  # clamped to 100 on the way out
+    assert not b.quality_capped and not b.trap_capped
+    assert (b.score, b.badge, b.narrative) == calculate_value_score(**GOOD)
+
+
+def test_breakdown_flags_the_caps_that_were_applied():
+    capped = si.value_breakdown(**GOOD, profit_margin=Decimal("-0.05"))
+    assert capped.quality_capped and not capped.trap_capped
+    assert capped.score == si.QUALITY_CAP
+    assert sum(capped.components.values()) == capped.raw_total > capped.score
+
+    trap = si.value_breakdown(**GOOD, earnings_growth=Decimal("-0.35"))
+    assert trap.trap_capped
+    assert trap.score is not None and trap.score <= 38
+
+
+def test_breakdown_no_data_has_no_components():
+    b = si.value_breakdown(
+        forward_pe=None,
+        trailing_pe=None,
+        fcf_yield=None,
+        pct_off_52w_high=None,
+        range_52w_pct=None,
+        ev_ebitda=None,
+        price_to_book=None,
+        target_upside_pct=None,
+        dividend_yield=None,
+        debt_to_equity=None,
+        operating_margin=None,
+    )
+    assert b.score is None and b.badge == "NO_DATA" and b.components == {}
+
+
+def test_golden_decomposition_is_tied_to_the_formula_version():
+    """If these numbers move, the formula moved: bump SCORE_FORMULA_VERSION too.
+
+    The backtest groups snapshots by version. A silent formula change would
+    mix two different formulas into one track record.
+    """
+    assert si.SCORE_FORMULA_VERSION == "2026.09-v1"
+    b = si.value_breakdown(**GOOD)
+    assert b.components == {
+        "pe": 25,
+        "fcf_yield": 20,
+        "pullback": 10,
+        "ev_or_pb": 15,
+        "analyst": 15,
+        "dividend": 5,
+        "solvency": 10,
+    }
+    q = si.quality_breakdown(**STEADY)
+    assert q.components == {"growth": 30, "profitability": 30, "balance": 15, "steadiness": 25}
+
+
+def test_quality_breakdown_matches_the_tuple_api():
+    q = si.quality_breakdown(**STEADY)
+    assert (q.score, q.narrative) == si.calculate_quality_score(**STEADY)
+    assert sum(q.components.values()) == q.score
+
+
+def test_apply_score_attaches_breakdowns_and_ranks():
+    item = StockFundamentals(1, "X", "X", current_price=Decimal("10"), **{**GOOD, **STEADY})
+    si.apply_score(item, {"pe": Decimal("0.5")})
+    assert item.value_breakdown is not None and item.value_breakdown.score == item.value_score
+    assert item.quality_breakdown is not None
+    assert item.quality_breakdown.score == item.quality_score
+    assert item.relative_ranks == {"pe": Decimal("0.5")}
+
+
+def test_api_score_backtest_on_an_empty_database(client: TestClient):
+    res = client.get("/api/stocks/score-backtest")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["coverage"]["snapshots"] == 0
+    assert body["score"] == "value"
+    assert client.get("/api/stocks/score-backtest", params={"score": "bogus"}).status_code == 422
+
+
+def test_api_score_backtest_benchmark_can_be_set_and_cleared(
+    client: TestClient, db: sqlite3.Connection
+):
+    db.execute(
+        "INSERT INTO instrument (id, import_key, name, asset_class, currency, price_source) "
+        "VALUES (50, 'WORLD', 'World ETF', 'ETF', 'EUR', 'manual')"
+    )
+    db.commit()
+    bad = client.put("/api/stocks/score-backtest/benchmark", json={"import_key": "NOPE"})
+    assert bad.status_code == 404
+    res = client.put("/api/stocks/score-backtest/benchmark", json={"import_key": "WORLD"})
+    assert res.status_code == 200 and res.json()["benchmark"] == "WORLD"
+    assert client.get("/api/stocks/score-backtest").json()["benchmark"] == "WORLD"
+    res = client.put("/api/stocks/score-backtest/benchmark", json={"import_key": None})
+    assert res.json()["benchmark"] is None
+    assert client.get("/api/stocks/score-backtest").json()["benchmark_mode"] == "universe_median"

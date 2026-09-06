@@ -23,7 +23,7 @@ import logging
 import re
 import sqlite3
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
@@ -49,6 +49,45 @@ QUALITY_CAP = 55
 #: Percentage below the 52-week high that counts as a "dip". Used by the badge,
 #: the narrative and the UI filter text -- keep them in step.
 DIP_THRESHOLD = Decimal("-0.20")
+
+#: Stamped on every stored score snapshot. Bump it whenever a threshold, weight,
+#: gate or block changes, so the backtest never mixes two formulas in one
+#: series. The golden-decomposition test in tests/test_stock_indicators.py
+#: fails when the numbers move without the version moving.
+SCORE_FORMULA_VERSION = "2026.09-v1"
+
+#: Block names of the Value Score, in the order they are added up.
+VALUE_COMPONENTS = ("pe", "fcf_yield", "pullback", "ev_or_pb", "analyst", "dividend", "solvency")
+#: Block names of the Quality Score, in the order they are added up.
+QUALITY_COMPONENTS = ("growth", "profitability", "balance", "steadiness")
+
+
+@dataclass(frozen=True)
+class ValueBreakdown:
+    """The Value Score with the points each block contributed.
+
+    ``raw_total`` is the sum of ``components`` before the 0..100 clamp and the
+    quality / trap caps; ``score`` is what the user sees.
+    """
+
+    score: int | None
+    badge: str
+    narrative: str
+    pe_used: Decimal | None
+    components: dict[str, int]
+    raw_total: int
+    quality_capped: bool
+    trap_capped: bool
+
+
+@dataclass(frozen=True)
+class QualityBreakdown:
+    """The Quality Score with the points each block contributed."""
+
+    score: int | None
+    narrative: str
+    components: dict[str, int]
+
 
 #: Fields read from the database row. Everything in `StockFundamentals` except
 #: the identity columns, which come from the instrument table.
@@ -209,6 +248,11 @@ class StockFundamentals:
     vol_1y: Decimal | None = None
     max_dd_3y: Decimal | None = None
     fetched_at: str = ""
+    #: Filled by `apply_score`, not stored in `stock_fundamental` (outside
+    #: `_DB_COLUMNS`); `score_snapshots.record_snapshots` reads them.
+    value_breakdown: ValueBreakdown | None = field(default=None, repr=False, compare=False)
+    quality_breakdown: QualityBreakdown | None = field(default=None, repr=False, compare=False)
+    relative_ranks: dict[str, Decimal] | None = field(default=None, repr=False, compare=False)
 
 
 def _to_decimal(val: Any) -> Decimal | None:
@@ -278,7 +322,7 @@ def count_data_points(
     )
 
 
-def calculate_value_score(
+def value_breakdown(
     *,
     forward_pe: Decimal | None,
     trailing_pe: Decimal | None,
@@ -302,8 +346,10 @@ def calculate_value_score(
     buy_pct: Decimal | None = None,
     recommendation_mean: Decimal | None = None,
     relative: Mapping[str, Decimal] | None = None,
-) -> tuple[int | None, str, str]:
-    """Calculate a 0-100 composite Value Score and assign a badge & narrative.
+) -> ValueBreakdown:
+    """Calculate a 0-100 composite Value Score with badge, narrative and block points.
+
+    ``calculate_value_score`` is the same thing as a plain tuple.
 
     ``relative`` holds sector-relative cheapness ranks (0..1, 1 = cheapest) under
     the keys ``pe``, ``fcf_yield``, ``ev_ebitda`` and ``price_to_book``. Without it
@@ -345,13 +391,18 @@ def calculate_value_score(
         operating_margin=operating_margin,
     )
     if data_points < MIN_DATA_POINTS:
-        return (
-            None,
-            "NO_DATA",
-            f"Not enough data from Yahoo Finance ({data_points} of 8 inputs available).",
+        return ValueBreakdown(
+            score=None,
+            badge="NO_DATA",
+            narrative=f"Not enough data from Yahoo Finance ({data_points} of 8 inputs available).",
+            pe_used=pe,
+            components={},
+            raw_total=0,
+            quality_capped=False,
+            trap_capped=False,
         )
 
-    score = 0
+    blocks: dict[str, int] = dict.fromkeys(VALUE_COMPONENTS, 0)
 
     # 1. P/E multiple (0 to 25 pts), sector-blended, with growth credit.
     if pe is not None:
@@ -372,7 +423,7 @@ def calculate_value_score(
                 pts += 8
             elif peg_ratio <= Decimal("1.5"):
                 pts += 4
-        score += min(25, pts)
+        blocks["pe"] = min(25, pts)
 
     # 2. Free cash flow yield (0 to 20 pts), sector-blended.
     if fcf_yield is not None:
@@ -386,21 +437,21 @@ def calculate_value_score(
             pts = 5
         else:
             pts = 0
-        score += _blend(pts, relative.get("fcf_yield"), 20)
+        blocks["fcf_yield"] = _blend(pts, relative.get("fcf_yield"), 20)
 
     # 3. Pullback discount & 52-week range position (0 to 10 pts).
     if pct_off_52w_high is not None:
         if pct_off_52w_high <= Decimal("-0.35"):
-            score += 6
+            blocks["pullback"] += 6
         elif pct_off_52w_high <= DIP_THRESHOLD:
-            score += 4
+            blocks["pullback"] += 4
         elif pct_off_52w_high <= Decimal("-0.10"):
-            score += 2
+            blocks["pullback"] += 2
     if range_52w_pct is not None:
         if range_52w_pct <= Decimal("25.0"):
-            score += 4
+            blocks["pullback"] += 4
         elif range_52w_pct <= Decimal("50.0"):
-            score += 2
+            blocks["pullback"] += 2
 
     # 4. EV/EBITDA, or P/B for financials and where EV/EBITDA is missing (0 to 15 pts).
     use_ev = ev_ebitda is not None and ev_ebitda > 0 and not financial
@@ -413,7 +464,7 @@ def calculate_value_score(
             pts = 4
         else:
             pts = 0
-        score += _blend(pts, relative.get("ev_ebitda"), 15)
+        blocks["ev_or_pb"] = _blend(pts, relative.get("ev_ebitda"), 15)
     elif price_to_book is not None and price_to_book > 0:
         if price_to_book <= Decimal("1.5"):
             pts = 15
@@ -423,33 +474,33 @@ def calculate_value_score(
             pts = 4
         else:
             pts = 0
-        score += _blend(pts, relative.get("price_to_book"), 15)
+        blocks["ev_or_pb"] = _blend(pts, relative.get("price_to_book"), 15)
 
     # 5. Analyst consensus (-8 to +15 pts). An opinion, so it can cost points too.
     enough_analysts = analyst_count is not None and analyst_count >= MIN_ANALYSTS
     if enough_analysts and target_upside_pct is not None:
         if target_upside_pct >= Decimal("0.20"):
-            score += 5
+            blocks["analyst"] += 5
         elif target_upside_pct >= Decimal("0.10"):
-            score += 3
+            blocks["analyst"] += 3
         elif target_upside_pct < Decimal("0.05") and analyst_count >= 10:  # type: ignore[operator]
-            score -= 3  # a large crowd says "fully priced"
+            blocks["analyst"] -= 3  # a large crowd says "fully priced"
     if enough_analysts and buy_pct is not None:
         if buy_pct >= Decimal("0.70"):
-            score += 5
+            blocks["analyst"] += 5
         elif buy_pct >= Decimal("0.50"):
-            score += 3
+            blocks["analyst"] += 3
     if enough_analysts and recommendation_mean is not None:
         if recommendation_mean <= Decimal("2.0"):
-            score += 5
+            blocks["analyst"] += 5
         elif recommendation_mean <= Decimal("2.5"):
-            score += 3
+            blocks["analyst"] += 3
         elif recommendation_mean <= Decimal("3.0"):
             pass
         elif recommendation_mean <= Decimal("3.5"):
-            score -= 3
+            blocks["analyst"] -= 3
         else:
-            score -= 5
+            blocks["analyst"] -= 5
 
     # 6. Dividend (0 to 5 pts), only when the company can actually afford it.
     dividend_unsafe = (payout_ratio is not None and payout_ratio >= Decimal("0.80")) or (
@@ -457,25 +508,26 @@ def calculate_value_score(
     )
     if dividend_yield is not None and not dividend_unsafe:
         if dividend_yield >= Decimal("0.035"):
-            score += 5
+            blocks["dividend"] = 5
         elif dividend_yield >= Decimal("0.015"):
-            score += 3
+            blocks["dividend"] = 3
 
     # 7. Quality & solvency guards (0 to 10 pts).
     if operating_margin is not None:
         if operating_margin >= Decimal("0.15"):
-            score += 5
+            blocks["solvency"] += 5
         elif operating_margin >= Decimal("0.05"):
-            score += 3
+            blocks["solvency"] += 3
     if financial:
-        score += 3  # leverage is the business model; neither reward nor punish
+        blocks["solvency"] += 3  # leverage is the business model; neither reward nor punish
     elif debt_to_equity is not None:
         if debt_to_equity <= Decimal("100.0"):
-            score += 5
+            blocks["solvency"] += 5
         elif debt_to_equity <= Decimal("180.0"):
-            score += 3
+            blocks["solvency"] += 3
 
-    score = max(0, min(100, score))
+    raw_total = sum(blocks.values())
+    score = max(0, min(100, raw_total))
 
     # Quality gate: cheap is not enough when the business is losing money or shrinking.
     quality_reasons: list[str] = []
@@ -595,10 +647,25 @@ def calculate_value_score(
     if dividend_note:
         narrative_parts.append(dividend_note)
 
-    return score, badge, "; ".join(narrative_parts)
+    return ValueBreakdown(
+        score=score,
+        badge=badge,
+        narrative="; ".join(narrative_parts),
+        pe_used=pe,
+        components=blocks,
+        raw_total=raw_total,
+        quality_capped=bool(quality_reasons),
+        trap_capped=bool(trap_reasons),
+    )
 
 
-def calculate_quality_score(
+def calculate_value_score(**kwargs: Any) -> tuple[int | None, str, str]:
+    """``value_breakdown`` as the ``(score, badge, narrative)`` tuple callers expect."""
+    b = value_breakdown(**kwargs)
+    return b.score, b.badge, b.narrative
+
+
+def quality_breakdown(
     *,
     revenue_growth: Decimal | None,
     earnings_growth: Decimal | None,
@@ -613,8 +680,8 @@ def calculate_quality_score(
     vol_1y: Decimal | None,
     max_dd_3y: Decimal | None,
     sector: str | None = None,
-) -> tuple[int | None, str]:
-    """A 0-100 "steady grower" score, independent of price.
+) -> QualityBreakdown:
+    """A 0-100 "steady grower" score, independent of price, with block points.
 
     Blocks (points): growth record 30, profitability 30, balance sheet 15,
     price steadiness 25. Returns ``(None, reason)`` when fewer than three of
@@ -637,101 +704,105 @@ def calculate_quality_score(
         if known
     )
     if groups_known < 3:
-        return None, f"Not enough data to judge quality ({groups_known} of 5 input groups)."
+        return QualityBreakdown(
+            score=None,
+            narrative=f"Not enough data to judge quality ({groups_known} of 5 input groups).",
+            components={},
+        )
 
-    score = 0
+    blocks: dict[str, int] = dict.fromkeys(QUALITY_COMPONENTS, 0)
     notes: list[str] = []
 
     # 1. Growth record (0 to 30): level, then consistency.
     growth = revenue_cagr_3y if revenue_cagr_3y is not None else revenue_growth
     if growth is not None:
         if growth >= Decimal("0.10"):
-            score += 15
+            blocks["growth"] += 15
         elif growth >= Decimal("0.05"):
-            score += 10
+            blocks["growth"] += 10
         elif growth >= Decimal("0.0"):
-            score += 5
+            blocks["growth"] += 5
         label = "a year over the last years" if revenue_cagr_3y is not None else "latest year"
         notes.append(f"revenue {'+' if growth >= 0 else ''}{float(growth) * 100:.0f}% {label}")
     steps = (years_reported or 0) - 1
     if revenue_up_years is not None and steps > 0:
         if revenue_up_years == steps:
-            score += 10
+            blocks["growth"] += 10
             notes.append(f"revenue up every year for {steps} years")
         elif revenue_up_years >= steps - 1:
-            score += 6
+            blocks["growth"] += 6
         elif revenue_up_years >= 1:
-            score += 2
+            blocks["growth"] += 2
     if income_up_years is not None and steps > 0:
         if income_up_years == steps:
-            score += 5
+            blocks["growth"] += 5
         elif income_up_years >= steps - 1:
-            score += 3
+            blocks["growth"] += 3
     elif earnings_growth is not None and earnings_growth > 0 and steps <= 0:
-        score += 3
+        blocks["growth"] += 3
 
     # 2. Profitability (0 to 30): margin level, earnings that follow, return on equity.
     if operating_margin is not None:
         if operating_margin >= Decimal("0.20"):
-            score += 12
+            blocks["profitability"] += 12
         elif operating_margin >= Decimal("0.10"):
-            score += 8
+            blocks["profitability"] += 8
         elif operating_margin >= Decimal("0.05"):
-            score += 4
+            blocks["profitability"] += 4
         notes.append(f"{float(operating_margin) * 100:.0f}% operating margin")
     if profit_margin is not None:
         if profit_margin > 0 and (
             operating_margin is None or profit_margin >= operating_margin * Decimal("0.6")
         ):
-            score += 8
+            blocks["profitability"] += 8
         elif profit_margin > 0:
-            score += 4
+            blocks["profitability"] += 4
         else:
             notes.append("loss-making")
     if return_on_equity is not None:
         if return_on_equity >= Decimal("0.15"):
-            score += 10
+            blocks["profitability"] += 10
             notes.append(f"{float(return_on_equity) * 100:.0f}% return on equity")
         elif return_on_equity >= Decimal("0.10"):
-            score += 6
+            blocks["profitability"] += 6
         elif return_on_equity > 0:
-            score += 3
+            blocks["profitability"] += 3
 
     # 3. Balance sheet (0 to 15).
     if financial:
-        score += 8  # leverage is the business model; judged elsewhere
+        blocks["balance"] = 8  # leverage is the business model; judged elsewhere
     elif debt_to_equity is not None:
         if debt_to_equity <= Decimal("50.0"):
-            score += 15
+            blocks["balance"] = 15
         elif debt_to_equity <= Decimal("100.0"):
-            score += 10
+            blocks["balance"] = 10
         elif debt_to_equity <= Decimal("180.0"):
-            score += 5
+            blocks["balance"] = 5
         else:
             notes.append(f"heavy debt ({float(debt_to_equity):.0f}% D/E)")
 
     # 4. Price steadiness (0 to 25): how the market has treated it.
     if vol_1y is not None:
         if vol_1y <= Decimal("0.20"):
-            score += 15
+            blocks["steadiness"] += 15
             notes.append(f"calm price ({float(vol_1y) * 100:.0f}% volatility)")
         elif vol_1y <= Decimal("0.30"):
-            score += 10
+            blocks["steadiness"] += 10
         elif vol_1y <= Decimal("0.40"):
-            score += 5
+            blocks["steadiness"] += 5
         else:
             notes.append(f"volatile ({float(vol_1y) * 100:.0f}% a year)")
     if max_dd_3y is not None:
         if max_dd_3y >= Decimal("-0.20"):
-            score += 10
+            blocks["steadiness"] += 10
         elif max_dd_3y >= Decimal("-0.35"):
-            score += 6
+            blocks["steadiness"] += 6
         elif max_dd_3y >= Decimal("-0.50"):
-            score += 2
+            blocks["steadiness"] += 2
         else:
             notes.append(f"fell {abs(float(max_dd_3y)) * 100:.0f}% at worst in three years")
 
-    score = max(0, min(100, score))
+    score = max(0, min(100, sum(blocks.values())))
     if score >= 70:
         lead = "Steady grower"
     elif score >= 50:
@@ -740,7 +811,13 @@ def calculate_quality_score(
         lead = "Mixed quality"
     else:
         lead = "Weak quality"
-    return score, "; ".join([lead, *notes])
+    return QualityBreakdown(score=score, narrative="; ".join([lead, *notes]), components=blocks)
+
+
+def calculate_quality_score(**kwargs: Any) -> tuple[int | None, str]:
+    """``quality_breakdown`` as the ``(score, narrative)`` tuple callers expect."""
+    b = quality_breakdown(**kwargs)
+    return b.score, b.narrative
 
 
 def parse_income_statement(statement: Any) -> dict[str, Any]:
@@ -886,7 +963,7 @@ def apply_score(item: StockFundamentals, relative: Mapping[str, Decimal] | None 
         debt_to_equity=item.debt_to_equity,
         operating_margin=item.operating_margin,
     )
-    score, badge, narrative = calculate_value_score(
+    vb = value_breakdown(
         forward_pe=item.forward_pe,
         trailing_pe=item.trailing_pe,
         fcf_yield=item.fcf_yield,
@@ -910,10 +987,12 @@ def apply_score(item: StockFundamentals, relative: Mapping[str, Decimal] | None 
         recommendation_mean=item.recommendation_mean,
         relative=relative,
     )
-    item.value_score = score
-    item.value_badge = badge
-    item.value_narrative = narrative
-    item.quality_score, item.quality_narrative = calculate_quality_score(
+    item.value_score = vb.score
+    item.value_badge = vb.badge
+    item.value_narrative = vb.narrative
+    item.value_breakdown = vb
+    item.relative_ranks = dict(relative) if relative else None
+    qb = quality_breakdown(
         revenue_growth=item.revenue_growth,
         earnings_growth=item.earnings_growth,
         revenue_cagr_3y=item.revenue_cagr_3y,
@@ -928,6 +1007,9 @@ def apply_score(item: StockFundamentals, relative: Mapping[str, Decimal] | None 
         max_dd_3y=item.max_dd_3y,
         sector=item.sector,
     )
+    item.quality_score = qb.score
+    item.quality_narrative = qb.narrative
+    item.quality_breakdown = qb
 
 
 def score_universe(items: list[StockFundamentals]) -> None:
@@ -1328,12 +1410,22 @@ def get_stock_fundamentals(
     return out
 
 
-def rescore_stock_fundamentals(conn: sqlite3.Connection) -> int:
-    """Re-run sector-relative scoring over the stored rows without refetching."""
+def rescore_stock_fundamentals(
+    conn: sqlite3.Connection, *, source: str = "RESCORE", calc_date: Any | None = None
+) -> int:
+    """Re-run sector-relative scoring over the stored rows without refetching.
+
+    Also records a dated score snapshot for every stock (see
+    `core/score_snapshots.py`); ``source`` says who asked, ``calc_date``
+    (a `date`, default today) which day the snapshot belongs to.
+    """
+    from portfolio_tracker.core.score_snapshots import record_snapshots
+
     items = load_all_stock_fundamentals(conn)
     attach_market_metrics(conn, items)
     score_universe(items)
     save_stock_fundamentals(conn, items)
+    record_snapshots(conn, items, calc_date=calc_date, source=source)
     return len(items)
 
 
@@ -1400,8 +1492,8 @@ def _company_stem(name: Any) -> str:
 
 def _same_company(info: Mapping[str, Any], other: Mapping[str, Any]) -> bool:
     """Guard against a short key that happens to be somebody else's US ticker."""
-    for field in ("longName", "shortName"):
-        a, b = _company_stem(info.get(field)), _company_stem(other.get(field))
+    for name_field in ("longName", "shortName"):
+        a, b = _company_stem(info.get(name_field)), _company_stem(other.get(name_field))
         if a and b and (a == b or a.startswith(b) or b.startswith(a)):
             return True
     return False
@@ -1550,5 +1642,8 @@ def sync_all_stock_fundamentals(
         attach_market_metrics(conn, universe)
         score_universe(universe)
         save_stock_fundamentals(conn, universe)
+        from portfolio_tracker.core.score_snapshots import record_snapshots
+
+        record_snapshots(conn, universe, source="SYNC")
 
     return (len(fetched), total)

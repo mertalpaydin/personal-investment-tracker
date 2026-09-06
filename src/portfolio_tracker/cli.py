@@ -689,7 +689,10 @@ def sync_fundamentals(
     try:
         if rescore_only:
             n = rescore_stock_fundamentals(conn)
-            typer.secho(f"Re-scored {n} stocks.", fg=typer.colors.GREEN)
+            typer.secho(
+                f"Re-scored {n} stocks and recorded today's score snapshot.",
+                fg=typer.colors.GREEN,
+            )
             return
         typer.echo(f"Fetching stock fundamentals from Yahoo Finance ({workers} workers)...")
 
@@ -704,8 +707,159 @@ def sync_fundamentals(
             f"Successfully updated fundamentals for {success}/{total} stocks.",
             fg=typer.colors.GREEN,
         )
+        if success:
+            from portfolio_tracker.core.score_snapshots import snapshot_summary
+
+            summary = snapshot_summary(conn)
+            typer.echo(
+                f"Score snapshots on file: {summary['snapshots']} rows over "
+                f"{summary['days']} days (latest {summary['last_date']})."
+            )
     finally:
         conn.close()
+
+
+@app.command("score-backtest")
+def score_backtest(
+    db: DbPath = DEFAULT_DB_PATH,
+    score: Annotated[
+        str, typer.Option("--score", help="Which score to test: value or quality.")
+    ] = "value",
+    horizon: Annotated[
+        list[str] | None,
+        typer.Option("--horizon", help="Horizon(s): 1m, 3m, 6m, 12m. Default all."),
+    ] = None,
+    formula_version: Annotated[
+        str | None, typer.Option("--formula-version", help="Only this formula version.")
+    ] = None,
+    sample: Annotated[
+        str,
+        typer.Option("--sample", help="Snapshot days to use: all, weekly or monthly."),
+    ] = "monthly",
+    benchmark: Annotated[
+        str | None,
+        typer.Option("--benchmark", help="Import key of the benchmark instrument for this run."),
+    ] = None,
+    set_benchmark: Annotated[
+        str | None,
+        typer.Option("--set-benchmark", help="Store this import key as the default benchmark."),
+    ] = None,
+    max_age: Annotated[
+        int,
+        typer.Option("--max-age", help="Ignore snapshots whose fundamentals are older (days)."),
+    ] = 120,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the report as JSON.")] = False,
+) -> None:
+    """Measure whether the stock scores predicted forward returns.
+
+    Reads the dated score snapshots, computes each stock's return since the
+    snapshot from the stored prices, and reports rank correlation, bucket
+    returns and hit rate against the benchmark. Diagnostic, not proof.
+    """
+    from portfolio_tracker.core import settings
+    from portfolio_tracker.core.score_backtest import (
+        BENCHMARK_SETTING_KEY,
+        SAMPLES,
+        SCORE_KINDS,
+        evaluate,
+    )
+
+    if score not in SCORE_KINDS:
+        typer.secho(f"--score must be one of {', '.join(SCORE_KINDS)}", fg=typer.colors.RED)
+        raise typer.Exit(code=2)
+    if sample not in SAMPLES:
+        typer.secho(f"--sample must be one of {', '.join(SAMPLES)}", fg=typer.colors.RED)
+        raise typer.Exit(code=2)
+
+    conn = connect(db)
+    try:
+        if set_benchmark:
+            row = conn.execute(
+                "SELECT 1 FROM instrument WHERE import_key = ?", (set_benchmark,)
+            ).fetchone()
+            if row is None:
+                typer.secho(f"No instrument with key {set_benchmark!r}.", fg=typer.colors.RED)
+                raise typer.Exit(code=1)
+            settings.set_value(conn, BENCHMARK_SETTING_KEY, set_benchmark)
+            conn.commit()
+            typer.secho(f"Benchmark set to {set_benchmark}.", fg=typer.colors.GREEN)
+
+        try:
+            report = evaluate(
+                conn,
+                score=score,
+                horizons=horizon or None,
+                formula_version=formula_version,
+                sample=sample,
+                benchmark=benchmark,
+                max_fundamentals_age_days=max_age,
+            )
+        except ValueError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(code=2) from exc
+    finally:
+        conn.close()
+
+    if as_json:
+        typer.echo(json.dumps(report.to_dict(), indent=2, default=str))
+        return
+
+    cov = report.coverage
+    if not cov["snapshots"]:
+        typer.echo(
+            "No score snapshots yet. Run `pt sync-fundamentals` or the daily update; "
+            "snapshots are recorded from then on."
+        )
+        return
+
+    bench = report.benchmark if report.benchmark_mode == "instrument" else "universe median"
+    typer.echo(
+        f"{report.score.title()} score: {cov['snapshots']} snapshots, {cov['instruments']} stocks, "
+        f"{cov['days']} days ({cov['first_date']} to {cov['last_date']}); "
+        f"benchmark: {bench}; sample: {report.sample}."
+    )
+    mature = cov["mature_by_horizon"]
+    if not any(mature.values()):
+        first = cov["first_reading_by_horizon"]
+        typer.echo(
+            "Collecting. Nothing is old enough to measure yet; "
+            f"the first 1-month reading is possible from {first.get('1m')}."
+        )
+        return
+
+    def f(x: float | None, digits: int = 2, pct: bool = False) -> str:
+        if x is None:
+            return "-"
+        return f"{x * 100:.{digits}f}%" if pct else f"{x:.{digits}f}"
+
+    for version, stats in report.versions.items():
+        typer.echo("")
+        typer.secho(f"Formula {version}", bold=True)
+        typer.echo(
+            f"{'horizon':>8} {'n':>5} {'days':>5} {'IC':>6} {'t':>6} {'IC>0':>6} "
+            f"{'hit':>6} {'top':>8} {'bottom':>8} {'spread':>8}"
+        )
+        for st in stats:
+            top = st.buckets[0].mean_rel if st.buckets else None
+            bottom = st.buckets[-1].mean_rel if st.buckets else None
+            typer.echo(
+                f"{st.horizon:>8} {st.n_obs:>5} {st.n_dates:>5} {f(st.mean_ic):>6} "
+                f"{f(st.ic_tstat, 1):>6} {f(st.ic_positive_share, 0, True):>6} "
+                f"{f(st.hit_rate, 0, True):>6} {f(top, 1, True):>8} {f(bottom, 1, True):>8} "
+                f"{f(st.spread_top_minus_bottom, 1, True):>8}"
+            )
+        typer.echo("")
+        typer.echo("Which block predicts (mean IC per horizon):")
+        components = list(stats[0].component_ic) if stats else []
+        typer.echo(f"{'block':>16} " + " ".join(f"{st.horizon:>7}" for st in stats))
+        for c in components:
+            typer.echo(f"{c:>16} " + " ".join(f"{f(st.component_ic.get(c)):>7}" for st in stats))
+        for st in stats:
+            for note in st.caveats:
+                typer.echo(f"  {st.horizon}: {note}")
+    typer.echo("")
+    for note in report.caveats:
+        typer.echo(f"Note: {note}")
 
 
 if __name__ == "__main__":  # pragma: no cover
