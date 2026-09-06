@@ -1088,18 +1088,29 @@ td.empty-msg {
 .row-actions button,
 .row-actions a.button { white-space: nowrap; }
 
-/* Watched stocks: the sector is a hint, the scores are the point. */
-.watched-stocks td.sector {
-  max-width: 6.5rem;
-  font-size: 0.78rem;
-  line-height: 1.2;
-  white-space: normal;
-}
-.fit-table td.score .tag[class*="badge-"],
-.fit-table td.score .tag[class*="quality-"] {
-  font-size: 1rem;
-  padding: 0.2rem 0.6rem;
-}
+/* Watched stocks: fixed column widths so no column can grab the room, and one
+   font size for every cell including the score chips.
+   Columns: Ticker, Name, Sector, 3M, 6M, 1Y, Volatility, Fwd P/E, Dividend,
+   Analysts, Value, Quality, actions. */
+.watched-stocks table { table-layout: fixed; }
+.watched-stocks th, .watched-stocks td { font-size: 0.9rem; }
+.watched-stocks th { font-size: 0.72rem; }
+.watched-stocks .tag[class*="badge-"],
+.watched-stocks .tag[class*="quality-"] { font-size: 0.9rem; padding: 0.15rem 0.5rem; white-space: normal; }
+.watched-stocks td.sector { white-space: normal; }
+.watched-stocks th:nth-child(1), .watched-stocks td:nth-child(1) { width: 6%; }
+.watched-stocks th:nth-child(2), .watched-stocks td:nth-child(2) { width: 15%; }
+.watched-stocks th:nth-child(3), .watched-stocks td:nth-child(3) { width: 7%; }
+.watched-stocks th:nth-child(4), .watched-stocks td:nth-child(4) { width: 6%; }
+.watched-stocks th:nth-child(5), .watched-stocks td:nth-child(5) { width: 6%; }
+.watched-stocks th:nth-child(6), .watched-stocks td:nth-child(6) { width: 6%; }
+.watched-stocks th:nth-child(7), .watched-stocks td:nth-child(7) { width: 6%; }
+.watched-stocks th:nth-child(8), .watched-stocks td:nth-child(8) { width: 6%; }
+.watched-stocks th:nth-child(9), .watched-stocks td:nth-child(9) { width: 6%; }
+.watched-stocks th:nth-child(10), .watched-stocks td:nth-child(10) { width: 9%; }
+.watched-stocks th:nth-child(11), .watched-stocks td:nth-child(11) { width: 12%; }
+.watched-stocks th:nth-child(12), .watched-stocks td:nth-child(12) { width: 6%; }
+.watched-stocks th:nth-child(13), .watched-stocks td:nth-child(13) { width: 9%; }
 
 /* Hover bubble: the reasoning behind a score, readable, not a browser title. */
 .tip { position: relative; display: inline-block; cursor: help; }

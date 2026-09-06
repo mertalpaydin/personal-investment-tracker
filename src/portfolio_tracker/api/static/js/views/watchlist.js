@@ -430,6 +430,17 @@ export function watchedEtfSection(etfs, basis) {
   );
 }
 
+/** Yahoo's sector names are long; the column is narrow. Full name on hover. */
+const SECTOR_SHORT = {
+  "Communication Services": "Comms",
+  "Consumer Cyclical": "Cons. Cyclical",
+  "Consumer Defensive": "Cons. Defensive",
+  "Financial Services": "Financials",
+  "Basic Materials": "Materials",
+  Technology: "Tech",
+  Healthcare: "Health",
+};
+
 /** Watched single stocks: recent returns plus the Value and Quality verdicts. */
 export function watchedStockSection(stocks, basis) {
   const fund = (e) => e.fundamentals || {};
@@ -449,13 +460,44 @@ export function watchedStockSection(stocks, basis) {
       label: "Sector",
       key: (e) => fund(e).sector || "",
       type: "str",
-      render: (e) => ({ text: fund(e).sector || "—", cls: "prose muted sector" }),
+      render: (e) => {
+        const sector = fund(e).sector;
+        return {
+          text: sector ? SECTOR_SHORT[sector] || sector : "—",
+          cls: "prose muted sector",
+          title: sector || "",
+        };
+      },
     },
     returnCol("3 months", "ret_3m"),
     returnCol("6 months", "ret_6m"),
     { ...returnCol("1 year", "ret_1y"), defaultSort: true, defaultDir: "desc" },
     volatilityCol,
-    worstFallCol,
+    {
+      label: "Fwd P/E",
+      tooltip: "Forward price to earnings. Lower is cheaper against next year's expected earnings.",
+      key: (e) => (fund(e).forward_pe > 0 ? Number(fund(e).forward_pe) : 9999),
+      type: "num",
+      render: (e) => {
+        const pe = fund(e).forward_pe;
+        const ok = pe != null && pe > 0;
+        return { text: ok ? `${Number(pe).toFixed(1)}x` : "—", cls: ok && pe < 15 ? "gain num" : "num" };
+      },
+    },
+    {
+      label: "Dividend",
+      tooltip: "Trailing dividend yield.",
+      key: (e) => f.num(fund(e).dividend_yield) ?? -1,
+      type: "pct",
+      render: (e) => ({ text: f.pct(fund(e).dividend_yield, { digits: 1 }), cls: "num" }),
+    },
+    {
+      label: "Analysts",
+      tooltip: "Number of analysts covering the stock and the share rating it buy or strong buy.",
+      key: (e) => fund(e).analyst_count ?? -1,
+      type: "num",
+      render: (e) => analystCell(fund(e)),
+    },
     {
       label: "Value",
       tooltip: "Value Score 0-100: how cheap the stock is against its own sector and in absolute terms. Hover a score for the reasons.",
@@ -463,7 +505,7 @@ export function watchedStockSection(stocks, basis) {
       type: "num",
       render: (e) => {
         const fd = fund(e);
-        return { node: tip(valueScoreBadge(fd.value_score, fd.value_badge), fd.value_narrative), cls: "score" };
+        return { node: tip(valueScoreBadge(fd.value_score, fd.value_badge), fd.value_narrative), cls: "num score" };
       },
     },
     {
