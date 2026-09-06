@@ -70,6 +70,7 @@ GOOD = dict(
     operating_margin=Decimal("0.20"),
     analyst_count=12,
     buy_pct=Decimal("0.75"),
+    recommendation_mean=Decimal("1.8"),
 )
 
 
@@ -257,7 +258,7 @@ def test_analyst_upside_needs_three_analysts():
     lone, _, _ = calculate_value_score(**{**GOOD, "buy_pct": None, "analyst_count": 1})
     unknown, _, _ = calculate_value_score(**{**GOOD, "buy_pct": None, "analyst_count": None})
     assert crowd is not None and lone is not None and unknown is not None
-    assert crowd - lone == 5
+    assert crowd - lone == 10  # upside 5 + consensus 5, both need a crowd
     assert unknown == lone
 
 
@@ -275,6 +276,97 @@ def test_sector_relative_rank_helps_a_cheap_member_of_a_dear_sector():
     relative, _, _ = calculate_value_score(**kwargs, relative={"pe": Decimal("1")})
     assert absolute is not None and relative is not None
     assert relative == absolute + 10  # (5 + 25) / 2 = 15, up from 5
+
+
+KHC = dict(
+    forward_pe=Decimal("11.87"),
+    trailing_pe=None,
+    fcf_yield=Decimal("0.11"),
+    pct_off_52w_high=Decimal("-0.115"),
+    range_52w_pct=Decimal("54.0"),
+    ev_ebitda=Decimal("8.36"),
+    price_to_book=Decimal("0.82"),
+    target_upside_pct=Decimal("0.012"),
+    dividend_yield=Decimal("0.064"),
+    debt_to_equity=Decimal("52.6"),
+    operating_margin=Decimal("0.155"),
+    sector="Consumer Defensive",
+    peg_ratio=Decimal("0.99"),
+    revenue_growth=Decimal("-0.014"),
+    profit_margin=Decimal("-0.136"),
+    return_on_equity=Decimal("-0.088"),
+    payout_ratio=Decimal("0.73"),
+    analyst_count=17,
+    buy_pct=Decimal("0.059"),
+    recommendation_mean=Decimal("3.1"),
+)
+
+
+def test_khc_is_no_longer_a_bargain():
+    """The case that prompted the change: cheap on every multiple, loss-making,
+    a 6% dividend paid out of losses, and 17 analysts who say hold-to-sell."""
+    score, badge, narrative = calculate_value_score(**KHC)
+    assert score is not None and score <= 55
+    assert badge == "FAIR"
+    assert "capped at 55" in narrative
+    assert "net loss" in narrative
+    assert "dividend may not be sustainable" in narrative
+
+
+def test_quality_gate_caps_but_does_not_trap():
+    healthy, _, _ = calculate_value_score(**GOOD)
+    capped, badge, narrative = calculate_value_score(**GOOD, profit_margin=Decimal("-0.05"))
+    assert healthy == 100
+    assert capped == 55
+    assert badge == "FAIR"
+    assert "net loss (-5% profit margin)" in narrative
+
+
+def test_shrinking_revenue_caps_score():
+    capped, _, narrative = calculate_value_score(**GOOD, revenue_growth=Decimal("-0.12"))
+    assert capped == 55
+    assert "revenue down 12%" in narrative
+
+
+def test_analyst_consensus_can_subtract():
+    liked, _, _ = calculate_value_score(**{**GOOD, "recommendation_mean": Decimal("1.5")})
+    neutral, _, _ = calculate_value_score(**{**GOOD, "recommendation_mean": Decimal("2.8")})
+    disliked, _, _ = calculate_value_score(**{**GOOD, "recommendation_mean": Decimal("3.3")})
+    hated, _, _ = calculate_value_score(**{**GOOD, "recommendation_mean": Decimal("4.0")})
+    assert (liked, neutral, disliked, hated) == (100, 95, 92, 90)
+
+
+def test_fully_priced_target_with_large_crowd_costs_points():
+    upside, _, _ = calculate_value_score(**{**GOOD, "target_upside_pct": Decimal("0.07")})
+    flat, _, _ = calculate_value_score(**{**GOOD, "target_upside_pct": Decimal("0.01")})
+    small_crowd, _, _ = calculate_value_score(
+        **{**GOOD, "target_upside_pct": Decimal("0.01"), "analyst_count": 5}
+    )
+    assert upside - flat == 3
+    assert small_crowd == upside  # five analysts are not a verdict
+
+
+def test_dividend_only_counts_when_affordable():
+    safe, _, _ = calculate_value_score(**GOOD, payout_ratio=Decimal("0.5"))
+    stretched, _, narrative = calculate_value_score(**GOOD, payout_ratio=Decimal("0.95"))
+    assert safe - stretched == 5
+    assert "may not be sustainable" in narrative
+
+
+def test_contrarian_badge_when_cheap_but_disliked():
+    score, badge, narrative = calculate_value_score(
+        **{**GOOD, "recommendation_mean": Decimal("3.2"), "buy_pct": Decimal("0.1")}
+    )
+    assert score is not None and score >= 70
+    assert badge == "CONTRARIAN"
+    assert "analysts disagree" in narrative
+    assert "consensus 3.2" in narrative
+
+
+def test_consensus_mean_from_counts_when_yahoo_omits_it():
+    item = StockFundamentals(1, "X", "X", strong_buy=2, buy=6, hold=2, sell=0, strong_sell=0)
+    assert si.consensus_mean(item) == Decimal("2")
+    assert si.consensus_mean(StockFundamentals(1, "X", "X")) is None
 
 
 # ---------------------------------------------------------------- universe ranks

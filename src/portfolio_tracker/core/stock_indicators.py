@@ -41,6 +41,9 @@ MIN_ANALYSTS = 3
 #: A sector with fewer members than this is ranked against the whole universe.
 MIN_SECTOR_SIZE = 5
 
+#: Highest score a loss-making or shrinking business can get, however cheap.
+QUALITY_CAP = 55
+
 #: Percentage below the 52-week high that counts as a "dip". Used by the badge,
 #: the narrative and the UI filter text -- keep them in step.
 DIP_THRESHOLD = Decimal("-0.20")
@@ -262,8 +265,13 @@ def calculate_value_score(
     sector: str | None = None,
     peg_ratio: Decimal | None = None,
     earnings_growth: Decimal | None = None,
+    revenue_growth: Decimal | None = None,
+    profit_margin: Decimal | None = None,
+    return_on_equity: Decimal | None = None,
+    payout_ratio: Decimal | None = None,
     analyst_count: int | None = None,
     buy_pct: Decimal | None = None,
+    recommendation_mean: Decimal | None = None,
     relative: Mapping[str, Decimal] | None = None,
 ) -> tuple[int | None, str, str]:
     """Calculate a 0-100 composite Value Score and assign a badge & narrative.
@@ -272,13 +280,19 @@ def calculate_value_score(
     the keys ``pe``, ``fcf_yield``, ``ev_ebitda`` and ``price_to_book``. Without it
     the score is purely absolute.
 
-    Blocks (max points):
-      P/E 25 (+ growth credit via PEG), FCF yield 20, pullback 15, EV/EBITDA or P/B 15,
-      analyst consensus 10, dividend 5, quality & solvency 10. Total 100.
+    Blocks (points):
+      P/E 0..25 (+ growth credit via PEG), FCF yield 0..20, pullback 0..10,
+      EV/EBITDA or P/B 0..15, analyst consensus -8..+15, dividend 0..5,
+      quality & solvency 0..10. Clamped to 0..100.
+
+    Cheapness is then *gated* by quality: a loss-making or shrinking business is
+    capped at ``QUALITY_CAP`` however cheap it looks, because "cheap" and "in
+    trouble" are the same number seen from two sides.
 
     Badges:
       - NO_DATA: Fewer than three inputs available; the score is None.
       - BARGAIN: High value score, reasonable leverage, high cash generation.
+      - CONTRARIAN: Scores like a bargain, but the analyst consensus is hold-to-sell.
       - DIP: Quality stock trading at a significant discount (20%+ off 52W high).
       - FAIR: In line with normal valuation ranges.
       - PREMIUM: Expensive valuation (high P/E, trading near 52W high).
@@ -345,19 +359,19 @@ def calculate_value_score(
             pts = 0
         score += _blend(pts, relative.get("fcf_yield"), 20)
 
-    # 3. Pullback discount & 52-week range position (0 to 15 pts).
+    # 3. Pullback discount & 52-week range position (0 to 10 pts).
     if pct_off_52w_high is not None:
         if pct_off_52w_high <= Decimal("-0.35"):
-            score += 10
+            score += 6
         elif pct_off_52w_high <= DIP_THRESHOLD:
-            score += 7
+            score += 4
         elif pct_off_52w_high <= Decimal("-0.10"):
-            score += 3
+            score += 2
     if range_52w_pct is not None:
         if range_52w_pct <= Decimal("25.0"):
-            score += 5
+            score += 4
         elif range_52w_pct <= Decimal("50.0"):
-            score += 3
+            score += 2
 
     # 4. EV/EBITDA, or P/B for financials and where EV/EBITDA is missing (0 to 15 pts).
     use_ev = ev_ebitda is not None and ev_ebitda > 0 and not financial
@@ -382,21 +396,37 @@ def calculate_value_score(
             pts = 0
         score += _blend(pts, relative.get("price_to_book"), 15)
 
-    # 5. Analyst consensus (0 to 10 pts): upside needs a real crowd behind it.
+    # 5. Analyst consensus (-8 to +15 pts). An opinion, so it can cost points too.
     enough_analysts = analyst_count is not None and analyst_count >= MIN_ANALYSTS
     if enough_analysts and target_upside_pct is not None:
         if target_upside_pct >= Decimal("0.20"):
             score += 5
         elif target_upside_pct >= Decimal("0.10"):
             score += 3
+        elif target_upside_pct < Decimal("0.05") and analyst_count >= 10:  # type: ignore[operator]
+            score -= 3  # a large crowd says "fully priced"
     if enough_analysts and buy_pct is not None:
         if buy_pct >= Decimal("0.70"):
             score += 5
         elif buy_pct >= Decimal("0.50"):
             score += 3
+    if enough_analysts and recommendation_mean is not None:
+        if recommendation_mean <= Decimal("2.0"):
+            score += 5
+        elif recommendation_mean <= Decimal("2.5"):
+            score += 3
+        elif recommendation_mean <= Decimal("3.0"):
+            pass
+        elif recommendation_mean <= Decimal("3.5"):
+            score -= 3
+        else:
+            score -= 5
 
-    # 6. Dividend (0 to 5 pts).
-    if dividend_yield is not None:
+    # 6. Dividend (0 to 5 pts), only when the company can actually afford it.
+    dividend_unsafe = (payout_ratio is not None and payout_ratio >= Decimal("0.80")) or (
+        profit_margin is not None and profit_margin < 0
+    )
+    if dividend_yield is not None and not dividend_unsafe:
         if dividend_yield >= Decimal("0.035"):
             score += 5
         elif dividend_yield >= Decimal("0.015"):
@@ -417,6 +447,17 @@ def calculate_value_score(
             score += 3
 
     score = max(0, min(100, score))
+
+    # Quality gate: cheap is not enough when the business is losing money or shrinking.
+    quality_reasons: list[str] = []
+    if profit_margin is not None and profit_margin < 0:
+        quality_reasons.append(f"net loss ({float(profit_margin) * 100:.0f}% profit margin)")
+    if return_on_equity is not None and return_on_equity < 0:
+        quality_reasons.append("negative return on equity")
+    if revenue_growth is not None and revenue_growth <= Decimal("-0.05"):
+        quality_reasons.append(f"revenue down {abs(float(revenue_growth)) * 100:.0f}%")
+    if quality_reasons:
+        score = min(score, QUALITY_CAP)
 
     # Value trap: looks cheap, and there is a visible reason why.
     trap_reasons: list[str] = []
@@ -441,6 +482,17 @@ def calculate_value_score(
     analyst_note = None
     if enough_analysts and buy_pct is not None:
         analyst_note = f"{analyst_count} analysts, {float(buy_pct) * 100:.0f}% rate it a buy"
+    analysts_negative = (
+        enough_analysts
+        and recommendation_mean is not None
+        and recommendation_mean >= Decimal("3.0")
+    )
+    dividend_note = None
+    if dividend_unsafe and dividend_yield is not None and dividend_yield >= Decimal("0.015"):
+        dividend_note = (
+            f"{float(dividend_yield) * 100:.1f}% dividend may not be sustainable "
+            "(paid out of losses or more than 80% of earnings)"
+        )
 
     narrative_parts: list[str] = []
     if trap_reasons:
@@ -448,6 +500,16 @@ def calculate_value_score(
         score = min(score, 38)
         narrative_parts.append(
             f"Low P/E ({pe:.1f}x) appears cheap, but: {', '.join(trap_reasons)}."
+        )
+    elif score >= 70 and analysts_negative:
+        badge = "CONTRARIAN"
+        narrative_parts.append(
+            f"Cheap on the numbers ({pe:.1f}x P/E)" if pe is not None else "Cheap on the numbers"
+        )
+        narrative_parts.append(
+            f"but analysts disagree: {analyst_count} cover it, "
+            f"{float(buy_pct or 0) * 100:.0f}% say buy, "
+            f"consensus {float(recommendation_mean):.1f} on a 1 (buy) to 5 (sell) scale"  # type: ignore[arg-type]
         )
     elif score >= 70:
         badge = "BARGAIN"
@@ -459,7 +521,12 @@ def calculate_value_score(
             narrative_parts.append(f"trading {abs(float(pct_off_52w_high)) * 100:.0f}% off highs")
         if analyst_note:
             narrative_parts.append(analyst_note)
-    elif pct_off_52w_high is not None and pct_off_52w_high <= DIP_THRESHOLD and score >= 55:
+    elif (
+        pct_off_52w_high is not None
+        and pct_off_52w_high <= DIP_THRESHOLD
+        and score >= 55
+        and not quality_reasons  # a dip in a shrinking business is just a decline
+    ):
         badge = "DIP"
         narrative_parts.append(
             f"Pullback opportunity: down {abs(float(pct_off_52w_high)) * 100:.0f}% from 52W high"
@@ -491,6 +558,13 @@ def calculate_value_score(
             narrative_parts.append("Trading at a premium with limited margin of safety")
         if analyst_note:
             narrative_parts.append(analyst_note)
+
+    if quality_reasons and badge != "TRAP_RISK":
+        narrative_parts.append(
+            f"score capped at {QUALITY_CAP} for quality: {', '.join(quality_reasons)}"
+        )
+    if dividend_note:
+        narrative_parts.append(dividend_note)
 
     return score, badge, "; ".join(narrative_parts)
 
@@ -549,8 +623,24 @@ def _cheapness_ranks(items: list[StockFundamentals]) -> dict[int, dict[str, Deci
     return out
 
 
+def consensus_mean(item: StockFundamentals) -> Decimal | None:
+    """Yahoo's 1 (strong buy) .. 5 (sell) mean, or the same computed from the rating counts."""
+    if item.recommendation_mean is not None:
+        return item.recommendation_mean
+    counts = (item.strong_buy, item.buy, item.hold, item.sell, item.strong_sell)
+    if all(c is None for c in counts):
+        return None
+    total = sum(c or 0 for c in counts)
+    if total == 0:
+        return None
+    weighted = sum((i + 1) * (c or 0) for i, c in enumerate(counts))
+    return _to_decimal(Decimal(weighted) / Decimal(total))
+
+
 def apply_score(item: StockFundamentals, relative: Mapping[str, Decimal] | None = None) -> None:
     """Fill ``value_score``, ``value_badge``, ``value_narrative`` and ``data_points`` in place."""
+    if item.recommendation_mean is None:
+        item.recommendation_mean = consensus_mean(item)
     pe = item.forward_pe if item.forward_pe is not None else item.trailing_pe
     item.data_points = count_data_points(
         pe=pe if pe is not None and pe > 0 else None,
@@ -578,8 +668,13 @@ def apply_score(item: StockFundamentals, relative: Mapping[str, Decimal] | None 
         sector=item.sector,
         peg_ratio=item.peg_ratio,
         earnings_growth=item.earnings_growth,
+        revenue_growth=item.revenue_growth,
+        profit_margin=item.profit_margin,
+        return_on_equity=item.return_on_equity,
+        payout_ratio=item.payout_ratio,
         analyst_count=item.analyst_count,
         buy_pct=item.buy_pct,
+        recommendation_mean=item.recommendation_mean,
         relative=relative,
     )
     item.value_score = score

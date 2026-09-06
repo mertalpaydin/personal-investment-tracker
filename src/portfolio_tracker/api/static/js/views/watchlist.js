@@ -1628,6 +1628,9 @@ export function valueScoreBadge(score, badge) {
   } else if (badge === "TRAP_RISK") {
     cls = "badge-trap";
     label = "⚠️ Value Trap";
+  } else if (badge === "CONTRARIAN") {
+    cls = "badge-contrarian";
+    label = `🤔 Contrarian · ${score}/100`;
   }
 
   return el("span.tag", {
@@ -1710,8 +1713,16 @@ function stockCandidateRow(c, { yours = false, onCompare = null } = {}) {
   ]);
 }
 
+/** Where a stock trades, from its Yahoo symbol: ".DE" is Xetra, no suffix is a US listing. */
+export function stockMarket(symbol) {
+  const s = String(symbol || "");
+  if (s.endsWith(".DE")) return "DE";
+  if (!s.includes(".")) return "US";
+  return "OTHER";
+}
+
 export function stockBargainFinderSection(onCompare) {
-  const container = el("section");
+  const container = el("section.bargain-finder");
 
   const refreshBtn = el("button.small", {
     type: "button",
@@ -1802,6 +1813,17 @@ export function stockBargainFinderSection(onCompare) {
 
     let selectedSector = "";
     let selectedBadge = "";
+    let selectedMarket = "";
+
+    const marketSelect = el(
+      "select",
+      el("option", { value: "", text: "All Markets" }),
+      el("option", { value: "DE", text: "🇩🇪 German stocks (Xetra)" }),
+      el("option", { value: "US", text: "🇺🇸 US stocks" }),
+      allStocks.some((s) => stockMarket(s.symbol) === "OTHER")
+        ? el("option", { value: "OTHER", text: "Other markets" })
+        : null,
+    );
 
     const sectorSelect = el(
       "select",
@@ -1818,6 +1840,7 @@ export function stockBargainFinderSection(onCompare) {
       el("option", { value: "FAIR", text: "⚖️ Fair Value" }),
       el("option", { value: "PREMIUM", text: "💎 Expensive / Premium" }),
       el("option", { value: "TRAP_RISK", text: "⚠️ Value Trap Warnings" }),
+      el("option", { value: "CONTRARIAN", text: "🤔 Cheap but analysts disagree" }),
       el("option", { value: "NO_DATA", text: "❔ Not enough data" }),
     );
 
@@ -1861,15 +1884,6 @@ export function stockBargainFinderSection(onCompare) {
         key: (s) => s.sector || "",
         cls: "prose muted",
         render: (s) => ({ text: s.sector || "—", cls: "prose muted" }),
-      },
-      {
-        label: "Price",
-        key: (s) => f.num(s.current_price),
-        type: "num",
-        render: (s) => ({
-          text: f.money(s.current_price, s.currency || "EUR"),
-          cls: "num",
-        }),
       },
       {
         label: "Fwd P/E",
@@ -1930,7 +1944,7 @@ export function stockBargainFinderSection(onCompare) {
       },
       {
         label: "Value Score",
-        tooltip: "Composite value score (0-100): multiples blended with the sector's own range, pullback discount, analyst consensus (3+ analysts), dividend, and solvency.",
+        tooltip: "Composite value score (0-100): multiples blended with the sector's own range, pullback discount, analyst consensus (3+ analysts, can subtract), dividend when affordable, and solvency. Loss-making or shrinking businesses are capped at 55.",
         key: (s) => s.value_score ?? -1,
         type: "num",
         defaultSort: true,
@@ -1946,19 +1960,6 @@ export function stockBargainFinderSection(onCompare) {
         render: (s) => ({
           text: s.value_narrative || "—",
           cls: "prose small muted",
-          style: "max-width: 260px;",
-        }),
-      },
-      {
-        label: "",
-        sortable: false,
-        render: (s) => ({
-          node: el("button.small", {
-            type: "button",
-            text: "+ Compare",
-            title: `Add ${s.symbol} to comparison chart`,
-            onclick: () => onCompare && onCompare(s.symbol),
-          }),
         }),
       },
     ];
@@ -1984,7 +1985,9 @@ export function stockBargainFinderSection(onCompare) {
       fcfBadge.textContent = minFcfVal === 0 ? "Any" : `≥ ${minFcfVal}%`;
 
       const filtered = allStocks.filter((s) => {
+        if (selectedMarket && stockMarket(s.symbol) !== selectedMarket) return false;
         if (selectedSector && s.sector !== selectedSector) return false;
+        if (selectedBadge === "CONTRARIAN" && s.value_badge !== "CONTRARIAN") return false;
         if (selectedBadge === "BARGAIN" && s.value_badge !== "BARGAIN") return false;
         if (selectedBadge === "DIP" && s.value_badge !== "DIP") return false;
         if (selectedBadge === "BARGAIN_OR_DIP" && s.value_badge !== "BARGAIN" && s.value_badge !== "DIP") return false;
@@ -2012,6 +2015,7 @@ export function stockBargainFinderSection(onCompare) {
       renderTable(filtered);
     }
 
+    marketSelect.onchange = (e) => { selectedMarket = e.target.value; update(); };
     sectorSelect.onchange = (e) => { selectedSector = e.target.value; update(); };
     badgeSelect.onchange = (e) => { selectedBadge = e.target.value; update(); };
     peSlider.oninput = () => update();
@@ -2020,6 +2024,11 @@ export function stockBargainFinderSection(onCompare) {
 
     const controls = el(
       "div.slider-filter-panel",
+      el(
+        "div.slider-filter-group",
+        el("div.slider-filter-header", el("span", { text: "Market" })),
+        marketSelect,
+      ),
       el(
         "div.slider-filter-group",
         el("div.slider-filter-header", el("span", { text: "Sector Filter" })),
