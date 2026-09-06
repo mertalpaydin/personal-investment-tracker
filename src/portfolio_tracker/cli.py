@@ -664,5 +664,34 @@ def doctor(
         raise typer.Exit(code=1)
 
 
+@app.command("sync-fundamentals")
+def sync_fundamentals(
+    db: DbPath = DEFAULT_DB_PATH,
+    workers: Annotated[
+        int, typer.Option("--workers", "-w", help="Number of concurrent worker threads.")
+    ] = 4,
+) -> None:
+    """Fetch and update fundamental valuation indicators for all single stocks."""
+    from portfolio_tracker.core.stock_indicators import sync_all_stock_fundamentals
+
+    conn = connect(db)
+    try:
+        typer.echo(f"Fetching stock fundamentals from Yahoo Finance ({workers} workers)...")
+
+        def on_progress(done: int, total: int, key: str) -> None:
+            if done % 10 == 0 or done == total:
+                typer.echo(f"  [{done}/{total}] Last: {key}")
+
+        success, total = sync_all_stock_fundamentals(
+            conn, max_workers=workers, progress_cb=on_progress
+        )
+        typer.secho(
+            f"Successfully updated fundamentals for {success}/{total} stocks.",
+            fg=typer.colors.GREEN,
+        )
+    finally:
+        conn.close()
+
+
 if __name__ == "__main__":  # pragma: no cover
     app()

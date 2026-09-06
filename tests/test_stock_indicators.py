@@ -207,3 +207,20 @@ def test_peers_scan_stock_mode():
         assert "forward_pe" in c
         assert "value_score" in c
         assert "value_badge" in c
+
+
+def test_api_stocks_fundamentals_status():
+    client = TestClient(app)
+    res = client.get("/api/stocks/fundamentals/status")
+    assert res.status_code == 200
+    data = res.json()
+    assert "running" in data
+    assert "last_synced" in data
+
+
+def test_sync_all_stock_fundamentals_empty(db: sqlite3.Connection):
+    from portfolio_tracker.core.stock_indicators import sync_all_stock_fundamentals
+
+    success, total = sync_all_stock_fundamentals(db)
+    assert success == 0
+    assert total == 0

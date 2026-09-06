@@ -77,8 +77,11 @@ def updates(conn: sqlite3.Connection = Depends(get_db)) -> dict[str, Any]:
     newest = job.newest_price(conn)
     rows = job.history(conn, limit=20)
     running = next((r for r in rows if r["status"] == "RUNNING"), None)
+    last_fund_row = conn.execute("SELECT max(fetched_at) FROM stock_fundamental").fetchone()
+    last_fund = str(last_fund_row[0]) if last_fund_row and last_fund_row[0] else None
     return {
         "last_price_date": newest.isoformat() if newest else None,
+        "last_fundamentals_date": last_fund,
         "stale": job.is_stale(conn),
         "running": _run_row(running) if running is not None else None,
         "runs": [_run_row(r) for r in rows],

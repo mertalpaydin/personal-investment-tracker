@@ -545,3 +545,76 @@ def get_stock_fundamentals(
             )
         )
     return out
+
+
+def sync_all_stock_fundamentals(
+    conn: sqlite3.Connection,
+    *,
+    max_workers: int = 4,
+    progress_cb: Any | None = None,
+) -> tuple[int, int]:
+    """Fetch and update fundamental valuation indicators for all single stocks."""
+    import concurrent.futures
+    import time
+    from datetime import UTC, datetime
+
+    try:
+        import yfinance as yf
+    except ImportError as exc:
+        raise RuntimeError("yfinance is required for stock fundamental syncing") from exc
+
+    rows = conn.execute("""
+        SELECT id, import_key, price_symbol, name
+        FROM instrument
+        WHERE asset_class = 'STOCK'
+        ORDER BY id
+    """).fetchall()
+
+    if not rows:
+        return (0, 0)
+
+    total = len(rows)
+    now_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def fetch_one(r: sqlite3.Row) -> StockFundamentals | None:
+        inst_id = r["id"]
+        key = r["import_key"]
+        sym = r["price_symbol"] or key
+        name = r["name"]
+        try:
+            ticker = yf.Ticker(sym)
+            fast_info = getattr(ticker, "fast_info", None)
+            info = getattr(ticker, "info", None) or {}
+            time.sleep(0.15)
+            return parse_raw_stock_info(
+                instrument_id=inst_id,
+                symbol=key,
+                name=name,
+                info=info,
+                fast_info=fast_info,
+                now_iso=now_iso,
+            )
+        except Exception:
+            return None
+
+    results: list[StockFundamentals] = []
+    completed = 0
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_key = {executor.submit(fetch_one, r): r["import_key"] for r in rows}
+        for future in concurrent.futures.as_completed(future_to_key):
+            completed += 1
+            key = future_to_key[future]
+            if progress_cb:
+                progress_cb(completed, total, key)
+            try:
+                fund = future.result()
+                if fund:
+                    results.append(fund)
+            except Exception:
+                pass
+
+    if results:
+        save_stock_fundamentals(conn, results)
+
+    return (len(results), total)

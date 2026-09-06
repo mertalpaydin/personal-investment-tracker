@@ -1671,23 +1671,94 @@ function stockCandidateRow(c, { yours = false, onCompare = null } = {}) {
 }
 
 export function stockBargainFinderSection(onCompare) {
-  const container = el("section", heading("Stock Bargain Finder — Undervalued & Pullback Opportunities"));
-  container.append(
-    el("p.sub", {
-      text: "Scan and filter single stocks across the universe by valuation multiples (Forward P/E, FCF Yield, P/B) and discount from 52-week highs.",
-    }),
+  const container = el("section");
+
+  const refreshBtn = el("button.small", {
+    type: "button",
+    text: "🔄 Refresh Fundamentals",
+    title: "Update valuation multiples and analyst targets from Yahoo Finance",
+  });
+  const syncStatus = el("span.muted.small", {
+    style: "font-size: 0.85rem; margin-left: 0.5rem;",
+  });
+
+  const header = el(
+    "div",
+    { style: "display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem;" },
+    el(
+      "div",
+      heading("Stock Bargain Finder — Undervalued & Pullback Opportunities"),
+      el("p.sub", {
+        text: "Scan and filter single stocks across the universe by valuation multiples (Forward P/E, FCF Yield, P/B) and discount from 52-week highs.",
+      }),
+    ),
+    el(
+      "div",
+      { style: "display: flex; align-items: center; gap: 0.4rem; padding-top: 0.25rem;" },
+      refreshBtn,
+      syncStatus,
+    ),
   );
+  container.append(header);
 
   const slot = el("div", el("p.muted", { text: "Loading stock fundamentals..." }));
   container.append(slot);
 
-  get("/api/stocks/fundamentals").then((res) => {
+  let pollInterval = null;
+
+  async function checkSync() {
+    try {
+      const stat = await get("/api/stocks/fundamentals/status");
+      if (stat.running) {
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = "⏳ Syncing...";
+        syncStatus.textContent = stat.total > 0
+          ? `Updating ${stat.progress}/${stat.total} (${stat.current || ""})...`
+          : "Fetching quotes...";
+      } else {
+        if (pollInterval) {
+          clearInterval(pollInterval);
+          pollInterval = null;
+        }
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = "🔄 Refresh Fundamentals";
+        if (stat.last_result) {
+          syncStatus.textContent = stat.last_result;
+        }
+        loadData();
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  refreshBtn.onclick = async () => {
+    refreshBtn.disabled = true;
+    refreshBtn.textContent = "⏳ Starting...";
+    try {
+      await post("/api/stocks/fundamentals/sync", {});
+      checkSync();
+      pollInterval = setInterval(checkSync, 2000);
+    } catch (err) {
+      window.alert(err.message || "Failed to start sync");
+      refreshBtn.disabled = false;
+      refreshBtn.textContent = "🔄 Refresh Fundamentals";
+    }
+  };
+
+  async function loadData() {
+    const res = await get("/api/stocks/fundamentals");
     if (isError(res) || !res.stocks || !res.stocks.length) {
       slot.replaceChildren(el("p.note", { text: "No stock fundamentals recorded yet." }));
       return;
     }
     const allStocks = res.stocks;
     const sectors = res.sectors || [];
+
+    if (res.last_synced && !pollInterval) {
+      const agoText = f.ago(res.last_synced);
+      syncStatus.textContent = `Updated: ${agoText === "today" ? "Today" : agoText}`;
+    }
 
     let selectedSector = "";
     let selectedBadge = "";
@@ -1927,8 +1998,9 @@ export function stockBargainFinderSection(onCompare) {
 
     slot.replaceChildren(controls, tableWrap);
     update();
-  });
+  }
 
+  loadData();
   return container;
 }
 

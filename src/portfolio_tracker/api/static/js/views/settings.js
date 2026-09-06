@@ -73,20 +73,56 @@ function updateSection(u) {
     },
   });
 
+  const fundButton = el("button", {
+    type: "button",
+    text: "Sync stock fundamentals",
+    title: "Fetch updated valuation multiples and analyst targets from Yahoo Finance",
+    onclick: async () => {
+      fundButton.disabled = true;
+      fundButton.textContent = "Syncing…";
+      status.className = "note";
+      status.textContent = "Updating stock fundamentals in background…";
+      try {
+        await post("/api/stocks/fundamentals/sync", {});
+        for (let i = 0; i < 90; i++) {
+          await new Promise((r) => window.setTimeout(r, 2000));
+          const stat = await get("/api/stocks/fundamentals/status");
+          if (stat.running) {
+            status.textContent = stat.total > 0 ? `Updating fundamentals: ${stat.progress}/${stat.total} (${stat.current || ""})…` : "Starting…";
+          } else {
+            status.className = "note";
+            status.textContent = stat.last_result || "Stock fundamentals updated.";
+            break;
+          }
+        }
+        router.refresh();
+      } catch (err) {
+        status.className = "note bad";
+        status.textContent = err.message;
+      } finally {
+        fundButton.disabled = false;
+        fundButton.textContent = "Sync stock fundamentals";
+      }
+    },
+  });
+
   return el(
     "section",
-    heading("Price data"),
+    heading("Price & Fundamentals Data"),
     el(
       "div.cards",
       card("Prices current to", f.date(u.last_price_date), {
         cls: u.stale ? "aside" : "total",
         sub: f.ago(u.last_price_date),
       }),
-      card("Status", u.stale ? "Behind" : "Up to date", {
+      card("Price Status", u.stale ? "Behind" : "Up to date", {
         valueCls: u.stale ? "loss" : "gain",
       }),
+      card("Stock Fundamentals", u.last_fundamentals_date ? f.date(u.last_fundamentals_date) : "Recorded", {
+        sub: u.last_fundamentals_date ? f.ago(u.last_fundamentals_date) : "145 stocks",
+      }),
     ),
-    el("div.actions", button),
+    el("div.actions", button, fundButton),
     status,
     u.stale
       ? el("p.note.warn", {

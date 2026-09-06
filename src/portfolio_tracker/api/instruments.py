@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -573,9 +573,12 @@ def stock_fundamentals_list(
             "SELECT DISTINCT sector FROM stock_fundamental WHERE sector IS NOT NULL ORDER BY sector"
         ).fetchall()
     ]
+    last_synced_row = conn.execute("SELECT max(fetched_at) FROM stock_fundamental").fetchone()
+    last_synced = str(last_synced_row[0]) if last_synced_row and last_synced_row[0] else None
     return {
         "count": len(items),
         "sectors": sectors,
+        "last_synced": last_synced,
         "stocks": [
             {
                 "instrument_id": item.instrument_id,
@@ -615,6 +618,94 @@ def stock_fundamentals_list(
             }
             for item in items
         ],
+    }
+
+
+_FUNDAMENTALS_SYNC_STATE: dict[str, Any] = {
+    "running": False,
+    "started_at": None,
+    "finished_at": None,
+    "progress": 0,
+    "total": 0,
+    "current": None,
+    "error": None,
+    "last_result": None,
+}
+_SYNC_LOCK = threading.Lock()
+
+
+@router.get("/api/stocks/fundamentals/status")
+def stock_fundamentals_status(
+    conn: sqlite3.Connection = Depends(get_db),
+) -> dict[str, Any]:
+    """Check whether stock fundamentals sync is currently running and when it last ran."""
+    last_synced_row = conn.execute("SELECT max(fetched_at) FROM stock_fundamental").fetchone()
+    last_synced = str(last_synced_row[0]) if last_synced_row and last_synced_row[0] else None
+    with _SYNC_LOCK:
+        return {
+            **_FUNDAMENTALS_SYNC_STATE,
+            "last_synced": last_synced,
+        }
+
+
+@router.post("/api/stocks/fundamentals/sync")
+def trigger_stock_fundamentals_sync(
+    workers: int = Query(4, ge=1, le=10),
+) -> dict[str, Any]:
+    """Trigger an asynchronous background refresh of stock fundamentals."""
+    with _SYNC_LOCK:
+        if _FUNDAMENTALS_SYNC_STATE["running"]:
+            return {
+                "started": False,
+                "message": "Stock fundamentals sync is already in progress.",
+                **_FUNDAMENTALS_SYNC_STATE,
+            }
+        _FUNDAMENTALS_SYNC_STATE.update(
+            {
+                "running": True,
+                "started_at": datetime.now(UTC).isoformat(),
+                "finished_at": None,
+                "progress": 0,
+                "total": 0,
+                "current": None,
+                "error": None,
+                "last_result": None,
+            }
+        )
+
+    db_path = deps.DB_PATH
+
+    def run_worker() -> None:
+        from portfolio_tracker.core.stock_indicators import sync_all_stock_fundamentals
+        from portfolio_tracker.db.connection import connect
+
+        try:
+            with connect(db_path, read_only=False) as wconn:
+
+                def on_progress(done: int, total: int, key: str) -> None:
+                    with _SYNC_LOCK:
+                        _FUNDAMENTALS_SYNC_STATE["progress"] = done
+                        _FUNDAMENTALS_SYNC_STATE["total"] = total
+                        _FUNDAMENTALS_SYNC_STATE["current"] = key
+
+                success, total = sync_all_stock_fundamentals(
+                    wconn, max_workers=workers, progress_cb=on_progress
+                )
+                with _SYNC_LOCK:
+                    _FUNDAMENTALS_SYNC_STATE["running"] = False
+                    _FUNDAMENTALS_SYNC_STATE["finished_at"] = datetime.now(UTC).isoformat()
+                    _FUNDAMENTALS_SYNC_STATE["last_result"] = f"Synced {success}/{total} stocks"
+        except Exception as exc:
+            with _SYNC_LOCK:
+                _FUNDAMENTALS_SYNC_STATE["running"] = False
+                _FUNDAMENTALS_SYNC_STATE["finished_at"] = datetime.now(UTC).isoformat()
+                _FUNDAMENTALS_SYNC_STATE["error"] = str(exc)
+
+    threading.Thread(target=run_worker, daemon=True, name="stock-fundamentals-sync").start()
+
+    return {
+        "started": True,
+        "message": "Stock fundamentals sync started in background.",
     }
 
 
