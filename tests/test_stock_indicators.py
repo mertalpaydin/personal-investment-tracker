@@ -687,6 +687,47 @@ def test_analyst_count_falls_back_to_rating_total():
     assert item.buy_pct == Decimal("0.5")
 
 
+def test_analyst_data_from_primary_listing_keeps_held_price():
+    """Amazon held on Xetra: price in EUR from AMZ.DE, analysts from AMZN in USD."""
+    xetra = {**BASE_INFO, "currency": "EUR", "financialCurrency": "USD", "currentPrice": 200.0}
+    for k in ("forwardPE", "targetMeanPrice", "numberOfAnalystOpinions", "recommendationMean"):
+        del xetra[k]
+    us = {
+        "currency": "USD",
+        "currentPrice": 250.0,
+        "forwardPE": 24.9,
+        "targetMeanPrice": 300.0,
+        "numberOfAnalystOpinions": 60,
+        "recommendationMean": 1.3,
+        "recommendationKey": "strong_buy",
+        "longName": "Amazon.com, Inc.",
+    }
+    rates = {"EUR": Decimal("1"), "USD": Decimal("1.25")}
+    item = parse_raw_stock_info(
+        1, "AMZN", "Amazon", info=xetra, now_iso="t", fx_rates=rates, analyst_info=us
+    )
+    assert item is not None
+    assert item.current_price == Decimal("200")  # what you hold, in EUR
+    assert item.forward_pe == Decimal("24.9")
+    assert item.analyst_count == 60
+    assert item.recommendation_mean == Decimal("1.3")
+    assert item.target_upside_pct == Decimal("0.2")  # (300 - 250) / 250, in USD
+    assert item.target_mean_price == Decimal("240")  # 300 USD -> EUR at 1.25
+
+
+def test_primary_listing_symbol_rule():
+    assert si.primary_listing_symbol("AMZN", "AMZ.DE") == "AMZN"
+    assert si.primary_listing_symbol("SAP.DE", "SAP.DE") is None
+    assert si.primary_listing_symbol("ADS.DE", "ADS.DE") is None
+    assert si.primary_listing_symbol("MSFT", "MSFT") is None
+
+
+def test_same_company_guard():
+    assert si._same_company({"longName": "Amazon.com, Inc."}, {"longName": "Amazon.com Inc"})
+    assert not si._same_company({"longName": "Alphabet Inc."}, {"longName": "Abeona Therapeutics"})
+    assert not si._same_company({}, {"longName": "X"})
+
+
 # ---------------------------------------------------------------- persistence
 
 

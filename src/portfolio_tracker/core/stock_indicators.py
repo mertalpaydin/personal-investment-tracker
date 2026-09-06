@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextlib
 import itertools
 import logging
+import re
 import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -984,6 +985,7 @@ def parse_raw_stock_info(
     price_targets: Mapping[str, Any] | None = None,
     fx_rates: Mapping[str, Decimal] | None = None,
     income_statement: Any | None = None,
+    analyst_info: Mapping[str, Any] | None = None,
 ) -> StockFundamentals | None:
     """Parse yfinance ``info`` (plus optional analyst tables) into ``StockFundamentals``.
 
@@ -993,6 +995,13 @@ def parse_raw_stock_info(
     ``fx_rates`` maps a currency code to its quote-per-euro rate, used to bring
     free cash flow (reported in ``financialCurrency``) into the trading currency
     before dividing by market cap.
+
+    ``analyst_info`` is the ``info`` dict of the company's primary listing when
+    the stock is priced through a secondary one (a US company held on Xetra).
+    Yahoo publishes analyst coverage and the forward P/E only on the primary,
+    so those fields are read from there; ``recommendations`` and
+    ``price_targets`` are expected to come from the same listing. Prices stay
+    from the listing you actually hold.
     """
     currency = _normalise_currency(info.get("currency")) or "EUR"
     financial_currency = _normalise_currency(info.get("financialCurrency"))
@@ -1011,9 +1020,15 @@ def parse_raw_stock_info(
         with contextlib.suppress(Exception):
             market_cap = _to_decimal(getattr(fast_info, "market_cap", None))
 
+    primary = analyst_info or info
     trailing_pe = _to_decimal(info.get("trailingPE"))
-    forward_pe = _to_decimal(info.get("forwardPE"))
-    peg_ratio = _to_decimal(info.get("pegRatio") or info.get("trailingPegRatio"))
+    forward_pe = _to_decimal(info.get("forwardPE")) or _to_decimal(primary.get("forwardPE"))
+    peg_ratio = _to_decimal(
+        info.get("pegRatio")
+        or info.get("trailingPegRatio")
+        or primary.get("pegRatio")
+        or primary.get("trailingPegRatio")
+    )
     price_to_book = _to_decimal(info.get("priceToBook"))
     price_to_sales = _to_decimal(info.get("priceToSalesTrailing12Months"))
     ev_ebitda = _to_decimal(info.get("enterpriseToEbitda"))
@@ -1043,8 +1058,12 @@ def parse_raw_stock_info(
     operating_margin = _to_decimal(info.get("operatingMargins"))
     profit_margin = _to_decimal(info.get("profitMargins"))
     return_on_equity = _to_decimal(info.get("returnOnEquity"))
-    earnings_growth = _to_decimal(info.get("earningsGrowth"))
-    revenue_growth = _to_decimal(info.get("revenueGrowth"))
+    earnings_growth = _to_decimal(info.get("earningsGrowth")) or _to_decimal(
+        primary.get("earningsGrowth")
+    )
+    revenue_growth = _to_decimal(info.get("revenueGrowth")) or _to_decimal(
+        primary.get("revenueGrowth")
+    )
 
     high_52 = _to_decimal(info.get("fiftyTwoWeekHigh"))
     low_52 = _to_decimal(info.get("fiftyTwoWeekLow"))
@@ -1072,19 +1091,41 @@ def parse_raw_stock_info(
     if two_hundred_dma is not None and two_hundred_dma > 0:
         dist_200_dma_pct = _to_decimal((current_price - two_hundred_dma) / two_hundred_dma)
 
-    # Analyst consensus.
+    # Analyst consensus. Targets are quoted in the analyst listing's currency
+    # and compared against *its* price; the upside is a ratio, so it carries
+    # over. The target prices themselves are converted for display, or
+    # dropped when no rate is known.
     targets = price_targets or {}
-    target_mean = _to_decimal(targets.get("mean")) or _to_decimal(info.get("targetMeanPrice"))
-    target_median = _to_decimal(targets.get("median")) or _to_decimal(info.get("targetMedianPrice"))
-    target_low = _to_decimal(targets.get("low")) or _to_decimal(info.get("targetLowPrice"))
-    target_high = _to_decimal(targets.get("high")) or _to_decimal(info.get("targetHighPrice"))
+    target_mean = _to_decimal(targets.get("mean")) or _to_decimal(primary.get("targetMeanPrice"))
+    target_median = _to_decimal(targets.get("median")) or _to_decimal(
+        primary.get("targetMedianPrice")
+    )
+    target_low = _to_decimal(targets.get("low")) or _to_decimal(primary.get("targetLowPrice"))
+    target_high = _to_decimal(targets.get("high")) or _to_decimal(primary.get("targetHighPrice"))
+    ref_price = current_price
+    if analyst_info is not None:
+        ref_price = (
+            _to_decimal(primary.get("currentPrice") or primary.get("regularMarketPrice"))
+            or current_price
+        )
     target_upside = None
-    if target_mean is not None:
-        target_upside = _to_decimal((target_mean - current_price) / current_price)
+    if target_mean is not None and ref_price > 0:
+        target_upside = _to_decimal((target_mean - ref_price) / ref_price)
+    if analyst_info is not None:
+        analyst_ccy = _normalise_currency(primary.get("currency")) or currency
+        if analyst_ccy != currency:
+            if fx_rates and analyst_ccy in fx_rates and currency in fx_rates:
+                factor = fx_rates[currency] / fx_rates[analyst_ccy]
+                target_mean = _to_decimal(target_mean * factor) if target_mean else None
+                target_median = _to_decimal(target_median * factor) if target_median else None
+                target_low = _to_decimal(target_low * factor) if target_low else None
+                target_high = _to_decimal(target_high * factor) if target_high else None
+            else:
+                target_mean = target_median = target_low = target_high = None
 
-    recommendation = info.get("recommendationKey") or None
-    recommendation_mean = _to_decimal(info.get("recommendationMean"))
-    analyst_count = _to_int(info.get("numberOfAnalystOpinions"))
+    recommendation = primary.get("recommendationKey") or info.get("recommendationKey") or None
+    recommendation_mean = _to_decimal(primary.get("recommendationMean"))
+    analyst_count = _to_int(primary.get("numberOfAnalystOpinions"))
 
     recs = recommendations or {}
     strong_buy = _to_int(recs.get("strongBuy"))
@@ -1347,6 +1388,36 @@ def _income_statement(ticker: Any) -> Any | None:
     return None
 
 
+_NAME_NOISE = frozenset(
+    {"inc", "corp", "corporation", "co", "company", "ltd", "plc", "ag", "se", "nv", "sa", "the"}
+)
+
+
+def _company_stem(name: Any) -> str:
+    words = re.sub(r"[^a-z0-9 ]", " ", str(name or "").lower()).split()
+    return " ".join(w for w in words if w not in _NAME_NOISE)
+
+
+def _same_company(info: Mapping[str, Any], other: Mapping[str, Any]) -> bool:
+    """Guard against a short key that happens to be somebody else's US ticker."""
+    for field in ("longName", "shortName"):
+        a, b = _company_stem(info.get(field)), _company_stem(other.get(field))
+        if a and b and (a == b or a.startswith(b) or b.startswith(a)):
+            return True
+    return False
+
+
+def primary_listing_symbol(import_key: str, price_symbol: str) -> str | None:
+    """The US ticker to ask for analyst data, or None when the held listing is the primary.
+
+    A US company held on Xetra has a plain import key (``AMZN``) and a suffixed
+    price symbol (``AMZ.DE``). A German company has a suffix on both.
+    """
+    if import_key == price_symbol or "." in import_key or "." not in price_symbol:
+        return None
+    return import_key
+
+
 def _price_targets(ticker: Any) -> dict[str, Any] | None:
     with contextlib.suppress(Exception):
         targets = ticker.analyst_price_targets
@@ -1404,6 +1475,29 @@ def sync_all_stock_fundamentals(
                 ticker = yf.Ticker(sym)
                 fast_info = getattr(ticker, "fast_info", None)
                 info = getattr(ticker, "info", None) or {}
+
+                # Yahoo keeps analyst coverage on the primary listing. When we
+                # hold a secondary one and it comes back bare, ask the primary.
+                analyst_ticker = ticker
+                analyst_info = None
+                primary_sym = primary_listing_symbol(key, sym)
+                if primary_sym and info.get("numberOfAnalystOpinions") is None:
+                    candidate = yf.Ticker(primary_sym)
+                    cinfo = getattr(candidate, "info", None) or {}
+                    if cinfo.get("numberOfAnalystOpinions") is not None and _same_company(
+                        info, cinfo
+                    ):
+                        analyst_ticker, analyst_info = candidate, cinfo
+                        log.info("%s: analyst data taken from primary listing %s", key, primary_sym)
+                    elif cinfo:
+                        log.warning(
+                            "%s: %s is not the same company (%s vs %s); primary listing ignored",
+                            key,
+                            primary_sym,
+                            info.get("longName"),
+                            cinfo.get("longName"),
+                        )
+
                 item = parse_raw_stock_info(
                     instrument_id=inst_id,
                     symbol=key,
@@ -1411,10 +1505,11 @@ def sync_all_stock_fundamentals(
                     info=info,
                     fast_info=fast_info,
                     now_iso=now_iso,
-                    recommendations=_current_recommendations(ticker),
-                    price_targets=_price_targets(ticker),
+                    recommendations=_current_recommendations(analyst_ticker),
+                    price_targets=_price_targets(analyst_ticker),
                     fx_rates=fx_rates,
                     income_statement=_income_statement(ticker),
+                    analyst_info=analyst_info,
                 )
                 if item is None:
                     log.warning("%s (%s): Yahoo returned no price; keeping previous row", key, sym)
