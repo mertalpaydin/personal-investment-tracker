@@ -128,6 +128,7 @@ class Candidate:
     #: Shorter windows too. One year alone is a single number about a period
     #: that may have been all of the story or none of it, and with a year of
     #: history it is the only window the longer measures can fill at all.
+    ret_1m: Decimal | None = None
     ret_3m: Decimal | None = None
     ret_6m: Decimal | None = None
     ret_1y: Decimal | None = None
@@ -330,6 +331,7 @@ def _candidate(
         basis=m.basis,
         comparable=comparable,
         observations=m.observations,
+        ret_1m=m.ret_1m,
         ret_3m=m.ret_3m,
         ret_6m=m.ret_6m,
         ret_1y=m.ret_1y,
@@ -504,7 +506,7 @@ def leaderboard(
     *,
     risk_level: int | None = None,
     risk_bucket: str | None = None,
-    top: int = 10,
+    top: int | None = 10,
     as_of: date | None = None,
     include_owned: bool = True,
     min_observations: int = 60,
@@ -573,7 +575,7 @@ def leaderboard(
         )
 
     candidates.sort(key=rank_key)
-    return candidates[:top]
+    return candidates[:top] if top is not None else candidates
 
 
 def _band_words(band: str) -> str:

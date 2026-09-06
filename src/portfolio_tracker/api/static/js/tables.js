@@ -55,11 +55,15 @@ export function sortableTable(columns, items, options = {}) {
     emptyText = "No matching items found.",
     searchable = items.length > 2,
     onRowClick = null,
+    pageSize = null,
+    allowShowAll = true,
   } = options;
 
   let query = "";
   let sortColIndex = columns.findIndex((c) => c.defaultSort);
   let sortDir = sortColIndex >= 0 ? columns[sortColIndex].defaultDir || "asc" : "asc";
+  let activePageSize = pageSize;
+  let currentPage = 1;
 
   // If no defaultSort was specified, check if first column is sortable
   if (sortColIndex < 0 && columns.length && columns[0].sortable !== false) {
@@ -70,6 +74,7 @@ export function sortableTable(columns, items, options = {}) {
   const container = el("div.sortable-table-container");
   const countBadge = el("span.table-count-badge");
   const tbody = el("tbody");
+  const paginationContainer = el("div.table-pagination");
 
   function getCellValue(col, item) {
     if (typeof col.key === "function") return col.key(item);
@@ -128,14 +133,27 @@ export function sortableTable(columns, items, options = {}) {
     if (!sorted.length) {
       const emptyRow = el("tr", el("td", { colspan: columns.length, class: "empty-msg", text: emptyText }));
       tbody.append(emptyRow);
+      paginationContainer.replaceChildren();
       return;
     }
 
-    for (let i = 0; i < sorted.length; i++) {
-      const item = sorted[i];
+    const totalItems = sorted.length;
+    const isPaginated = activePageSize !== null && activePageSize > 0;
+    const totalPages = isPaginated ? Math.max(1, Math.ceil(totalItems / activePageSize)) : 1;
+    if (currentPage > totalPages) currentPage = totalPages;
+    if (currentPage < 1) currentPage = 1;
+
+    const pageItems = isPaginated
+      ? sorted.slice((currentPage - 1) * activePageSize, currentPage * activePageSize)
+      : sorted;
+    const startIdx = isPaginated ? (currentPage - 1) * activePageSize : 0;
+
+    for (let i = 0; i < pageItems.length; i++) {
+      const item = pageItems[i];
+      const actualIndex = startIdx + i;
       const cells = columns.map((col) => {
         if (typeof col.render === "function") {
-          return col.render(item, i);
+          return col.render(item, actualIndex);
         }
         const val = getCellValue(col, item);
         return {
@@ -149,6 +167,65 @@ export function sortableTable(columns, items, options = {}) {
       });
       tbody.append(tr);
     }
+
+    // Render pagination controls if pageSize was specified
+    paginationContainer.replaceChildren();
+    if (pageSize !== null && pageSize > 0) {
+      const startNum = totalItems === 0 ? 0 : startIdx + 1;
+      const endNum = Math.min(startIdx + (activePageSize || totalItems), totalItems);
+      const infoText = el("span.table-pagination-info", {
+        text: isPaginated
+          ? `Showing ${startNum}–${endNum} of ${totalItems} items`
+          : `Showing all ${totalItems} items`,
+      });
+
+      const controls = el("div.table-pagination-controls");
+
+      if (isPaginated && totalPages > 1) {
+        const prevBtn = el("button.table-pagination-btn", {
+          type: "button",
+          text: "← Prev",
+          disabled: currentPage <= 1,
+          onclick: () => {
+            if (currentPage > 1) {
+              currentPage--;
+              renderRows();
+            }
+          },
+        });
+        const pageLabel = el("span.table-pagination-page", {
+          text: `Page ${currentPage} of ${totalPages}`,
+          style: "font-variant-numeric: tabular-nums; padding: 0 0.25rem;",
+        });
+        const nextBtn = el("button.table-pagination-btn", {
+          type: "button",
+          text: "Next →",
+          disabled: currentPage >= totalPages,
+          onclick: () => {
+            if (currentPage < totalPages) {
+              currentPage++;
+              renderRows();
+            }
+          },
+        });
+        controls.append(prevBtn, pageLabel, nextBtn);
+      }
+
+      if (allowShowAll && totalItems > pageSize) {
+        const toggleAllBtn = el("button.table-pagination-btn", {
+          type: "button",
+          text: isPaginated ? `Show All (${totalItems})` : `Show ${pageSize} per page`,
+          onclick: () => {
+            activePageSize = isPaginated ? null : pageSize;
+            currentPage = 1;
+            renderRows();
+          },
+        });
+        controls.append(toggleAllBtn);
+      }
+
+      paginationContainer.append(infoText, controls);
+    }
   }
 
   function createHeader() {
@@ -161,7 +238,17 @@ export function sortableTable(columns, items, options = {}) {
         "aria-sort": isCurrentSort ? (sortDir === "asc" ? "ascending" : "descending") : "none",
       });
 
-      const headerContent = el("span.th-content", el("span.th-label", { text: col.label }));
+      const labelEl = el("span.th-label", { text: col.label });
+      if (col.tooltip || col.title) {
+        const infoEl = el("span.th-info", {
+          text: " ⓘ",
+          title: col.tooltip || col.title,
+          style: "cursor: help; opacity: 0.7; font-size: 0.85em; margin-left: 2px;",
+        });
+        labelEl.append(infoEl);
+      }
+
+      const headerContent = el("span.th-content", labelEl);
 
       if (isSortable) {
         const sortIndicator = el("span.sort-icon", {
@@ -171,7 +258,7 @@ export function sortableTable(columns, items, options = {}) {
         headerContent.append(sortIndicator);
 
         th.style.cursor = "pointer";
-        th.title = `Sort by ${col.label}`;
+        th.title = (col.tooltip || col.title) ? `Sort by ${col.label} — ${col.tooltip || col.title}` : `Sort by ${col.label}`;
         th.addEventListener("click", () => {
           if (sortColIndex === index) {
             sortDir = sortDir === "asc" ? "desc" : "asc";
@@ -179,6 +266,7 @@ export function sortableTable(columns, items, options = {}) {
             sortColIndex = index;
             sortDir = col.defaultDir || (col.type === "num" || col.type === "pct" ? "desc" : "asc");
           }
+          currentPage = 1;
           // Update headers aria-sort and icons
           const thElements = tr.querySelectorAll("th");
           thElements.forEach((otherTh, otherIndex) => {
@@ -199,6 +287,8 @@ export function sortableTable(columns, items, options = {}) {
           });
           renderRows();
         });
+      } else if (col.tooltip || col.title) {
+        th.title = col.tooltip || col.title;
       }
 
       th.append(headerContent);
@@ -216,6 +306,7 @@ export function sortableTable(columns, items, options = {}) {
     });
     searchInput.addEventListener("input", (e) => {
       query = e.target.value;
+      currentPage = 1;
       renderRows();
     });
 
@@ -230,6 +321,10 @@ export function sortableTable(columns, items, options = {}) {
   const tableElement = el("table.data-table", createHeader(), tbody);
   const wrap = el("div.wrap", tableElement);
   container.append(wrap);
+
+  if (pageSize !== null && pageSize > 0) {
+    container.append(paginationContainer);
+  }
 
   renderRows();
   return container;

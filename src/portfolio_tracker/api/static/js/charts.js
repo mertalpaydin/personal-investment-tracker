@@ -197,9 +197,6 @@ export function timeChart(container, opts) {
         ctx.moveTo(u.bbox.left, yPos);
         ctx.lineTo(u.bbox.left + u.bbox.width, yPos);
         ctx.stroke();
-        ctx.fillStyle = "rgba(239, 68, 68, 0.9)";
-        ctx.font = "600 11px system-ui, -apple-system, sans-serif";
-        ctx.fillText("100 (Base)", u.bbox.left + 8, yPos - 5);
         ctx.restore();
       }
     };

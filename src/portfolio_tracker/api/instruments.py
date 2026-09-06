@@ -393,6 +393,7 @@ def _candidate_json(c: peers.Candidate) -> dict[str, Any]:
         "basis": c.basis,
         "comparable": c.comparable,
         "observations": c.observations,
+        "ret_1m": _num(c.ret_1m),
         "ret_3m": _num(c.ret_3m),
         "ret_6m": _num(c.ret_6m),
         "ret_1y": _num(c.ret_1y),
@@ -437,7 +438,7 @@ def peer_leaderboard(
     conn: sqlite3.Connection = Depends(get_db),
     risk_level: int | None = Query(None, ge=1, le=7),
     risk_bucket: str | None = Query(None),
-    top: int = Query(10, ge=1, le=50),
+    top: int = Query(500, ge=1, le=1000),
     include_owned: bool = Query(True, alias="owned"),
 ) -> dict[str, Any]:
     """Top-performing instruments by risk group, ranked by Sharpe and returns."""

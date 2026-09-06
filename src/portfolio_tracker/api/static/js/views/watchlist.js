@@ -64,8 +64,8 @@ export async function render() {
     watchlist: get("/api/watchlist"),
     positions: get("/api/positions"),
     universe: get("/api/universe"),
-    // Everything the tool can price, without computing 256 expensive metrics
-    everything: get("/api/watchlist", { all: true, metrics: false }),
+    // Everything the tool can price, with metrics for performance comparisons
+    everything: get("/api/watchlist", { all: true, metrics: true }),
   });
 
   const view = el(
@@ -551,6 +551,15 @@ function catalogueSection(everything) {
   const pool = everything.filter((e) => e.status === "UNIVERSE");
   if (!pool.length) return el("div");
 
+  const tableContainer = el("div");
+
+  // Slider filter state
+  let maxFeeBps = null;
+  let min1yPct = null;
+  let maxRisk = null;
+  let maxVolPct = null;
+  let minSharpe = null;
+
   const columns = [
     {
       label: "Ticker",
@@ -585,6 +594,59 @@ function catalogueSection(everything) {
       render: (e) => ({
         text: e.ter_pct !== null && e.ter_pct !== undefined ? f.pct(e.ter_pct) : (e.ter_bps ? f.bps(e.ter_bps) : "—"),
       }),
+    },
+    {
+      label: "3M",
+      tooltip: "3-month total return",
+      key: (e) => f.num(e.performance?.ret_3m),
+      type: "pct",
+      render: (e) => ({
+        text: f.pct(e.performance?.ret_3m, { sign: true }),
+        cls: f.tone(e.performance?.ret_3m),
+      }),
+    },
+    {
+      label: "6M",
+      tooltip: "6-month total return",
+      key: (e) => f.num(e.performance?.ret_6m),
+      type: "pct",
+      render: (e) => ({
+        text: f.pct(e.performance?.ret_6m, { sign: true }),
+        cls: f.tone(e.performance?.ret_6m),
+      }),
+    },
+    {
+      label: "1Y",
+      tooltip: "1-year total return",
+      key: (e) => f.num(e.performance?.ret_1y),
+      type: "pct",
+      render: (e) => ({
+        text: f.pct(e.performance?.ret_1y, { sign: true }),
+        cls: f.tone(e.performance?.ret_1y),
+      }),
+    },
+    {
+      label: "Volatility",
+      tooltip: "Annualized standard deviation of returns (1-year or 3-year)",
+      key: (e) => f.num(e.performance?.vol_1y ?? e.performance?.vol_3y),
+      type: "pct",
+      render: (e) => {
+        const v = e.performance?.vol_1y ?? e.performance?.vol_3y;
+        return { text: v !== null && v !== undefined ? f.pct(v) : "—" };
+      },
+    },
+    {
+      label: "Sharpe",
+      tooltip: "Sharpe ratio: excess return over risk-free rate divided by volatility. Higher indicates better risk-adjusted return.",
+      key: (e) => f.num(e.performance?.sharpe_3y ?? e.performance?.sharpe_1y),
+      type: "num",
+      render: (e) => {
+        const s = e.performance?.sharpe_3y ?? e.performance?.sharpe_1y;
+        return {
+          text: s !== null && s !== undefined ? Number(s).toFixed(2) : "—",
+          cls: s && Number(s) > 0 ? "gain" : "",
+        };
+      },
     },
     {
       label: "Prices",
@@ -632,10 +694,205 @@ function catalogueSection(everything) {
     },
   ];
 
-  const tableNode = sortableTable(columns, pool, {
-    placeholder: "Search comparison universe tickers, categories, names…",
-    searchKeys: ["instrument", "name", "risk_bucket"],
+  const renderFilteredTable = () => {
+    const filtered = pool.filter((e) => {
+      if (maxFeeBps !== null && (e.ter_bps === null || e.ter_bps === undefined || e.ter_bps > maxFeeBps)) {
+        return false;
+      }
+      if (min1yPct !== null) {
+        const ret1y = e.performance?.ret_1y;
+        if (ret1y === null || ret1y === undefined || Number(ret1y) < min1yPct / 100) {
+          return false;
+        }
+      }
+      if (maxRisk !== null && ((e.risk_level || 4) > maxRisk)) {
+        return false;
+      }
+      if (maxVolPct !== null) {
+        const v = e.performance?.vol_1y ?? e.performance?.vol_3y;
+        if (v === null || v === undefined || Number(v) > maxVolPct / 100) {
+          return false;
+        }
+      }
+      if (minSharpe !== null) {
+        const s = e.performance?.sharpe_3y ?? e.performance?.sharpe_1y;
+        if (s === null || s === undefined || Number(s) < minSharpe) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    const tableNode = sortableTable(columns, filtered, {
+      placeholder: "Search comparison universe tickers, categories, names…",
+      searchKeys: ["instrument", "name", "risk_bucket"],
+      pageSize: 20,
+      allowShowAll: true,
+    });
+    tableContainer.replaceChildren(tableNode);
+  };
+
+  // Create the slider controls
+  const feeBadge = el("span.slider-filter-badge", { text: "Any Fee" });
+  const feeSlider = el("input.slider-range-input", {
+    type: "range",
+    min: "0",
+    max: "100",
+    step: "5",
+    value: "100",
   });
+  feeSlider.addEventListener("input", (ev) => {
+    const val = Number(ev.target.value);
+    if (val >= 100) {
+      maxFeeBps = null;
+      feeBadge.textContent = "Any Fee";
+    } else {
+      maxFeeBps = val;
+      feeBadge.textContent = `≤ ${(val / 100).toFixed(2)}% (${val} bps)`;
+    }
+    renderFilteredTable();
+  });
+
+  const ret1yBadge = el("span.slider-filter-badge", { text: "Any Return" });
+  const ret1ySlider = el("input.slider-range-input", {
+    type: "range",
+    min: "-30",
+    max: "50",
+    step: "5",
+    value: "-30",
+  });
+  ret1ySlider.addEventListener("input", (ev) => {
+    const val = Number(ev.target.value);
+    if (val <= -30) {
+      min1yPct = null;
+      ret1yBadge.textContent = "Any Return";
+    } else {
+      min1yPct = val;
+      ret1yBadge.textContent = `≥ ${val > 0 ? "+" : ""}${val}%`;
+    }
+    renderFilteredTable();
+  });
+
+  const riskBadgeEl = el("span.slider-filter-badge", { text: "All Levels (1–7)" });
+  const riskSlider = el("input.slider-range-input", {
+    type: "range",
+    min: "1",
+    max: "7",
+    step: "1",
+    value: "7",
+  });
+  riskSlider.addEventListener("input", (ev) => {
+    const val = Number(ev.target.value);
+    if (val >= 7) {
+      maxRisk = null;
+      riskBadgeEl.textContent = "All Levels (1–7)";
+    } else {
+      maxRisk = val;
+      riskBadgeEl.textContent = `≤ Level ${val}/7`;
+    }
+    renderFilteredTable();
+  });
+
+  const volBadge = el("span.slider-filter-badge", { text: "Any Volatility" });
+  const volSlider = el("input.slider-range-input", {
+    type: "range",
+    min: "5",
+    max: "45",
+    step: "5",
+    value: "45",
+  });
+  volSlider.addEventListener("input", (ev) => {
+    const val = Number(ev.target.value);
+    if (val >= 45) {
+      maxVolPct = null;
+      volBadge.textContent = "Any Volatility";
+    } else {
+      maxVolPct = val;
+      volBadge.textContent = `≤ ${val}%`;
+    }
+    renderFilteredTable();
+  });
+
+  const sharpeBadge = el("span.slider-filter-badge", { text: "Any Sharpe" });
+  const sharpeSlider = el("input.slider-range-input", {
+    type: "range",
+    min: "-0.5",
+    max: "2.0",
+    step: "0.25",
+    value: "-0.5",
+  });
+  sharpeSlider.addEventListener("input", (ev) => {
+    const val = Number(ev.target.value);
+    if (val <= -0.5) {
+      minSharpe = null;
+      sharpeBadge.textContent = "Any Sharpe";
+    } else {
+      minSharpe = val;
+      sharpeBadge.textContent = `≥ ${val.toFixed(2)}`;
+    }
+    renderFilteredTable();
+  });
+
+  const resetBtn = el("button.small", {
+    type: "button",
+    text: "Reset Sliders",
+    style: "align-self: flex-end; margin-top: auto;",
+    onclick: () => {
+      maxFeeBps = null;
+      min1yPct = null;
+      maxRisk = null;
+      maxVolPct = null;
+      minSharpe = null;
+      feeSlider.value = "100";
+      feeBadge.textContent = "Any Fee";
+      ret1ySlider.value = "-30";
+      ret1yBadge.textContent = "Any Return";
+      riskSlider.value = "7";
+      riskBadgeEl.textContent = "All Levels (1–7)";
+      volSlider.value = "45";
+      volBadge.textContent = "Any Volatility";
+      sharpeSlider.value = "-0.5";
+      sharpeBadge.textContent = "Any Sharpe";
+      renderFilteredTable();
+    },
+  });
+
+  const sliderPanel = el(
+    "div.slider-filter-panel",
+    el(
+      "div.slider-filter-group",
+      el("div.slider-filter-header", el("span", { text: "Max Ongoing Charge" }), feeBadge),
+      feeSlider,
+      el("div.slider-range-labels", el("span", { text: "0%" }), el("span", { text: "0.50%" }), el("span", { text: "Any (>1.0%)" })),
+    ),
+    el(
+      "div.slider-filter-group",
+      el("div.slider-filter-header", el("span", { text: "Min 1-Year Return" }), ret1yBadge),
+      ret1ySlider,
+      el("div.slider-range-labels", el("span", { text: "Any" }), el("span", { text: "+10%" }), el("span", { text: "+50%" })),
+    ),
+    el(
+      "div.slider-filter-group",
+      el("div.slider-filter-header", el("span", { text: "Max Risk Tier (SRI 1–7)" }), riskBadgeEl),
+      riskSlider,
+      el("div.slider-range-labels", el("span", { text: "1 (Low)" }), el("span", { text: "4 (Moderate)" }), el("span", { text: "7 (All)" })),
+    ),
+    el(
+      "div.slider-filter-group",
+      el("div.slider-filter-header", el("span", { text: "Max Volatility" }), volBadge),
+      volSlider,
+      el("div.slider-range-labels", el("span", { text: "5%" }), el("span", { text: "25%" }), el("span", { text: "Any (≥45%)" })),
+    ),
+    el(
+      "div.slider-filter-group",
+      el("div.slider-filter-header", el("span", { text: "Min Sharpe Ratio" }), sharpeBadge),
+      sharpeSlider,
+      el("div.slider-range-labels", el("span", { text: "Any (<0)" }), el("span", { text: "0.75" }), el("span", { text: "+2.0" })),
+    ),
+    resetBtn,
+  );
+
+  renderFilteredTable();
 
   return el(
     "section",
@@ -644,7 +901,8 @@ function catalogueSection(everything) {
       "details.assumptions",
       { open: true },
       el("summary", { text: `${pool.length} instruments in comparison catalogue` }),
-      tableNode,
+      sliderPanel,
+      tableContainer,
     ),
   );
 }
@@ -730,9 +988,26 @@ function comparisonChart(entries, holdings) {
     const allDatesSorted = [...rawDates].sort();
     if (allDatesSorted.length < 2) return;
 
+    // Filter keys that actually have price points
+    const validKeys = keys.filter(
+      (k) => seriesByInstrument[k] && seriesByInstrument[k].length > 0,
+    );
+
+    // When comparing multiple tickers, "All" filter and timeframes longer than
+    // the date a price history is available for one of the compared items must
+    // default to the earliest date where price history is available for all items.
+    let effectiveCutoff = cutoffStr;
+    if (validKeys.length > 1) {
+      const startDates = validKeys.map((k) => seriesByInstrument[k][0].date);
+      const commonStartDate = startDates.reduce((max, d) => (d > max ? d : max), startDates[0]);
+      if (compareRange === "ALL" || !effectiveCutoff || effectiveCutoff < commonStartDate) {
+        effectiveCutoff = commonStartDate;
+      }
+    }
+
     let axis = allDatesSorted;
-    if (cutoffStr) {
-      const idx = axis.findIndex((d) => d >= cutoffStr);
+    if (effectiveCutoff) {
+      const idx = axis.findIndex((d) => d >= effectiveCutoff);
       if (idx !== -1) axis = axis.slice(idx);
     }
     if (axis.length < 2) axis = allDatesSorted;
@@ -744,10 +1019,18 @@ function comparisonChart(entries, holdings) {
       const rawMap = new Map(raw.map((pt) => [pt.date, pt.level]));
       const firstRawDate = raw[0].date;
 
-      // Forward fill across axis so weekly and daily lines plot continuously
+      // Initialize with the most recent price on or before axis[0]
       let lastVal = null;
+      for (let j = raw.length - 1; j >= 0; j--) {
+        if (raw[j].date <= axis[0]) {
+          lastVal = raw[j].level;
+          break;
+        }
+      }
+
+      // Forward fill across axis so weekly and daily lines plot continuously
       const filled = axis.map((d) => {
-        if (d < firstRawDate) return null;
+        if (d < firstRawDate && lastVal === null) return null;
         const current = rawMap.get(d);
         if (current !== null && current !== undefined && Number.isFinite(current)) {
           lastVal = current;
@@ -758,8 +1041,9 @@ function comparisonChart(entries, holdings) {
 
       const indexedData = indexTo100(filled);
       if (indexedData.some((v) => v !== null)) {
+        const longName = loaded[k]?.name || pool.find((p) => p.key === k)?.name || k;
         series.push({
-          label: k,
+          label: longName,
           data: indexedData,
           colour: pal.series[i % pal.series.length],
           width: holdings.some((h) => h.instrument === k) ? 2.4 : 1.8,
@@ -823,7 +1107,7 @@ function comparisonChart(entries, holdings) {
       box,
       el("p.chart-note", {
         text:
-          "All indexed to 100 at the start of the selected window, in euros. Solid line is held, dashed is watched. Red dashed line marks 100 break-even baseline.",
+          "All indexed to 100 at the start of the selected window, in euros. Solid line is held, dashed is watched. Red dashed line marks baseline.",
       }),
     ),
   );
@@ -845,117 +1129,284 @@ function comparisonChart(entries, holdings) {
 function leaderboardSection(onCompare) {
   const container = el("div");
   let activeLevel = 4; // Default to Core Global Equity (Level 4)
+  let currentCandidates = [];
+
+  // Slider filter state for leaderboard
+  let min1yPct = null;
+  let maxVolPct = null;
+  let minSharpe = null;
+
+  const columns = [
+    {
+      label: "Rank & Ticker",
+      key: "instrument",
+      type: "str",
+      render: (c) => ({
+        node: el(
+          "span",
+          el("strong", { text: `#${c._origRank}` }),
+          " ",
+          el("button.linklike", {
+            type: "button",
+            text: c.instrument,
+            title: `Add ${c.instrument} to comparison chart.`,
+            onclick: () => onCompare && onCompare(c.instrument),
+          }),
+          " ",
+          el("span.muted", { text: c.name }),
+        ),
+        cls: "name",
+      }),
+    },
+    {
+      label: "1M",
+      tooltip: "1-month total return",
+      key: (c) => f.num(c.ret_1m),
+      type: "pct",
+      render: (c) => ({ text: f.pct(c.ret_1m, { sign: true }), cls: f.tone(c.ret_1m) }),
+    },
+    {
+      label: "3M",
+      tooltip: "3-month total return",
+      key: (c) => f.num(c.ret_3m),
+      type: "pct",
+      render: (c) => ({ text: f.pct(c.ret_3m, { sign: true }), cls: f.tone(c.ret_3m) }),
+    },
+    {
+      label: "6M",
+      tooltip: "6-month total return",
+      key: (c) => f.num(c.ret_6m),
+      type: "pct",
+      render: (c) => ({ text: f.pct(c.ret_6m, { sign: true }), cls: f.tone(c.ret_6m) }),
+    },
+    {
+      label: "1 Year",
+      tooltip: "1-year total return",
+      key: (c) => f.num(c.ret_1y),
+      type: "pct",
+      render: (c) => ({ text: f.pct(c.ret_1y, { sign: true }), cls: f.tone(c.ret_1y) }),
+    },
+    {
+      label: "3Y Ann.",
+      tooltip: "3-year annualized total return",
+      key: (c) => f.num(c.ret_3y_ann),
+      type: "pct",
+      render: (c) => ({ text: f.pct(c.ret_3y_ann, { sign: true }), cls: f.tone(c.ret_3y_ann) }),
+    },
+    {
+      label: "Volatility",
+      tooltip: "Annualized standard deviation of returns: measures how much the price fluctuates over time. Higher means larger swings and risk.",
+      key: (c) => f.num(c.vol_1y ?? c.vol_3y),
+      type: "pct",
+      render: (c) => ({
+        text: f.pct(c.vol_1y ?? c.vol_3y),
+        title: "Annualized standard deviation: higher values reflect wider price swings.",
+      }),
+    },
+    {
+      label: "Sharpe",
+      tooltip: "Sharpe ratio: excess return over the risk-free rate divided by volatility. Measures return efficiency per unit of risk (>1 is good, >2 is excellent).",
+      key: (c) => f.num(c.sharpe_3y ?? c.sharpe_1y),
+      type: "num",
+      defaultSort: true,
+      defaultDir: "desc",
+      render: (c) => {
+        const sharpeVal = c.sharpe_3y ?? c.sharpe_1y;
+        return {
+          text:
+            sharpeVal !== null && sharpeVal !== undefined ? Number(sharpeVal).toFixed(2) : "—",
+          cls: sharpeVal && Number(sharpeVal) > 0 ? "gain" : "",
+          title: "Sharpe ratio: excess return over risk-free rate divided by volatility. Higher is better.",
+        };
+      },
+    },
+    {
+      label: "Fee",
+      tooltip: "Ongoing charge (TER) in basis points: 20 bps = 0.20% per year",
+      key: (c) => c.ter_bps ?? -1,
+      type: "num",
+      render: (c) => ({
+        text: c.ter_bps === null || c.ter_bps === undefined ? "—" : f.bps(c.ter_bps),
+      }),
+    },
+    {
+      label: "",
+      sortable: false,
+      render: (c) => ({
+        node: el("button.small", {
+          type: "button",
+          text: "Chart",
+          onclick: () => onCompare && onCompare(c.instrument),
+        }),
+      }),
+    },
+  ];
+
+  const renderFilteredCandidates = () => {
+    if (!currentCandidates.length) {
+      container.replaceChildren(
+        el("p.note", { text: `No priced instruments found for Risk Level ${activeLevel}.` }),
+      );
+      return;
+    }
+
+    const filtered = currentCandidates.filter((c) => {
+      if (min1yPct !== null) {
+        if (c.ret_1y === null || c.ret_1y === undefined || Number(c.ret_1y) < min1yPct / 100) {
+          return false;
+        }
+      }
+      if (maxVolPct !== null) {
+        const v = c.vol_1y ?? c.vol_3y;
+        if (v === null || v === undefined || Number(v) > maxVolPct / 100) {
+          return false;
+        }
+      }
+      if (minSharpe !== null) {
+        const s = c.sharpe_3y ?? c.sharpe_1y;
+        if (s === null || s === undefined || Number(s) < minSharpe) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    if (!filtered.length) {
+      container.replaceChildren(
+        el(
+          "div.empty",
+          el("p", {
+            text: `No instruments match the selected return, volatility, or Sharpe filters for Risk Level ${activeLevel}.`,
+          }),
+        ),
+      );
+      return;
+    }
+
+    const tableNode = sortableTable(columns, filtered, {
+      placeholder: `Search Level ${activeLevel} performers…`,
+      searchKeys: ["instrument", "name", "bucket"],
+      pageSize: 10,
+      allowShowAll: true,
+    });
+    container.replaceChildren(tableNode);
+  };
 
   const loadData = async (lvl) => {
     container.replaceChildren(el("p.note", { text: "Loading top performers in risk group…" }));
     try {
-      const res = await get("/api/peers/leaderboard", { risk_level: lvl, top: 10 });
-      const candidates = res.candidates || [];
-      if (!candidates.length) {
-        container.replaceChildren(
-          el("p.note", { text: `No priced instruments found for Risk Level ${lvl}.` }),
-        );
-        return;
-      }
-
-      const columns = [
-        {
-          label: "Rank & Ticker",
-          key: "instrument",
-          type: "str",
-          render: (c, idx) => ({
-            node: el(
-              "span",
-              el("strong", { text: `#${idx + 1}` }),
-              " ",
-              el("button.linklike", {
-                type: "button",
-                text: c.instrument,
-                title: `Add ${c.instrument} to comparison chart.`,
-                onclick: () => onCompare && onCompare(c.instrument),
-              }),
-              " ",
-              el("span.muted", { text: c.name }),
-            ),
-            cls: "name",
-          }),
-        },
-        {
-          label: "Risk",
-          key: (c) => c.risk_level || 0,
-          type: "num",
-          render: (c) => ({ node: riskBadge(c.risk_level) }),
-        },
-        {
-          label: "Category",
-          key: (c) => BUCKET_LABEL[c.bucket] || c.bucket,
-          type: "str",
-          render: (c) => ({ text: BUCKET_LABEL[c.bucket] || c.bucket, cls: "muted" }),
-        },
-        {
-          label: "1 Year",
-          key: (c) => f.num(c.ret_1y),
-          type: "pct",
-          render: (c) => ({ text: f.pct(c.ret_1y, { sign: true }), cls: f.tone(c.ret_1y) }),
-        },
-        {
-          label: "3Y Ann.",
-          key: (c) => f.num(c.ret_3y_ann),
-          type: "pct",
-          render: (c) => ({ text: f.pct(c.ret_3y_ann, { sign: true }), cls: f.tone(c.ret_3y_ann) }),
-        },
-        {
-          label: "Volatility",
-          key: (c) => f.num(c.vol_1y ?? c.vol_3y),
-          type: "pct",
-          render: (c) => ({ text: f.pct(c.vol_1y ?? c.vol_3y) }),
-        },
-        {
-          label: "Sharpe",
-          key: (c) => f.num(c.sharpe_3y ?? c.sharpe_1y),
-          type: "num",
-          defaultSort: true,
-          defaultDir: "desc",
-          render: (c) => {
-            const sharpeVal = c.sharpe_3y ?? c.sharpe_1y;
-            return {
-              text:
-                sharpeVal !== null && sharpeVal !== undefined ? Number(sharpeVal).toFixed(2) : "—",
-              cls: sharpeVal && Number(sharpeVal) > 0 ? "gain" : "",
-              title: "Sharpe ratio: excess return over risk-free rate divided by volatility",
-            };
-          },
-        },
-        {
-          label: "Fee",
-          key: (c) => c.ter_bps ?? -1,
-          type: "num",
-          render: (c) => ({
-            text: c.ter_bps === null || c.ter_bps === undefined ? "—" : f.bps(c.ter_bps),
-          }),
-        },
-        {
-          label: "",
-          sortable: false,
-          render: (c) => ({
-            node: el("button.small", {
-              type: "button",
-              text: "Chart",
-              onclick: () => onCompare && onCompare(c.instrument),
-            }),
-          }),
-        },
-      ];
-
-      const tableNode = sortableTable(columns, candidates, {
-        placeholder: `Search Level ${lvl} performers…`,
-        searchKeys: ["instrument", "name", "bucket"],
+      const res = await get("/api/peers/leaderboard", { risk_level: lvl, top: 500 });
+      currentCandidates = res.candidates || [];
+      currentCandidates.forEach((c, idx) => {
+        c._origRank = idx + 1;
       });
-      container.replaceChildren(tableNode);
+      renderFilteredCandidates();
     } catch (err) {
       container.replaceChildren(el("p.note.bad", { text: err.message }));
     }
   };
+
+  // Slider filter controls
+  const ret1yBadge = el("span.slider-filter-badge", { text: "Any Return" });
+  const ret1ySlider = el("input.slider-range-input", {
+    type: "range",
+    min: "-30",
+    max: "50",
+    step: "5",
+    value: "-30",
+  });
+  ret1ySlider.addEventListener("input", (ev) => {
+    const val = Number(ev.target.value);
+    if (val <= -30) {
+      min1yPct = null;
+      ret1yBadge.textContent = "Any Return";
+    } else {
+      min1yPct = val;
+      ret1yBadge.textContent = `≥ ${val > 0 ? "+" : ""}${val}%`;
+    }
+    renderFilteredCandidates();
+  });
+
+  const volBadge = el("span.slider-filter-badge", { text: "Any Volatility" });
+  const volSlider = el("input.slider-range-input", {
+    type: "range",
+    min: "5",
+    max: "45",
+    step: "5",
+    value: "45",
+  });
+  volSlider.addEventListener("input", (ev) => {
+    const val = Number(ev.target.value);
+    if (val >= 45) {
+      maxVolPct = null;
+      volBadge.textContent = "Any Volatility";
+    } else {
+      maxVolPct = val;
+      volBadge.textContent = `≤ ${val}%`;
+    }
+    renderFilteredCandidates();
+  });
+
+  const sharpeBadge = el("span.slider-filter-badge", { text: "Any Sharpe" });
+  const sharpeSlider = el("input.slider-range-input", {
+    type: "range",
+    min: "-0.5",
+    max: "2.0",
+    step: "0.25",
+    value: "-0.5",
+  });
+  sharpeSlider.addEventListener("input", (ev) => {
+    const val = Number(ev.target.value);
+    if (val <= -0.5) {
+      minSharpe = null;
+      sharpeBadge.textContent = "Any Sharpe";
+    } else {
+      minSharpe = val;
+      sharpeBadge.textContent = `≥ ${val.toFixed(2)}`;
+    }
+    renderFilteredCandidates();
+  });
+
+  const resetBtn = el("button.small", {
+    type: "button",
+    text: "Reset Sliders",
+    style: "align-self: flex-end; margin-top: auto;",
+    onclick: () => {
+      min1yPct = null;
+      maxVolPct = null;
+      minSharpe = null;
+      ret1ySlider.value = "-30";
+      ret1yBadge.textContent = "Any Return";
+      volSlider.value = "45";
+      volBadge.textContent = "Any Volatility";
+      sharpeSlider.value = "-0.5";
+      sharpeBadge.textContent = "Any Sharpe";
+      renderFilteredCandidates();
+    },
+  });
+
+  const sliderPanel = el(
+    "div.slider-filter-panel",
+    el(
+      "div.slider-filter-group",
+      el("div.slider-filter-header", el("span", { text: "Min 1-Year Return" }), ret1yBadge),
+      ret1ySlider,
+      el("div.slider-range-labels", el("span", { text: "Any" }), el("span", { text: "+10%" }), el("span", { text: "+50%" })),
+    ),
+    el(
+      "div.slider-filter-group",
+      el("div.slider-filter-header", el("span", { text: "Max Volatility" }), volBadge),
+      volSlider,
+      el("div.slider-range-labels", el("span", { text: "5%" }), el("span", { text: "25%" }), el("span", { text: "Any (≥45%)" })),
+    ),
+    el(
+      "div.slider-filter-group",
+      el("div.slider-filter-header", el("span", { text: "Min Sharpe Ratio" }), sharpeBadge),
+      sharpeSlider,
+      el("div.slider-range-labels", el("span", { text: "Any (<0)" }), el("span", { text: "0.75" }), el("span", { text: "+2.0" })),
+    ),
+    resetBtn,
+  );
 
   const nav = el(
     "div.chips",
@@ -995,6 +1446,7 @@ function leaderboardSection(onCompare) {
         "Tickers with at least 1 year of history are fully supported.",
     }),
     nav,
+    sliderPanel,
     container,
   );
 }

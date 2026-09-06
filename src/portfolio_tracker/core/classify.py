@@ -235,6 +235,26 @@ def suggest(import_key: str, name: str | None, asset_class: str | None) -> Sugge
         for pattern in patterns:
             if pattern in text:
                 level = DEFAULT_RISK_LEVEL.get(bucket, 4)
+                if (
+                    bucket == "BOND"
+                    and any(
+                        sp in text
+                        for sp in (
+                            "0-1",
+                            "1-3",
+                            "0-3",
+                            "1-5",
+                            "short",
+                            "ultrashort",
+                            "ultra short",
+                            "ultra-short",
+                        )
+                    )
+                    and not any(
+                        lp in text for lp in ("10-15", "10-20", "20+", "long", "7-10", "15+")
+                    )
+                ):
+                    level = 2
                 return Suggestion(
                     import_key, bucket, why, risk_level=level, matched=pattern.strip()
                 )

@@ -888,3 +888,99 @@ td.empty-msg {
 .theme-toggle:focus-visible {
   outline: 2px solid var(--accent);
 }
+
+/* -------------------------------------------------- table pagination & slider filters */
+
+.table-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.75rem 0.25rem;
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+}
+
+.table-pagination-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.table-pagination-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.table-pagination-btn:hover:not(:disabled) {
+  background: var(--bg-sunken);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.table-pagination-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.slider-filter-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.25rem;
+  padding: 1rem 1.25rem;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-bottom: 1rem;
+}
+
+.slider-filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.slider-filter-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.slider-filter-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.slider-range-input {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.slider-range-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
