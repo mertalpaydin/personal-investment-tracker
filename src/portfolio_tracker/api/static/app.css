@@ -1057,36 +1057,30 @@ td.empty-msg {
   white-space: nowrap;
 }
 
-/* A table that fits the page width: cells wrap instead of the page scrolling
-   sideways. Figures stay on one line; words may break. Overflow is left
-   visible so the hover bubbles are not clipped. */
+/* A table that fits the page width: columns size to their content, long text
+   wraps instead of the page scrolling sideways. Overflow is left visible so
+   the hover bubbles are not clipped. */
 .fit-table .wrap,
 .fit-table .sortable-table-container { overflow: visible; }
-.fit-table table { table-layout: fixed; width: 100%; }
+.fit-table table { width: 100%; table-layout: auto; }
 .fit-table th,
-.fit-table td {
-  white-space: normal;
-  overflow-wrap: anywhere;
-  padding: 0.45rem 0.4rem;
-  vertical-align: top;
-}
+.fit-table td { padding: 0.45rem 0.5rem; vertical-align: middle; }
+.fit-table th { white-space: normal; }
+.fit-table td.name,
+.fit-table td.prose { white-space: normal; overflow-wrap: anywhere; }
+.fit-table td.name { max-width: 16rem; overflow: visible; text-overflow: clip; }
 .fit-table td.num { white-space: nowrap; }
-.fit-table td.name { max-width: none; overflow: visible; text-overflow: clip; }
-.fit-table .tag { white-space: normal; }
-
-/* Bargain Finder columns: Ticker, Name, Sector, Fwd P/E, P/B, FCF, vs 52W,
-   Upside, Analysts, Value, Quality. */
-.bargain-finder th:nth-child(1), .bargain-finder td:nth-child(1) { width: 8%; }
-.bargain-finder th:nth-child(2), .bargain-finder td:nth-child(2) { width: 16%; }
-.bargain-finder th:nth-child(3), .bargain-finder td:nth-child(3) { width: 11%; }
-.bargain-finder th:nth-child(4), .bargain-finder td:nth-child(4) { width: 7%; }
-.bargain-finder th:nth-child(5), .bargain-finder td:nth-child(5) { width: 6%; }
-.bargain-finder th:nth-child(6), .bargain-finder td:nth-child(6) { width: 8%; }
-.bargain-finder th:nth-child(7), .bargain-finder td:nth-child(7) { width: 8%; }
-.bargain-finder th:nth-child(8), .bargain-finder td:nth-child(8) { width: 8%; }
-.bargain-finder th:nth-child(9), .bargain-finder td:nth-child(9) { width: 10%; }
-.bargain-finder th:nth-child(10), .bargain-finder td:nth-child(10) { width: 10%; }
-.bargain-finder th:nth-child(11), .bargain-finder td:nth-child(11) { width: 8%; }
+/* Score chips: readable, on one line. */
+.fit-table .tag[class*="badge-"],
+.fit-table .tag[class*="quality-"] {
+  font-size: 0.85rem;
+  padding: 0.15rem 0.55rem;
+  white-space: nowrap;
+}
+/* Action buttons: keep together, wrap onto a second line rather than squeeze. */
+.fit-table td:last-child > span { flex-wrap: wrap; justify-content: flex-end; }
+.fit-table td:last-child button,
+.fit-table td:last-child a.button { white-space: nowrap; }
 
 /* Hover bubble: the reasoning behind a score, readable, not a browser title. */
 .tip { position: relative; display: inline-block; cursor: help; }
