@@ -230,12 +230,26 @@ def index(
 ) -> dict[str, Any]:
     """Watched instruments, each with how it has actually done."""
     entries = watchlist.listing(conn, include_universe=include_universe)
+    fundamentals = peers.load_fundamentals(conn)
     out: list[dict[str, Any]] = []
     for entry in entries:
         row = conn.execute(
             "SELECT id, currency FROM instrument WHERE import_key = ?", (entry.import_key,)
         ).fetchone()
         body = _entry_json(entry)
+        fund = fundamentals.get(int(row["id"])) if row is not None else None
+        if fund is not None:
+            body["fundamentals"] = {
+                "sector": fund.get("sector"),
+                "value_score": fund.get("value_score"),
+                "value_badge": fund.get("value_badge"),
+                "value_narrative": fund.get("value_narrative"),
+                "quality_score": fund.get("quality_score"),
+                "quality_narrative": fund.get("quality_narrative"),
+                "analyst_count": fund.get("analyst_count"),
+                "buy_pct": _num(fund.get("buy_pct")),
+                "fetched_at": fund.get("fetched_at"),
+            }
         if include_metrics and row is not None and entry.prices:
             body["performance"] = _metrics_json(
                 performance.metrics(
@@ -422,6 +436,8 @@ def _candidate_json(c: peers.Candidate) -> dict[str, Any]:
         "target_upside_pct": _num(c.target_upside_pct),
         "analyst_count": c.analyst_count,
         "buy_pct": _num(c.buy_pct),
+        "quality_score": c.quality_score,
+        "quality_narrative": c.quality_narrative,
         "value_score": c.value_score,
         "value_badge": c.value_badge,
         "value_narrative": c.value_narrative,
@@ -628,6 +644,14 @@ def stock_fundamentals_list(
                 "revenue_growth": _num(item.revenue_growth),
                 "financial_currency": item.financial_currency,
                 "data_points": item.data_points,
+                "quality_score": item.quality_score,
+                "quality_narrative": item.quality_narrative,
+                "revenue_cagr_3y": _num(item.revenue_cagr_3y),
+                "revenue_up_years": item.revenue_up_years,
+                "income_up_years": item.income_up_years,
+                "years_reported": item.years_reported,
+                "vol_1y": _num(item.vol_1y),
+                "max_dd_3y": _num(item.max_dd_3y),
                 "value_score": item.value_score,
                 "value_badge": item.value_badge,
                 "value_narrative": item.value_narrative,

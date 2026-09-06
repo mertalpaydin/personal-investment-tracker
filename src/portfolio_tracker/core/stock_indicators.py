@@ -18,6 +18,7 @@ expensive sector's cheapest member still does not get full marks.
 from __future__ import annotations
 
 import contextlib
+import itertools
 import logging
 import sqlite3
 from collections.abc import Mapping
@@ -96,11 +97,23 @@ _DB_COLUMNS = (
     "value_score",
     "value_badge",
     "value_narrative",
+    "quality_score",
+    "quality_narrative",
+    "revenue_cagr_3y",
+    "revenue_up_years",
+    "income_up_years",
+    "years_reported",
+    "vol_1y",
+    "max_dd_3y",
     "fetched_at",
 )
 
 _INT_COLUMNS = frozenset(
     {
+        "quality_score",
+        "revenue_up_years",
+        "income_up_years",
+        "years_reported",
         "analyst_count",
         "strong_buy",
         "buy",
@@ -120,6 +133,7 @@ _TEXT_COLUMNS = frozenset(
         "recommendation_key",
         "value_badge",
         "value_narrative",
+        "quality_narrative",
         "fetched_at",
     }
 )
@@ -179,6 +193,20 @@ class StockFundamentals:
     value_score: int | None = None
     value_badge: str = "NO_DATA"
     value_narrative: str = ""
+    #: Steady-grower score, 0..100. Growth record, profitability, balance
+    #: sheet and price steadiness. Independent of price: a stock can be a
+    #: high-quality business and expensive at the same time.
+    quality_score: int | None = None
+    quality_narrative: str = ""
+    #: From the annual income statement: compound revenue growth over the
+    #: reported years, and how many of the year-on-year steps were up.
+    revenue_cagr_3y: Decimal | None = None
+    revenue_up_years: int | None = None
+    income_up_years: int | None = None
+    years_reported: int | None = None
+    #: Copied from the price history at scoring time.
+    vol_1y: Decimal | None = None
+    max_dd_3y: Decimal | None = None
     fetched_at: str = ""
 
 
@@ -569,6 +597,210 @@ def calculate_value_score(
     return score, badge, "; ".join(narrative_parts)
 
 
+def calculate_quality_score(
+    *,
+    revenue_growth: Decimal | None,
+    earnings_growth: Decimal | None,
+    revenue_cagr_3y: Decimal | None,
+    revenue_up_years: int | None,
+    income_up_years: int | None,
+    years_reported: int | None,
+    operating_margin: Decimal | None,
+    profit_margin: Decimal | None,
+    return_on_equity: Decimal | None,
+    debt_to_equity: Decimal | None,
+    vol_1y: Decimal | None,
+    max_dd_3y: Decimal | None,
+    sector: str | None = None,
+) -> tuple[int | None, str]:
+    """A 0-100 "steady grower" score, independent of price.
+
+    Blocks (points): growth record 30, profitability 30, balance sheet 15,
+    price steadiness 25. Returns ``(None, reason)`` when fewer than three of
+    the five input groups are known.
+
+    Volatility lives here and not in the Value Score on purpose: "is it cheap"
+    and "is it a steady business" are different questions, and a stock can
+    honestly be both cheap and volatile.
+    """
+    financial = _is_financial(sector)
+    groups_known = sum(
+        1
+        for known in (
+            revenue_cagr_3y is not None or revenue_growth is not None,
+            operating_margin is not None or profit_margin is not None,
+            return_on_equity is not None,
+            debt_to_equity is not None or financial,
+            vol_1y is not None or max_dd_3y is not None,
+        )
+        if known
+    )
+    if groups_known < 3:
+        return None, f"Not enough data to judge quality ({groups_known} of 5 input groups)."
+
+    score = 0
+    notes: list[str] = []
+
+    # 1. Growth record (0 to 30): level, then consistency.
+    growth = revenue_cagr_3y if revenue_cagr_3y is not None else revenue_growth
+    if growth is not None:
+        if growth >= Decimal("0.10"):
+            score += 15
+        elif growth >= Decimal("0.05"):
+            score += 10
+        elif growth >= Decimal("0.0"):
+            score += 5
+        label = "a year over the last years" if revenue_cagr_3y is not None else "latest year"
+        notes.append(f"revenue {'+' if growth >= 0 else ''}{float(growth) * 100:.0f}% {label}")
+    steps = (years_reported or 0) - 1
+    if revenue_up_years is not None and steps > 0:
+        if revenue_up_years == steps:
+            score += 10
+            notes.append(f"revenue up every year for {steps} years")
+        elif revenue_up_years >= steps - 1:
+            score += 6
+        elif revenue_up_years >= 1:
+            score += 2
+    if income_up_years is not None and steps > 0:
+        if income_up_years == steps:
+            score += 5
+        elif income_up_years >= steps - 1:
+            score += 3
+    elif earnings_growth is not None and earnings_growth > 0 and steps <= 0:
+        score += 3
+
+    # 2. Profitability (0 to 30): margin level, earnings that follow, return on equity.
+    if operating_margin is not None:
+        if operating_margin >= Decimal("0.20"):
+            score += 12
+        elif operating_margin >= Decimal("0.10"):
+            score += 8
+        elif operating_margin >= Decimal("0.05"):
+            score += 4
+        notes.append(f"{float(operating_margin) * 100:.0f}% operating margin")
+    if profit_margin is not None:
+        if profit_margin > 0 and (
+            operating_margin is None or profit_margin >= operating_margin * Decimal("0.6")
+        ):
+            score += 8
+        elif profit_margin > 0:
+            score += 4
+        else:
+            notes.append("loss-making")
+    if return_on_equity is not None:
+        if return_on_equity >= Decimal("0.15"):
+            score += 10
+            notes.append(f"{float(return_on_equity) * 100:.0f}% return on equity")
+        elif return_on_equity >= Decimal("0.10"):
+            score += 6
+        elif return_on_equity > 0:
+            score += 3
+
+    # 3. Balance sheet (0 to 15).
+    if financial:
+        score += 8  # leverage is the business model; judged elsewhere
+    elif debt_to_equity is not None:
+        if debt_to_equity <= Decimal("50.0"):
+            score += 15
+        elif debt_to_equity <= Decimal("100.0"):
+            score += 10
+        elif debt_to_equity <= Decimal("180.0"):
+            score += 5
+        else:
+            notes.append(f"heavy debt ({float(debt_to_equity):.0f}% D/E)")
+
+    # 4. Price steadiness (0 to 25): how the market has treated it.
+    if vol_1y is not None:
+        if vol_1y <= Decimal("0.20"):
+            score += 15
+            notes.append(f"calm price ({float(vol_1y) * 100:.0f}% volatility)")
+        elif vol_1y <= Decimal("0.30"):
+            score += 10
+        elif vol_1y <= Decimal("0.40"):
+            score += 5
+        else:
+            notes.append(f"volatile ({float(vol_1y) * 100:.0f}% a year)")
+    if max_dd_3y is not None:
+        if max_dd_3y >= Decimal("-0.20"):
+            score += 10
+        elif max_dd_3y >= Decimal("-0.35"):
+            score += 6
+        elif max_dd_3y >= Decimal("-0.50"):
+            score += 2
+        else:
+            notes.append(f"fell {abs(float(max_dd_3y)) * 100:.0f}% at worst in three years")
+
+    score = max(0, min(100, score))
+    if score >= 70:
+        lead = "Steady grower"
+    elif score >= 50:
+        lead = "Decent quality"
+    elif score >= 30:
+        lead = "Mixed quality"
+    else:
+        lead = "Weak quality"
+    return score, "; ".join([lead, *notes])
+
+
+def parse_income_statement(statement: Any) -> dict[str, Any]:
+    """Revenue and net income record from yfinance's annual ``income_stmt``.
+
+    Returns ``revenue_cagr_3y`` (compound growth over the reported span),
+    ``revenue_up_years`` and ``income_up_years`` (how many year-on-year steps
+    were up) and ``years_reported``. Empty dict when the statement is unusable.
+    """
+    out: dict[str, Any] = {}
+    try:
+        if statement is None or len(statement) == 0:
+            return out
+        columns = sorted(statement.columns)  # oldest first
+        if len(columns) < 2:
+            return out
+
+        def series(label: str) -> list[float] | None:
+            if label not in statement.index:
+                return None
+            vals = []
+            for c in columns:
+                v = statement.loc[label, c]
+                if v is None or v != v:
+                    return None
+                vals.append(float(v))
+            return vals
+
+        revenue = series("Total Revenue")
+        income = series("Net Income") or series("Net Income Common Stockholders")
+        out["years_reported"] = len(columns)
+        if revenue and revenue[0] > 0 and revenue[-1] > 0:
+            years = len(revenue) - 1
+            out["revenue_cagr_3y"] = _to_decimal((revenue[-1] / revenue[0]) ** (1 / years) - 1)
+            out["revenue_up_years"] = sum(1 for a, b in itertools.pairwise(revenue) if b > a)
+        if income:
+            out["income_up_years"] = sum(1 for a, b in itertools.pairwise(income) if b > a)
+    except Exception as exc:  # a malformed frame is not worth failing the stock for
+        log.debug("income statement unusable: %s", exc)
+        return {}
+    return out
+
+
+def attach_market_metrics(conn: sqlite3.Connection, items: list[StockFundamentals]) -> None:
+    """Copy one-year volatility and three-year worst fall from the price history."""
+    from portfolio_tracker.core import performance
+
+    for item in items:
+        try:
+            m = performance.metrics(
+                conn, item.instrument_id, import_key=item.symbol, currency=item.currency
+            )
+        except Exception as exc:
+            log.debug("%s: no market metrics: %s", item.symbol, exc)
+            continue
+        if m.vol_1y is not None:
+            item.vol_1y = m.vol_1y
+        if m.max_dd_3y is not None:
+            item.max_dd_3y = m.max_dd_3y
+
+
 def _cheapness_ranks(items: list[StockFundamentals]) -> dict[int, dict[str, Decimal]]:
     """Sector-relative cheapness rank (0..1, 1 = cheapest) per stock and metric.
 
@@ -680,6 +912,21 @@ def apply_score(item: StockFundamentals, relative: Mapping[str, Decimal] | None 
     item.value_score = score
     item.value_badge = badge
     item.value_narrative = narrative
+    item.quality_score, item.quality_narrative = calculate_quality_score(
+        revenue_growth=item.revenue_growth,
+        earnings_growth=item.earnings_growth,
+        revenue_cagr_3y=item.revenue_cagr_3y,
+        revenue_up_years=item.revenue_up_years,
+        income_up_years=item.income_up_years,
+        years_reported=item.years_reported,
+        operating_margin=item.operating_margin,
+        profit_margin=item.profit_margin,
+        return_on_equity=item.return_on_equity,
+        debt_to_equity=item.debt_to_equity,
+        vol_1y=item.vol_1y,
+        max_dd_3y=item.max_dd_3y,
+        sector=item.sector,
+    )
 
 
 def score_universe(items: list[StockFundamentals]) -> None:
@@ -736,6 +983,7 @@ def parse_raw_stock_info(
     recommendations: Mapping[str, Any] | None = None,
     price_targets: Mapping[str, Any] | None = None,
     fx_rates: Mapping[str, Decimal] | None = None,
+    income_statement: Any | None = None,
 ) -> StockFundamentals | None:
     """Parse yfinance ``info`` (plus optional analyst tables) into ``StockFundamentals``.
 
@@ -900,6 +1148,8 @@ def parse_raw_stock_info(
         buy_pct=buy_pct,
         fetched_at=now_iso,
     )
+    for key, value in parse_income_statement(income_statement).items():
+        setattr(item, key, value)
     # Provisional, absolute-only score; `score_universe` refines it once the
     # whole universe is known.
     apply_score(item)
@@ -1040,6 +1290,7 @@ def get_stock_fundamentals(
 def rescore_stock_fundamentals(conn: sqlite3.Connection) -> int:
     """Re-run sector-relative scoring over the stored rows without refetching."""
     items = load_all_stock_fundamentals(conn)
+    attach_market_metrics(conn, items)
     score_universe(items)
     save_stock_fundamentals(conn, items)
     return len(items)
@@ -1087,6 +1338,12 @@ def _current_recommendations(ticker: Any) -> dict[str, Any] | None:
         if row is None:
             row = df.iloc[0]
         return {k: row[k] for k in ("strongBuy", "buy", "hold", "sell", "strongSell") if k in row}
+    return None
+
+
+def _income_statement(ticker: Any) -> Any | None:
+    with contextlib.suppress(Exception):
+        return ticker.income_stmt
     return None
 
 
@@ -1157,6 +1414,7 @@ def sync_all_stock_fundamentals(
                     recommendations=_current_recommendations(ticker),
                     price_targets=_price_targets(ticker),
                     fx_rates=fx_rates,
+                    income_statement=_income_statement(ticker),
                 )
                 if item is None:
                     log.warning("%s (%s): Yahoo returned no price; keeping previous row", key, sym)
@@ -1194,6 +1452,7 @@ def sync_all_stock_fundamentals(
         existing = {s.instrument_id: s for s in load_all_stock_fundamentals(conn)}
         existing.update(fetched)
         universe = list(existing.values())
+        attach_market_metrics(conn, universe)
         score_universe(universe)
         save_stock_fundamentals(conn, universe)
 

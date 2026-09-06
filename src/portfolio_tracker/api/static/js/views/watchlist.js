@@ -348,6 +348,28 @@ function field(label, node, hint = null) {
 
 /* ----------------------------------------------------------------- table */
 
+/** Hover text that is big enough to read: a bubble under the node, not a browser title. */
+export function tip(node, text) {
+  if (!text) return node;
+  return el("span.tip", node, el("span.tip-bubble", { text }));
+}
+
+/** Quality score as a coloured chip; hover shows the reasoning. */
+export function qualityCell(s) {
+  const q = s.quality_score;
+  if (q == null) {
+    return {
+      node: tip(el("span.tag.badge-nodata", { text: "—" }), s.quality_narrative || "No quality data."),
+      cls: "num",
+    };
+  }
+  const cls = q >= 70 ? "quality-high" : q >= 50 ? "quality-mid" : "quality-low";
+  return {
+    node: tip(el(`span.tag.${cls}`, { text: `${q}/100` }), s.quality_narrative),
+    cls: "num",
+  };
+}
+
 function watchTable(entries, basis) {
   if (!entries.length) {
     return el(
@@ -361,25 +383,22 @@ function watchTable(entries, basis) {
     );
   }
 
-  const columns = [
-    {
-      label: "Ticker",
-      key: "instrument",
-      type: "str",
-      render: (e) => ({ node: el("strong", { text: e.instrument }), cls: "name" }),
-    },
-    {
-      label: "Risk",
-      key: (e) => e.risk_level || 0,
-      type: "num",
-      render: (e) => ({ node: riskBadge(e.risk_level) }),
-    },
-    {
-      label: "Name",
-      key: "name",
-      type: "str",
-      render: (e) => ({ text: e.name, cls: "name muted" }),
-    },
+  const etfs = entries.filter((e) => e.asset_class !== "STOCK");
+  const stocks = entries.filter((e) => e.asset_class === "STOCK");
+
+  const tickerCol = {
+    label: "Ticker",
+    key: "instrument",
+    type: "str",
+    render: (e) => ({ node: el("strong", { text: e.instrument }), cls: "name" }),
+  };
+  const riskCol = {
+    label: "Risk",
+    key: (e) => e.risk_level || 0,
+    type: "num",
+    render: (e) => ({ node: riskBadge(e.risk_level) }),
+  };
+  const performanceCols = [
     {
       label: "1 year",
       key: (e) => f.num(e.performance?.ret_1y),
@@ -415,48 +434,122 @@ function watchTable(entries, basis) {
         return { text: f.pct(p.max_dd_3y), cls: p.max_dd_3y ? "loss" : "" };
       },
     },
+  ];
+  const actionsCol = {
+    label: "",
+    sortable: false,
+    render: (e) => {
+      const p = e.performance || {};
+      return {
+        node: el(
+          "span",
+          { style: "display: flex; gap: 0.35rem; align-items: center; justify-content: flex-end;" },
+          e.prices === 0 ? el("span.tag.warn", { text: "no prices yet" }) : null,
+          p.basis === "PRICE"
+            ? el("span.tag.warn", { text: "price only", title: (p.caveats || [])[0] })
+            : null,
+          el("button.small", {
+            type: "button",
+            text: "Chart",
+            title: `Add ${e.instrument} to the comparison chart above.`,
+            onclick: () => addToComparison(e.instrument),
+          }),
+          buyButton(e),
+          removeButton(e),
+        ),
+      };
+    },
+  };
+
+  const etfColumns = [
+    tickerCol,
+    riskCol,
+    {
+      label: "Name",
+      key: "name",
+      type: "str",
+      render: (e) => ({ text: e.name, cls: "name muted" }),
+    },
+    ...performanceCols,
     {
       label: "Fee",
       key: (e) => e.ter_bps ?? -1,
       type: "num",
       render: (e) => ({ node: terCell(e) }),
     },
-    {
-      label: "",
-      sortable: false,
-      render: (e) => {
-        const p = e.performance || {};
-        return {
-          node: el(
-            "span",
-            { style: "display: flex; gap: 0.35rem; align-items: center; justify-content: flex-end;" },
-            e.prices === 0 ? el("span.tag.warn", { text: "no prices yet" }) : null,
-            p.basis === "PRICE"
-              ? el("span.tag.warn", { text: "price only", title: (p.caveats || [])[0] })
-              : null,
-            el("button.small", {
-              type: "button",
-              text: "Chart",
-              title: `Add ${e.instrument} to the comparison chart above.`,
-              onclick: () => addToComparison(e.instrument),
-            }),
-            buyButton(e),
-            removeButton(e),
-          ),
-        };
-      },
-    },
+    actionsCol,
   ];
 
-  const tableNode = sortableTable(columns, entries, {
-    placeholder: "Search watched tickers, names…",
-    searchKeys: ["instrument", "name", "risk_bucket"],
-  });
+  // Stocks: no fee to show, but a valuation and a quality verdict. The
+  // narratives sit behind a hover on the name and on each score.
+  const fund = (e) => e.fundamentals || {};
+  const stockColumns = [
+    tickerCol,
+    riskCol,
+    {
+      label: "Name",
+      key: "name",
+      type: "str",
+      render: (e) => {
+        const fd = fund(e);
+        const text = [fd.value_narrative, fd.quality_narrative].filter(Boolean).join("\n\n");
+        return { node: tip(el("span", { text: e.name }), text), cls: "name muted" };
+      },
+    },
+    {
+      label: "Sector",
+      key: (e) => fund(e).sector || "",
+      type: "str",
+      render: (e) => ({ text: fund(e).sector || "—", cls: "prose muted" }),
+    },
+    ...performanceCols,
+    {
+      label: "Value",
+      tooltip: "Value Score 0-100: how cheap the stock is against its own sector and in absolute terms. Hover a score for the reasons.",
+      key: (e) => fund(e).value_score ?? -1,
+      type: "num",
+      render: (e) => {
+        const fd = fund(e);
+        return { node: tip(valueScoreBadge(fd.value_score, fd.value_badge), fd.value_narrative) };
+      },
+    },
+    {
+      label: "Quality",
+      tooltip: "Quality Score 0-100: growth record, profitability, balance sheet and price steadiness. Independent of price.",
+      key: (e) => fund(e).quality_score ?? -1,
+      type: "num",
+      render: (e) => qualityCell(fund(e)),
+    },
+    actionsCol,
+  ];
+
+  const group = (title, rows, columns, emptyText, extraCls = "") =>
+    el(
+      `section${extraCls}`,
+      heading(title),
+      rows.length
+        ? sortableTable(columns, rows, {
+            placeholder: "Search watched tickers, names…",
+            searchKeys: ["instrument", "name", "risk_bucket"],
+          })
+        : el("p.note", { text: emptyText }),
+    );
 
   return el(
-    "section",
-    heading("Being watched"),
-    tableNode,
+    "div",
+    group(
+      "Watched ETFs & funds",
+      etfs,
+      etfColumns,
+      "No ETFs or funds on the watchlist yet.",
+    ),
+    group(
+      "Watched stocks",
+      stocks,
+      stockColumns,
+      "No single stocks on the watchlist yet.",
+      ".fit-table",
+    ),
     basis ? el("p.note", { text: basis }) : null,
   );
 }
@@ -1709,7 +1802,8 @@ function stockCandidateRow(c, { yours = false, onCompare = null } = {}) {
       cls: c.target_upside_pct != null && c.target_upside_pct > 0 ? "gain num" : "num",
     },
     analystCell(c),
-    { node: valueScoreBadge(c.value_score, c.value_badge) },
+    { node: tip(valueScoreBadge(c.value_score, c.value_badge), c.value_narrative) },
+    qualityCell(c),
   ]);
 }
 
@@ -1722,7 +1816,7 @@ export function stockMarket(symbol) {
 }
 
 export function stockBargainFinderSection(onCompare) {
-  const container = el("section.bargain-finder");
+  const container = el("section.bargain-finder.fit-table");
 
   const refreshBtn = el("button.small", {
     type: "button",
@@ -1740,7 +1834,7 @@ export function stockBargainFinderSection(onCompare) {
       "div",
       heading("Stock Bargain Finder — Undervalued & Pullback Opportunities"),
       el("p.sub", {
-        text: "Scan and filter single stocks across the universe by valuation multiples (Forward P/E, FCF Yield, P/B), discount from 52-week highs, and analyst consensus. Multiples are judged against the stock's own sector as well as in absolute terms.",
+        text: "Scan and filter single stocks across the universe by valuation (Forward P/E, FCF Yield, P/B, 52-week discount, analyst consensus) and by quality (growth record, profitability, balance sheet, price steadiness). Hover a name or a score to read the reasoning.",
       }),
     ),
     el(
@@ -1814,6 +1908,15 @@ export function stockBargainFinderSection(onCompare) {
     let selectedSector = "";
     let selectedBadge = "";
     let selectedMarket = "";
+    let currentView = "value";
+
+    // Two ways to read the same table: cheapest first, or steadiest first
+    // among those that are at least fairly priced.
+    const viewSelect = el(
+      "select",
+      el("option", { value: "value", text: "🏷️ Bargains — cheapest first" }),
+      el("option", { value: "qarp", text: "🌱 Quality at a fair price — steadiest first, Value ≥ 40" }),
+    );
 
     const marketSelect = el(
       "select",
@@ -1853,9 +1956,12 @@ export function stockBargainFinderSection(onCompare) {
     const fcfSlider = el("input.slider-range-input", { type: "range", min: "0", max: "12", step: "1", value: "0" });
     const fcfBadge = el("span.slider-filter-badge", { text: "Any" });
 
+    const qualitySlider = el("input.slider-range-input", { type: "range", min: "0", max: "90", step: "10", value: "0" });
+    const qualityBadge = el("span.slider-filter-badge", { text: "Any" });
+
     const tableWrap = el("div.wrap");
 
-    const columns = [
+    const columns = () => [
       {
         label: "Ticker",
         key: "symbol",
@@ -1877,7 +1983,13 @@ export function stockBargainFinderSection(onCompare) {
         label: "Name",
         key: "name",
         cls: "name",
-        render: (s) => ({ text: s.name, cls: "name" }),
+        render: (s) => ({
+          node: tip(
+            el("span", { text: s.name }),
+            [s.value_narrative, s.quality_narrative].filter(Boolean).join("\n\n"),
+          ),
+          cls: "name",
+        }),
       },
       {
         label: "Sector",
@@ -1947,25 +2059,25 @@ export function stockBargainFinderSection(onCompare) {
         tooltip: "Composite value score (0-100): multiples blended with the sector's own range, pullback discount, analyst consensus (3+ analysts, can subtract), dividend when affordable, and solvency. Loss-making or shrinking businesses are capped at 55.",
         key: (s) => s.value_score ?? -1,
         type: "num",
-        defaultSort: true,
+        defaultSort: currentView === "value",
         defaultDir: "desc",
         render: (s) => ({
-          node: valueScoreBadge(s.value_score, s.value_badge),
+          node: tip(valueScoreBadge(s.value_score, s.value_badge), s.value_narrative),
         }),
       },
       {
-        label: "Assessment",
-        key: "value_narrative",
-        sortable: false,
-        render: (s) => ({
-          text: s.value_narrative || "—",
-          cls: "prose small muted",
-        }),
+        label: "Quality",
+        tooltip: "Quality Score 0-100: growth record (multi-year revenue and income), profitability, balance sheet, and price steadiness (volatility, worst fall). Independent of price.",
+        key: (s) => s.quality_score ?? -1,
+        type: "num",
+        defaultSort: currentView === "qarp",
+        defaultDir: "desc",
+        render: (s) => qualityCell(s),
       },
     ];
 
     function renderTable(stocks) {
-      const tbl = sortableTable(columns, stocks, {
+      const tbl = sortableTable(columns(), stocks, {
         placeholder: "Filter stocks by ticker, name, sector...",
         searchKeys: ["symbol", "name", "sector", "value_badge"],
         emptyText: "No stocks match the selected filters.",
@@ -1979,12 +2091,21 @@ export function stockBargainFinderSection(onCompare) {
       const maxPeVal = Number(peSlider.value);
       const minDiscVal = Number(discountSlider.value);
       const minFcfVal = Number(fcfSlider.value);
+      const minQualityVal = Number(qualitySlider.value);
+      qualityBadge.textContent = minQualityVal === 0 ? "Any" : `≥ ${minQualityVal}`;
 
       peBadge.textContent = maxPeVal >= 60 ? "Any P/E" : `≤ ${maxPeVal}x`;
       discountBadge.textContent = minDiscVal === 0 ? "Any" : `≥ ${minDiscVal}% off`;
       fcfBadge.textContent = minFcfVal === 0 ? "Any" : `≥ ${minFcfVal}%`;
 
       const filtered = allStocks.filter((s) => {
+        if (currentView === "qarp") {
+          if (s.quality_score == null) return false;
+          if (s.value_score == null || s.value_score < 40) return false;
+        }
+        if (minQualityVal > 0 && (s.quality_score == null || s.quality_score < minQualityVal)) {
+          return false;
+        }
         if (selectedMarket && stockMarket(s.symbol) !== selectedMarket) return false;
         if (selectedSector && s.sector !== selectedSector) return false;
         if (selectedBadge === "CONTRARIAN" && s.value_badge !== "CONTRARIAN") return false;
@@ -2015,6 +2136,8 @@ export function stockBargainFinderSection(onCompare) {
       renderTable(filtered);
     }
 
+    viewSelect.onchange = (e) => { currentView = e.target.value; update(); };
+    qualitySlider.oninput = () => update();
     marketSelect.onchange = (e) => { selectedMarket = e.target.value; update(); };
     sectorSelect.onchange = (e) => { selectedSector = e.target.value; update(); };
     badgeSelect.onchange = (e) => { selectedBadge = e.target.value; update(); };
@@ -2024,6 +2147,11 @@ export function stockBargainFinderSection(onCompare) {
 
     const controls = el(
       "div.slider-filter-panel",
+      el(
+        "div.slider-filter-group",
+        el("div.slider-filter-header", el("span", { text: "View" })),
+        viewSelect,
+      ),
       el(
         "div.slider-filter-group",
         el("div.slider-filter-header", el("span", { text: "Market" })),
@@ -2057,6 +2185,12 @@ export function stockBargainFinderSection(onCompare) {
         fcfSlider,
         el("div.slider-range-labels", el("span", { text: "Any" }), el("span", { text: "12%" })),
       ),
+      el(
+        "div.slider-filter-group",
+        el("div.slider-filter-header", el("span", { text: "Min Quality Score" }), qualityBadge),
+        qualitySlider,
+        el("div.slider-range-labels", el("span", { text: "Any" }), el("span", { text: "90" })),
+      ),
     );
 
     slot.replaceChildren(controls, tableWrap);
@@ -2082,7 +2216,7 @@ function scanPanel(scan, onCompare) {
     if (isStock && activeMode === "value") {
       const stockCols = [
         "Instrument", "Sector", "Fwd P/E", "P/B", "EV/EBITDA", "FCF Yield",
-        "vs 52W High", "Target Upside", "Analysts", "Value Assessment"
+        "vs 52W High", "Target Upside", "Analysts", "Value", "Quality"
       ];
       tableWrap.replaceChildren(
         el(

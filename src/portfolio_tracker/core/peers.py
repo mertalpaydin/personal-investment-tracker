@@ -163,6 +163,8 @@ class Candidate:
     target_upside_pct: Decimal | None = None
     analyst_count: int | None = None
     buy_pct: Decimal | None = None
+    quality_score: int | None = None
+    quality_narrative: str | None = None
     value_score: int | None = None
     value_badge: str | None = None
     value_narrative: str | None = None
@@ -400,6 +402,12 @@ def _candidate(
             else None
         )
         out.buy_pct = _to_dec(fundamentals.get("buy_pct"))
+        out.quality_score = (
+            int(fundamentals["quality_score"])
+            if fundamentals.get("quality_score") is not None
+            else None
+        )
+        out.quality_narrative = fundamentals.get("quality_narrative")
         out.value_score = (
             int(fundamentals["value_score"])
             if fundamentals.get("value_score") is not None

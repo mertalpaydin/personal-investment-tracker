@@ -369,6 +369,159 @@ def test_consensus_mean_from_counts_when_yahoo_omits_it():
     assert si.consensus_mean(StockFundamentals(1, "X", "X")) is None
 
 
+# ---------------------------------------------------------------- quality
+
+
+STEADY = dict(
+    revenue_growth=Decimal("0.08"),
+    earnings_growth=Decimal("0.12"),
+    revenue_cagr_3y=Decimal("0.11"),
+    revenue_up_years=3,
+    income_up_years=3,
+    years_reported=4,
+    operating_margin=Decimal("0.24"),
+    profit_margin=Decimal("0.18"),
+    return_on_equity=Decimal("0.22"),
+    debt_to_equity=Decimal("40"),
+    vol_1y=Decimal("0.18"),
+    max_dd_3y=Decimal("-0.15"),
+)
+
+
+def test_quality_score_steady_grower_is_100():
+    score, narrative = si.calculate_quality_score(**STEADY)
+    assert score == 100
+    assert narrative.startswith("Steady grower")
+    assert "revenue up every year for 3 years" in narrative
+    assert "calm price" in narrative
+
+
+def test_quality_score_penalises_volatility_and_losses():
+    score, narrative = si.calculate_quality_score(
+        **{
+            **STEADY,
+            "profit_margin": Decimal("-0.05"),
+            "vol_1y": Decimal("0.55"),
+            "max_dd_3y": Decimal("-0.62"),
+            "revenue_up_years": 1,
+            "income_up_years": 0,
+        }
+    )
+    assert score is not None and score < 60
+    assert "loss-making" in narrative
+    assert "volatile (55% a year)" in narrative
+    assert "fell 62% at worst" in narrative
+
+
+def test_quality_score_needs_three_input_groups():
+    score, narrative = si.calculate_quality_score(
+        revenue_growth=None,
+        earnings_growth=None,
+        revenue_cagr_3y=None,
+        revenue_up_years=None,
+        income_up_years=None,
+        years_reported=None,
+        operating_margin=Decimal("0.1"),
+        profit_margin=None,
+        return_on_equity=None,
+        debt_to_equity=None,
+        vol_1y=Decimal("0.2"),
+        max_dd_3y=None,
+    )
+    assert score is None
+    assert "2 of 5" in narrative
+
+
+def test_quality_score_financials_skip_leverage():
+    bank, _ = si.calculate_quality_score(
+        **{**STEADY, "debt_to_equity": Decimal("900")}, sector="Financial Services"
+    )
+    industrial, _ = si.calculate_quality_score(**{**STEADY, "debt_to_equity": Decimal("900")})
+    assert bank is not None and industrial is not None
+    assert bank > industrial
+
+
+def test_parse_income_statement():
+    pd = pytest.importorskip("pandas")
+    cols = [
+        pd.Timestamp("2025-12-31"),
+        pd.Timestamp("2024-12-31"),
+        pd.Timestamp("2023-12-31"),
+        pd.Timestamp("2022-12-31"),
+    ]
+    df = pd.DataFrame(
+        {
+            cols[0]: [133.1, 12.0],
+            cols[1]: [121.0, 9.0],
+            cols[2]: [110.0, 10.0],
+            cols[3]: [100.0, 8.0],
+        },
+        index=["Total Revenue", "Net Income"],
+    )
+    out = si.parse_income_statement(df)
+    assert out["years_reported"] == 4
+    assert out["revenue_up_years"] == 3
+    assert out["income_up_years"] == 2
+    assert out["revenue_cagr_3y"] == Decimal("0.1")
+
+
+def test_parse_income_statement_tolerates_garbage():
+    assert si.parse_income_statement(None) == {}
+    assert si.parse_income_statement("not a frame") == {}
+
+
+def test_apply_score_fills_quality():
+    item = StockFundamentals(1, "X", "X", current_price=Decimal("10"), **STEADY)
+    si.apply_score(item)
+    assert item.quality_score == 100
+    assert item.quality_narrative.startswith("Steady grower")
+
+
+def test_quality_round_trips_through_db(db: sqlite3.Connection):
+    _stock(db, 1, "Q", "Quality Co")
+    item = StockFundamentals(
+        1,
+        "Q",
+        "Quality Co",
+        quality_score=77,
+        quality_narrative="Steady grower",
+        revenue_up_years=3,
+        vol_1y=Decimal("0.19"),
+        fetched_at="t",
+    )
+    save_stock_fundamentals(db, [item])
+    (got,) = get_stock_fundamentals(db, instrument_id=1)
+    assert got.quality_score == 77
+    assert got.revenue_up_years == 3
+    assert got.vol_1y == Decimal("0.19")
+
+
+def test_watchlist_api_carries_stock_scores(client: TestClient, db: sqlite3.Connection):
+    _stock(db, 7, "SAP", "SAP SE")
+    db.execute("UPDATE instrument SET status = 'WATCH' WHERE id = 7")
+    db.commit()
+    save_stock_fundamentals(
+        db,
+        [
+            StockFundamentals(
+                7,
+                "SAP",
+                "SAP SE",
+                sector="Technology",
+                value_score=61,
+                value_badge="FAIR",
+                quality_score=82,
+                quality_narrative="Steady grower",
+                fetched_at="t",
+            )
+        ],
+    )
+    body = client.get("/api/watchlist").json()
+    (entry,) = [e for e in body["watchlist"] if e["instrument"] == "SAP"]
+    assert entry["fundamentals"]["value_score"] == 61
+    assert entry["fundamentals"]["quality_score"] == 82
+
+
 # ---------------------------------------------------------------- universe ranks
 
 

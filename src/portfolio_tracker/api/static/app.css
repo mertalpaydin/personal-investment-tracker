@@ -1057,32 +1057,71 @@ td.empty-msg {
   white-space: nowrap;
 }
 
-/* The Bargain Finder table fits the page width: cells wrap instead of the
-   page scrolling sideways. Figures stay on one line; words may break. */
-.bargain-finder .wrap { overflow-x: visible; }
-.bargain-finder table { table-layout: fixed; width: 100%; font-size: 0.8rem; }
-.bargain-finder th,
-.bargain-finder td {
+/* A table that fits the page width: cells wrap instead of the page scrolling
+   sideways. Figures stay on one line; words may break. Overflow is left
+   visible so the hover bubbles are not clipped. */
+.fit-table .wrap,
+.fit-table .sortable-table-container { overflow: visible; }
+.fit-table table { table-layout: fixed; width: 100%; }
+.fit-table th,
+.fit-table td {
   white-space: normal;
   overflow-wrap: anywhere;
-  padding: 0.4rem 0.35rem;
+  padding: 0.45rem 0.4rem;
   vertical-align: top;
 }
-.bargain-finder th { font-size: 0.68rem; }
-.bargain-finder td.num { white-space: nowrap; }
-.bargain-finder td.name { max-width: none; overflow: visible; text-overflow: clip; }
-.bargain-finder .tag { white-space: normal; }
-.bargain-finder th:nth-child(1), .bargain-finder td:nth-child(1) { width: 7%; }
-.bargain-finder th:nth-child(2), .bargain-finder td:nth-child(2) { width: 12%; }
-.bargain-finder th:nth-child(3), .bargain-finder td:nth-child(3) { width: 9%; }
-.bargain-finder th:nth-child(4), .bargain-finder td:nth-child(4) { width: 6%; }
-.bargain-finder th:nth-child(5), .bargain-finder td:nth-child(5) { width: 5%; }
-.bargain-finder th:nth-child(6), .bargain-finder td:nth-child(6) { width: 6%; }
-.bargain-finder th:nth-child(7), .bargain-finder td:nth-child(7) { width: 7%; }
-.bargain-finder th:nth-child(8), .bargain-finder td:nth-child(8) { width: 7%; }
-.bargain-finder th:nth-child(9), .bargain-finder td:nth-child(9) { width: 9%; }
-.bargain-finder th:nth-child(10), .bargain-finder td:nth-child(10) { width: 11%; }
-.bargain-finder th:nth-child(11), .bargain-finder td:nth-child(11) { width: 21%; }
+.fit-table td.num { white-space: nowrap; }
+.fit-table td.name { max-width: none; overflow: visible; text-overflow: clip; }
+.fit-table .tag { white-space: normal; }
+
+/* Bargain Finder columns: Ticker, Name, Sector, Fwd P/E, P/B, FCF, vs 52W,
+   Upside, Analysts, Value, Quality. */
+.bargain-finder th:nth-child(1), .bargain-finder td:nth-child(1) { width: 8%; }
+.bargain-finder th:nth-child(2), .bargain-finder td:nth-child(2) { width: 16%; }
+.bargain-finder th:nth-child(3), .bargain-finder td:nth-child(3) { width: 11%; }
+.bargain-finder th:nth-child(4), .bargain-finder td:nth-child(4) { width: 7%; }
+.bargain-finder th:nth-child(5), .bargain-finder td:nth-child(5) { width: 6%; }
+.bargain-finder th:nth-child(6), .bargain-finder td:nth-child(6) { width: 8%; }
+.bargain-finder th:nth-child(7), .bargain-finder td:nth-child(7) { width: 8%; }
+.bargain-finder th:nth-child(8), .bargain-finder td:nth-child(8) { width: 8%; }
+.bargain-finder th:nth-child(9), .bargain-finder td:nth-child(9) { width: 10%; }
+.bargain-finder th:nth-child(10), .bargain-finder td:nth-child(10) { width: 10%; }
+.bargain-finder th:nth-child(11), .bargain-finder td:nth-child(11) { width: 8%; }
+
+/* Hover bubble: the reasoning behind a score, readable, not a browser title. */
+.tip { position: relative; display: inline-block; cursor: help; }
+.tip .tip-bubble {
+  display: none;
+  position: absolute;
+  z-index: 30;
+  left: 0;
+  top: 100%;
+  margin-top: 0.35rem;
+  width: 24rem;
+  max-width: 70vw;
+  padding: 0.65rem 0.8rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: pre-line;
+  text-align: left;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: 0.45rem;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+.tip:hover .tip-bubble { display: block; }
+td:last-child .tip .tip-bubble,
+td:nth-last-child(2) .tip .tip-bubble,
+td:nth-last-child(3) .tip .tip-bubble { left: auto; right: 0; }
+
+/* Quality chips */
+.quality-high { background: rgba(22, 163, 74, 0.15); color: #15803d; border-color: transparent; font-weight: 600; }
+.quality-mid { background: rgba(217, 119, 6, 0.15); color: #b45309; border-color: transparent; font-weight: 600; }
+.quality-low { background: rgba(120, 120, 120, 0.15); color: var(--muted); border-color: transparent; font-weight: 600; }
 
 .stock-toggle-group {
   display: inline-flex;
