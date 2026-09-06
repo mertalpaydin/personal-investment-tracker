@@ -670,12 +670,26 @@ def sync_fundamentals(
     workers: Annotated[
         int, typer.Option("--workers", "-w", help="Number of concurrent worker threads.")
     ] = 4,
+    rescore_only: Annotated[
+        bool,
+        typer.Option(
+            "--rescore-only",
+            help="Recompute value scores from the stored data without calling Yahoo.",
+        ),
+    ] = False,
 ) -> None:
     """Fetch and update fundamental valuation indicators for all single stocks."""
-    from portfolio_tracker.core.stock_indicators import sync_all_stock_fundamentals
+    from portfolio_tracker.core.stock_indicators import (
+        rescore_stock_fundamentals,
+        sync_all_stock_fundamentals,
+    )
 
     conn = connect(db)
     try:
+        if rescore_only:
+            n = rescore_stock_fundamentals(conn)
+            typer.secho(f"Re-scored {n} stocks.", fg=typer.colors.GREEN)
+            return
         typer.echo(f"Fetching stock fundamentals from Yahoo Finance ({workers} workers)...")
 
         def on_progress(done: int, total: int, key: str) -> None:

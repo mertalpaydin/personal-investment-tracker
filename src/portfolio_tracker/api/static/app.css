@@ -1036,6 +1036,16 @@ td.empty-msg {
   display: inline-block;
   white-space: nowrap;
 }
+.badge-nodata {
+  background: rgba(120, 120, 120, 0.15);
+  color: var(--muted);
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  display: inline-block;
+  white-space: nowrap;
+}
 
 .stock-toggle-group {
   display: inline-flex;

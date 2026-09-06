@@ -161,6 +161,8 @@ class Candidate:
     ev_ebitda: Decimal | None = None
     pct_off_52w_high: Decimal | None = None
     target_upside_pct: Decimal | None = None
+    analyst_count: int | None = None
+    buy_pct: Decimal | None = None
     value_score: int | None = None
     value_badge: str | None = None
     value_narrative: str | None = None
@@ -336,6 +338,15 @@ def _to_dec(val: Any) -> Decimal | None:
         return None
 
 
+def load_fundamentals(conn: sqlite3.Connection) -> dict[int, dict[str, Any]]:
+    """The ``stock_fundamental`` table keyed by instrument id; empty if absent."""
+    try:
+        rows = conn.execute("SELECT * FROM stock_fundamental").fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    return {int(r["instrument_id"]): dict(r) for r in rows}
+
+
 def _candidate(
     row: sqlite3.Row,
     m: performance.Metrics,
@@ -383,6 +394,12 @@ def _candidate(
         out.ev_ebitda = _to_dec(fundamentals.get("ev_ebitda"))
         out.pct_off_52w_high = _to_dec(fundamentals.get("pct_off_52w_high"))
         out.target_upside_pct = _to_dec(fundamentals.get("target_upside_pct"))
+        out.analyst_count = (
+            int(fundamentals["analyst_count"])
+            if fundamentals.get("analyst_count") is not None
+            else None
+        )
+        out.buy_pct = _to_dec(fundamentals.get("buy_pct"))
         out.value_score = (
             int(fundamentals["value_score"])
             if fundamentals.get("value_score") is not None
@@ -438,6 +455,7 @@ def scan(
     include_owned: bool = False,
     min_observations: int = MIN_HISTORY_OBSERVATIONS,
     mode: str | None = None,
+    fundamentals: dict[int, dict[str, Any]] | None = None,
 ) -> PeerScan:
     """Instruments in the same bucket and band as ``instrument``, ranked.
 
@@ -445,6 +463,9 @@ def scan(
     For Stocks: when ``mode='value'`` (default), ranked by sector-alignment,
     composite value score, and forward P/E discount to surface cheap peers.
     When ``mode='momentum'``, ranked by past return difference.
+
+    ``fundamentals`` is the ``stock_fundamental`` table keyed by instrument id;
+    pass it when scanning many holdings so the table is read once, not per scan.
     """
     horizon = as_of or date.today()
     subject_row = _instrument(conn, instrument)
@@ -454,11 +475,7 @@ def scan(
 
     fundamentals_by_id: dict[int, dict[str, Any]] = {}
     if is_stock:
-        try:
-            fund_rows = conn.execute("SELECT * FROM stock_fundamental").fetchall()
-            fundamentals_by_id = {int(r["instrument_id"]): dict(r) for r in fund_rows}
-        except sqlite3.OperationalError:
-            fundamentals_by_id = {}
+        fundamentals_by_id = fundamentals if fundamentals is not None else load_fundamentals(conn)
 
     subject_metrics = performance.metrics(
         conn,
@@ -720,9 +737,17 @@ def scan_portfolio(
     ).fetchall()
 
     out = PortfolioPeers()
+    fundamentals = load_fundamentals(conn)
     for row in rows:
         try:
-            found = scan(conn, instrument=row["import_key"], top=top, as_of=horizon, mode=mode)
+            found = scan(
+                conn,
+                instrument=row["import_key"],
+                top=top,
+                as_of=horizon,
+                mode=mode,
+                fundamentals=fundamentals,
+            )
         except PeerError:
             continue
         if found.bucket_method != "SEEDED":

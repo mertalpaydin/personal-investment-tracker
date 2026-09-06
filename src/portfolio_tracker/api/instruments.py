@@ -420,6 +420,8 @@ def _candidate_json(c: peers.Candidate) -> dict[str, Any]:
         "ev_ebitda": _num(c.ev_ebitda),
         "pct_off_52w_high": _num(c.pct_off_52w_high),
         "target_upside_pct": _num(c.target_upside_pct),
+        "analyst_count": c.analyst_count,
+        "buy_pct": _num(c.buy_pct),
         "value_score": c.value_score,
         "value_badge": c.value_badge,
         "value_narrative": c.value_narrative,
@@ -484,7 +486,7 @@ def peer_scan(
     conn: sqlite3.Connection = Depends(get_writable_db),
     top: int = Query(5, ge=1, le=25),
     include_owned: bool = Query(False, alias="owned"),
-    mode: str = Query("value"),
+    mode: str | None = Query(None, pattern="^(value|momentum)$"),
     narrate: bool = Query(False),
 ) -> dict[str, Any]:
     """Instruments comparable to this one, ranked by how they actually did.
@@ -515,7 +517,7 @@ def portfolio_peers(
     conn: sqlite3.Connection = Depends(get_writable_db),
     person_id: int = Query(1, alias="person"),
     top: int = Query(3, ge=1, le=10),
-    mode: str = Query("value"),
+    mode: str | None = Query(None, pattern="^(value|momentum)$"),
     narrate: bool = Query(False),
 ) -> dict[str, Any]:
     """One comparison per holding that has something to be compared with.
@@ -609,8 +611,23 @@ def stock_fundamentals_list(
                 "two_hundred_dma": _num(item.two_hundred_dma),
                 "dist_200_dma_pct": _num(item.dist_200_dma_pct),
                 "target_mean_price": _num(item.target_mean_price),
+                "target_median_price": _num(item.target_median_price),
+                "target_low_price": _num(item.target_low_price),
+                "target_high_price": _num(item.target_high_price),
                 "target_upside_pct": _num(item.target_upside_pct),
                 "recommendation_key": item.recommendation_key,
+                "recommendation_mean": _num(item.recommendation_mean),
+                "analyst_count": item.analyst_count,
+                "strong_buy": item.strong_buy,
+                "buy": item.buy,
+                "hold": item.hold,
+                "sell": item.sell,
+                "strong_sell": item.strong_sell,
+                "buy_pct": _num(item.buy_pct),
+                "earnings_growth": _num(item.earnings_growth),
+                "revenue_growth": _num(item.revenue_growth),
+                "financial_currency": item.financial_currency,
+                "data_points": item.data_points,
                 "value_score": item.value_score,
                 "value_badge": item.value_badge,
                 "value_narrative": item.value_narrative,
@@ -676,11 +693,13 @@ def trigger_stock_fundamentals_sync(
     db_path = deps.DB_PATH
 
     def run_worker() -> None:
+        from contextlib import closing
+
         from portfolio_tracker.core.stock_indicators import sync_all_stock_fundamentals
         from portfolio_tracker.db.connection import connect
 
         try:
-            with connect(db_path, read_only=False) as wconn:
+            with closing(connect(db_path, read_only=False)) as wconn:
 
                 def on_progress(done: int, total: int, key: str) -> None:
                     with _SYNC_LOCK:
@@ -691,10 +710,14 @@ def trigger_stock_fundamentals_sync(
                 success, total = sync_all_stock_fundamentals(
                     wconn, max_workers=workers, progress_cb=on_progress
                 )
+                skipped = total - success
+                result = f"Synced {success}/{total} stocks"
+                if skipped:
+                    result += f"; {skipped} kept their previous data (Yahoo gave no answer)"
                 with _SYNC_LOCK:
                     _FUNDAMENTALS_SYNC_STATE["running"] = False
                     _FUNDAMENTALS_SYNC_STATE["finished_at"] = datetime.now(UTC).isoformat()
-                    _FUNDAMENTALS_SYNC_STATE["last_result"] = f"Synced {success}/{total} stocks"
+                    _FUNDAMENTALS_SYNC_STATE["last_result"] = result
         except Exception as exc:
             with _SYNC_LOCK:
                 _FUNDAMENTALS_SYNC_STATE["running"] = False

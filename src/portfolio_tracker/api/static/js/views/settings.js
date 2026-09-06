@@ -118,8 +118,8 @@ function updateSection(u) {
       card("Price Status", u.stale ? "Behind" : "Up to date", {
         valueCls: u.stale ? "loss" : "gain",
       }),
-      card("Stock Fundamentals", u.last_fundamentals_date ? f.date(u.last_fundamentals_date) : "Recorded", {
-        sub: u.last_fundamentals_date ? f.ago(u.last_fundamentals_date) : "145 stocks",
+      card("Stock Fundamentals", u.last_fundamentals_date ? f.date(u.last_fundamentals_date) : "Not synced", {
+        sub: u.last_fundamentals_date ? f.ago(u.last_fundamentals_date) : "Press “Sync stock fundamentals”",
       }),
     ),
     el("div.actions", button, fundButton),

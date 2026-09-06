@@ -1606,6 +1606,13 @@ export function valueScoreBadge(score, badge) {
   let cls = "badge-fair";
   let label = `${badge} · ${score}/100`;
 
+  if (badge === "NO_DATA" || score == null) {
+    return el("span.tag", {
+      cls: "badge-nodata",
+      text: "❔ No data",
+      title: "Yahoo Finance returned too few figures to score this stock.",
+    });
+  }
   if (badge === "BARGAIN") {
     cls = "badge-bargain";
     label = `🏷️ Bargain · ${score}/100`;
@@ -1617,7 +1624,7 @@ export function valueScoreBadge(score, badge) {
     label = `⚖️ Fair · ${score}/100`;
   } else if (badge === "PREMIUM") {
     cls = "badge-premium";
-    label = `🚀 Growth · ${score}/100`;
+    label = `💎 Expensive · ${score}/100`;
   } else if (badge === "TRAP_RISK") {
     cls = "badge-trap";
     label = "⚠️ Value Trap";
@@ -1627,6 +1634,38 @@ export function valueScoreBadge(score, badge) {
     cls,
     text: label,
     title: `Value Score: ${score}/100 (${badge})`,
+  });
+}
+
+/** "12 · 75% buy" for the analyst columns, or a dash when nobody covers the stock. */
+export function analystCell(c) {
+  const n = c.analyst_count;
+  if (n == null || n === 0) return { text: "—", cls: "num muted", title: "No analyst coverage recorded" };
+  const buy = c.buy_pct != null ? `${Math.round(Number(c.buy_pct) * 100)}% buy` : "";
+  const parts = [];
+  if (c.strong_buy != null) parts.push(`${c.strong_buy} strong buy`);
+  if (c.buy != null) parts.push(`${c.buy} buy`);
+  if (c.hold != null) parts.push(`${c.hold} hold`);
+  if (c.sell != null) parts.push(`${c.sell} sell`);
+  if (c.strong_sell != null) parts.push(`${c.strong_sell} strong sell`);
+  const cls = c.buy_pct != null && Number(c.buy_pct) >= 0.7 ? "gain num" : "num";
+  return {
+    text: buy ? `${n} · ${buy}` : `${n}`,
+    cls,
+    title: parts.length ? parts.join(", ") : `${n} analysts`,
+  };
+}
+
+const STALE_DAYS = 30;
+
+/** A small warning tag when the row is older than a month. */
+export function staleTag(fetchedAt) {
+  if (!fetchedAt) return null;
+  const ageDays = (Date.now() - new Date(fetchedAt).getTime()) / 86400000;
+  if (!(ageDays > STALE_DAYS)) return null;
+  return el("span.tag.warn", {
+    text: `${Math.floor(ageDays)}d old`,
+    title: `Fundamentals last fetched ${f.date(fetchedAt)}. Press Refresh Fundamentals.`,
   });
 }
 
@@ -1666,6 +1705,7 @@ function stockCandidateRow(c, { yours = false, onCompare = null } = {}) {
       text: c.target_upside_pct != null ? f.pct(c.target_upside_pct) : "—",
       cls: c.target_upside_pct != null && c.target_upside_pct > 0 ? "gain num" : "num",
     },
+    analystCell(c),
     { node: valueScoreBadge(c.value_score, c.value_badge) },
   ]);
 }
@@ -1689,7 +1729,7 @@ export function stockBargainFinderSection(onCompare) {
       "div",
       heading("Stock Bargain Finder — Undervalued & Pullback Opportunities"),
       el("p.sub", {
-        text: "Scan and filter single stocks across the universe by valuation multiples (Forward P/E, FCF Yield, P/B) and discount from 52-week highs.",
+        text: "Scan and filter single stocks across the universe by valuation multiples (Forward P/E, FCF Yield, P/B), discount from 52-week highs, and analyst consensus. Multiples are judged against the stock's own sector as well as in absolute terms.",
       }),
     ),
     el(
@@ -1776,8 +1816,9 @@ export function stockBargainFinderSection(onCompare) {
       el("option", { value: "DIP", text: "📉 Pullback Dips Only (≥20% off 52W high)" }),
       el("option", { value: "BARGAIN_OR_DIP", text: "⭐ Bargains & Dips" }),
       el("option", { value: "FAIR", text: "⚖️ Fair Value" }),
-      el("option", { value: "PREMIUM", text: "🚀 Growth / Premium" }),
+      el("option", { value: "PREMIUM", text: "💎 Expensive / Premium" }),
       el("option", { value: "TRAP_RISK", text: "⚠️ Value Trap Warnings" }),
+      el("option", { value: "NO_DATA", text: "❔ Not enough data" }),
     );
 
     const peSlider = el("input.slider-range-input", { type: "range", min: "5", max: "60", step: "1", value: "60" });
@@ -1796,12 +1837,17 @@ export function stockBargainFinderSection(onCompare) {
         label: "Ticker",
         key: "symbol",
         render: (s) => ({
-          node: el("button.linklike", {
-            type: "button",
-            text: s.symbol,
-            title: `Add ${s.symbol} to comparison chart`,
-            onclick: () => onCompare && onCompare(s.symbol),
-          }),
+          node: el(
+            "span",
+            el("button.linklike", {
+              type: "button",
+              text: s.symbol,
+              title: `Add ${s.symbol} to comparison chart`,
+              onclick: () => onCompare && onCompare(s.symbol),
+            }),
+            staleTag(s.fetched_at) ? " " : null,
+            staleTag(s.fetched_at),
+          ),
         }),
       },
       {
@@ -1876,9 +1922,16 @@ export function stockBargainFinderSection(onCompare) {
         }),
       },
       {
+        label: "Analysts",
+        tooltip: "Number of analysts covering the stock, and the share of them rating it buy or strong buy. Targets from fewer than 3 analysts are not scored.",
+        key: (s) => s.analyst_count ?? -1,
+        type: "num",
+        render: (s) => analystCell(s),
+      },
+      {
         label: "Value Score",
-        tooltip: "Composite value score (0-100) based on multiples, pullback discount, consensus upside, and solvency.",
-        key: (s) => s.value_score ?? 0,
+        tooltip: "Composite value score (0-100): multiples blended with the sector's own range, pullback discount, analyst consensus (3+ analysts), dividend, and solvency.",
+        key: (s) => s.value_score ?? -1,
         type: "num",
         defaultSort: true,
         defaultDir: "desc",
@@ -1938,6 +1991,7 @@ export function stockBargainFinderSection(onCompare) {
         if (selectedBadge === "FAIR" && s.value_badge !== "FAIR") return false;
         if (selectedBadge === "PREMIUM" && s.value_badge !== "PREMIUM") return false;
         if (selectedBadge === "TRAP_RISK" && s.value_badge !== "TRAP_RISK") return false;
+        if (selectedBadge === "NO_DATA" && s.value_badge !== "NO_DATA") return false;
 
         if (maxPeVal < 60) {
           if (s.forward_pe === null || s.forward_pe === undefined || s.forward_pe > maxPeVal || s.forward_pe <= 0) {
@@ -2007,15 +2061,19 @@ export function stockBargainFinderSection(onCompare) {
 function scanPanel(scan, onCompare) {
   const s = scan.subject;
   const isStock = scan.is_stock || s.bucket === "EQ_SINGLE_STOCK" || scan.bucket === "EQ_SINGLE_STOCK";
-  let activeMode = isStock ? "value" : "momentum";
+  let activeMode = scan.mode || (isStock ? "value" : "momentum");
+
+  // The two modes rank different candidates, so each is its own server call.
+  // Cache them: the toggle is a view switch, not a re-scan.
+  const scansByMode = { [activeMode]: scan };
 
   const tableWrap = el("div.wrap");
 
-  function renderTable() {
+  function renderTable(current) {
     if (isStock && activeMode === "value") {
       const stockCols = [
         "Instrument", "Sector", "Fwd P/E", "P/B", "EV/EBITDA", "FCF Yield",
-        "vs 52W High", "Target Upside", "Value Assessment"
+        "vs 52W High", "Target Upside", "Analysts", "Value Assessment"
       ];
       tableWrap.replaceChildren(
         el(
@@ -2024,8 +2082,8 @@ function scanPanel(scan, onCompare) {
           el(
             "tbody",
             [
-              stockCandidateRow(s, { yours: true }),
-              ...scan.candidates.map((c) => stockCandidateRow(c, { onCompare })),
+              stockCandidateRow(current.subject, { yours: true }),
+              ...current.candidates.map((c) => stockCandidateRow(c, { onCompare })),
             ],
           ),
         ),
@@ -2042,8 +2100,8 @@ function scanPanel(scan, onCompare) {
           el(
             "tbody",
             [
-              candidateRow(s, { yours: true }),
-              ...scan.candidates.map((c) => candidateRow(c, { onCompare })),
+              candidateRow(current.subject, { yours: true }),
+              ...current.candidates.map((c) => candidateRow(c, { onCompare })),
             ],
           ),
         ),
@@ -2051,35 +2109,51 @@ function scanPanel(scan, onCompare) {
     }
   }
 
-  renderTable();
+  async function showMode(mode) {
+    activeMode = mode;
+    if (!scansByMode[mode]) {
+      tableWrap.replaceChildren(el("p.muted", { text: "Re-ranking…" }));
+      const res = await get(`/api/peers/${encodeURIComponent(s.instrument)}`, {
+        mode,
+        top: Math.max(scan.candidates.length, 3),
+      });
+      if (isError(res)) {
+        tableWrap.replaceChildren(el("p.note.bad", { text: res.message || "Could not re-rank." }));
+        return;
+      }
+      scansByMode[mode] = res;
+    }
+    renderTable(scansByMode[mode]);
+  }
+
+  renderTable(scan);
 
   let modeToggle = null;
   if (isStock) {
-    const valBtn = el("button.stock-toggle-btn.active", {
+    const valBtn = el("button.stock-toggle-btn", {
       type: "button",
       text: "Valuation (Cheapest Peers)",
       onclick: () => {
-        activeMode = "value";
         valBtn.classList.add("active");
         momBtn.classList.remove("active");
-        renderTable();
+        showMode("value");
       },
     });
     const momBtn = el("button.stock-toggle-btn", {
       type: "button",
       text: "Past Returns & Sharpe",
       onclick: () => {
-        activeMode = "momentum";
         momBtn.classList.add("active");
         valBtn.classList.remove("active");
-        renderTable();
+        showMode("momentum");
       },
     });
+    (activeMode === "value" ? valBtn : momBtn).classList.add("active");
     modeToggle = el("div.stock-toggle-group", valBtn, momBtn);
   }
 
   const subNote = isStock
-    ? `Single stock peer comparison in ${s.sector || "sector"}. Ranked by fundamental valuation & cheapness (Fwd P/E, FCF Yield, 52W discount) rather than past momentum.`
+    ? `Single stock peer comparison in ${s.sector || "sector"}. Valuation mode ranks by cheapness (Fwd P/E, FCF Yield, 52W discount, analyst consensus) against sector peers; the other tab ranks the same universe by past returns.`
     : `Risk category ${BUCKET_LABEL[scan.bucket] || scan.bucket}` +
       (scan.risk_level ? ` (Risk Level ${scan.risk_level}/7)` : "") +
       (scan.vol_band ? `, ${scan.vol_band.toLowerCase()} volatility` : "") +
