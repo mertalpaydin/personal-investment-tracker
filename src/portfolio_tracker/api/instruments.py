@@ -18,6 +18,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 from datetime import date
+from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -409,6 +410,19 @@ def _candidate_json(c: peers.Candidate) -> dict[str, Any]:
         "ter_bps": c.ter_bps,
         "ter_bps_delta": c.ter_bps_delta,
         "overlap_pct": _num(c.overlap_pct),
+        "sector": c.sector,
+        "industry": c.industry,
+        "forward_pe": _num(c.forward_pe),
+        "trailing_pe": _num(c.trailing_pe),
+        "fcf_yield": _num(c.fcf_yield),
+        "dividend_yield": _num(c.dividend_yield),
+        "price_to_book": _num(c.price_to_book),
+        "ev_ebitda": _num(c.ev_ebitda),
+        "pct_off_52w_high": _num(c.pct_off_52w_high),
+        "target_upside_pct": _num(c.target_upside_pct),
+        "value_score": c.value_score,
+        "value_badge": c.value_badge,
+        "value_narrative": c.value_narrative,
         "caveats": c.caveats,
     }
 
@@ -421,6 +435,9 @@ def _scan_json(scan: peers.PeerScan) -> dict[str, Any]:
         "risk_level": scan.risk_level,
         "bucket_method": scan.bucket_method,
         "vol_band": scan.vol_band,
+        "mode": getattr(scan, "mode", "value"),
+        "is_stock": getattr(scan, "is_stock", False),
+        "sector": getattr(scan, "sector", None),
         "universe_size": scan.universe_size,
         "considered": scan.considered,
         "candidates": [_candidate_json(c) for c in scan.candidates],
@@ -467,6 +484,7 @@ def peer_scan(
     conn: sqlite3.Connection = Depends(get_writable_db),
     top: int = Query(5, ge=1, le=25),
     include_owned: bool = Query(False, alias="owned"),
+    mode: str = Query("value"),
     narrate: bool = Query(False),
 ) -> dict[str, Any]:
     """Instruments comparable to this one, ranked by how they actually did.
@@ -475,7 +493,9 @@ def peer_scan(
     without it, and each narration costs a call against a free tier.
     """
     try:
-        found = peers.scan(conn, instrument=import_key, top=top, include_owned=include_owned)
+        found = peers.scan(
+            conn, instrument=import_key, top=top, include_owned=include_owned, mode=mode
+        )
     except peers.PeerError as exc:
         raise HTTPException(404, str(exc)) from exc
 
@@ -495,6 +515,7 @@ def portfolio_peers(
     conn: sqlite3.Connection = Depends(get_writable_db),
     person_id: int = Query(1, alias="person"),
     top: int = Query(3, ge=1, le=10),
+    mode: str = Query("value"),
     narrate: bool = Query(False),
 ) -> dict[str, Any]:
     """One comparison per holding that has something to be compared with.
@@ -503,20 +524,14 @@ def portfolio_peers(
     per holding: the question is "is there something better than what I have",
     and answering it eleven times separately is eleven calls against a free
     tier to say what one paragraph says.
-
-    Off by default, and the model is given only the figures below. It cannot
-    compute, predict or recommend -- `llm/tasks.py` enforces that, and
-    `llm_run` stores exactly what was sent so the claim stays checkable.
     """
-    found = peers.scan_portfolio(conn, person_id=person_id, top=top)
+    found = peers.scan_portfolio(conn, person_id=person_id, top=top, mode=mode)
     body = {
         "scans": [_scan_json(s) for s in found.scans],
-        # Named rather than silently skipped: "nothing to compare" and "I do
-        # not know what these are" are different answers, and only one of them
-        # is something the reader can fix.
         "needs_category": found.needs_category,
         "note": (
-            "Ranked by three-year return where three years exist, otherwise by one year."
+            "Ranked by valuation and forward P/E discount for stocks; "
+            "ranked by return differences for funds."
             if found.scans
             else "Nothing to compare yet. Add instruments to the watchlist, and give "
             "your holdings a risk category so like is compared with like."
@@ -532,6 +547,75 @@ def portfolio_peers(
             conn, task="peer_scan", payload=body, subject="portfolio", max_sentences=8
         )
     return {**body, **result.as_dict()}
+
+
+@router.get("/api/stocks/fundamentals")
+def stock_fundamentals_list(
+    conn: sqlite3.Connection = Depends(get_db),
+    sector: str | None = Query(None),
+    min_score: int | None = Query(None, ge=0, le=100),
+    max_pe: float | None = Query(None),
+    min_fcf_yield: float | None = Query(None),
+) -> dict[str, Any]:
+    """List fundamental valuation indicators and scores for single stocks."""
+    from portfolio_tracker.core import stock_indicators
+
+    items = stock_indicators.get_stock_fundamentals(
+        conn,
+        sector=sector,
+        min_score=min_score,
+        max_forward_pe=Decimal(str(max_pe)) if max_pe is not None else None,
+        min_fcf_yield=Decimal(str(min_fcf_yield)) if min_fcf_yield is not None else None,
+    )
+    sectors = [
+        r[0]
+        for r in conn.execute(
+            "SELECT DISTINCT sector FROM stock_fundamental WHERE sector IS NOT NULL ORDER BY sector"
+        ).fetchall()
+    ]
+    return {
+        "count": len(items),
+        "sectors": sectors,
+        "stocks": [
+            {
+                "instrument_id": item.instrument_id,
+                "symbol": item.symbol,
+                "name": item.name,
+                "sector": item.sector,
+                "industry": item.industry,
+                "current_price": _num(item.current_price),
+                "market_cap": _num(item.market_cap),
+                "currency": item.currency,
+                "trailing_pe": _num(item.trailing_pe),
+                "forward_pe": _num(item.forward_pe),
+                "peg_ratio": _num(item.peg_ratio),
+                "price_to_book": _num(item.price_to_book),
+                "price_to_sales": _num(item.price_to_sales),
+                "ev_ebitda": _num(item.ev_ebitda),
+                "fcf_yield": _num(item.fcf_yield),
+                "dividend_yield": _num(item.dividend_yield),
+                "payout_ratio": _num(item.payout_ratio),
+                "debt_to_equity": _num(item.debt_to_equity),
+                "operating_margin": _num(item.operating_margin),
+                "profit_margin": _num(item.profit_margin),
+                "return_on_equity": _num(item.return_on_equity),
+                "fifty_two_week_high": _num(item.fifty_two_week_high),
+                "fifty_two_week_low": _num(item.fifty_two_week_low),
+                "pct_off_52w_high": _num(item.pct_off_52w_high),
+                "range_52w_pct": _num(item.range_52w_pct),
+                "two_hundred_dma": _num(item.two_hundred_dma),
+                "dist_200_dma_pct": _num(item.dist_200_dma_pct),
+                "target_mean_price": _num(item.target_mean_price),
+                "target_upside_pct": _num(item.target_upside_pct),
+                "recommendation_key": item.recommendation_key,
+                "value_score": item.value_score,
+                "value_badge": item.value_badge,
+                "value_narrative": item.value_narrative,
+                "fetched_at": item.fetched_at,
+            }
+            for item in items
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -90,6 +90,7 @@ export async function render() {
   if (everything.length) {
     view.append(leaderboardSection(addToComparison));
     view.append(catalogueSection(everything));
+    view.append(stockBargainFinderSection(addToComparison));
   }
 
   // Load heavier peer scan and suggestions asynchronously in background so page renders in ms
@@ -1600,36 +1601,344 @@ function peerSection(body, buckets, suggested, onCompare) {
   return section;
 }
 
+export function valueScoreBadge(score, badge) {
+  if (!badge) return el("span.tag", { text: score != null ? `${score}/100` : "—" });
+  let cls = "badge-fair";
+  let label = `${badge} · ${score}/100`;
+
+  if (badge === "BARGAIN") {
+    cls = "badge-bargain";
+    label = `🏷️ Bargain · ${score}/100`;
+  } else if (badge === "DIP") {
+    cls = "badge-dip";
+    label = `📉 Dip · ${score}/100`;
+  } else if (badge === "FAIR") {
+    cls = "badge-fair";
+    label = `⚖️ Fair · ${score}/100`;
+  } else if (badge === "PREMIUM") {
+    cls = "badge-premium";
+    label = `🚀 Growth · ${score}/100`;
+  } else if (badge === "TRAP_RISK") {
+    cls = "badge-trap";
+    label = "⚠️ Value Trap";
+  }
+
+  return el("span.tag", {
+    cls,
+    text: label,
+    title: `Value Score: ${score}/100 (${badge})`,
+  });
+}
+
+function stockCandidateRow(c, { yours = false, onCompare = null } = {}) {
+  const label = yours
+    ? el("span", el("strong", { text: c.instrument }), " ", el("span.tag.ok", { text: "what you hold" }))
+    : el(
+        "span",
+        el("button.linklike", {
+          type: "button",
+          text: c.instrument,
+          title: `Add ${c.instrument} to comparison chart`,
+          onclick: () => onCompare && onCompare(c.instrument),
+        }),
+        " ",
+        el("span.muted", { text: c.name }),
+      );
+
+  return row([
+    { node: label, cls: "name" },
+    { text: c.sector || "—", cls: "prose muted" },
+    {
+      text: c.forward_pe != null ? `${Number(c.forward_pe).toFixed(1)}x` : "—",
+      cls: c.forward_pe != null && c.forward_pe < 15 ? "gain num" : "num",
+    },
+    { text: c.price_to_book != null ? `${Number(c.price_to_book).toFixed(1)}x` : "—", cls: "num" },
+    { text: c.ev_ebitda != null ? `${Number(c.ev_ebitda).toFixed(1)}x` : "—", cls: "num" },
+    {
+      text: c.fcf_yield != null ? f.pct(c.fcf_yield) : "—",
+      cls: c.fcf_yield != null && c.fcf_yield > 0.05 ? "gain num" : "num",
+    },
+    {
+      text: c.pct_off_52w_high != null ? f.pct(c.pct_off_52w_high) : "—",
+      cls: c.pct_off_52w_high != null && c.pct_off_52w_high <= -0.2 ? "loss num" : "num",
+    },
+    {
+      text: c.target_upside_pct != null ? f.pct(c.target_upside_pct) : "—",
+      cls: c.target_upside_pct != null && c.target_upside_pct > 0 ? "gain num" : "num",
+    },
+    { node: valueScoreBadge(c.value_score, c.value_badge) },
+  ]);
+}
+
+export function stockBargainFinderSection(onCompare) {
+  const container = el("section", heading("Stock Bargain Finder — Undervalued & Pullback Opportunities"));
+  container.append(
+    el("p.sub", {
+      text: "Scan and filter single stocks across the universe by valuation multiples (Forward P/E, FCF Yield, P/B) and discount from 52-week highs.",
+    }),
+  );
+
+  const slot = el("div", el("p.muted", { text: "Loading stock fundamentals..." }));
+  container.append(slot);
+
+  get("/api/stocks/fundamentals").then((res) => {
+    if (isError(res) || !res.stocks || !res.stocks.length) {
+      slot.replaceChildren(el("p.note", { text: "No stock fundamentals recorded yet." }));
+      return;
+    }
+    const allStocks = res.stocks;
+    const sectors = res.sectors || [];
+
+    let selectedSector = "";
+    let selectedBadge = "";
+
+    const sectorSelect = el(
+      "select",
+      el("option", { value: "", text: "All Sectors" }),
+      sectors.map((s) => el("option", { value: s, text: s })),
+    );
+
+    const badgeSelect = el(
+      "select",
+      el("option", { value: "", text: "All Ratings" }),
+      el("option", { value: "BARGAIN", text: "🏷️ Bargains Only (Score ≥ 70)" }),
+      el("option", { value: "DIP", text: "📉 Pullback Dips Only (≥20% off 52W high)" }),
+      el("option", { value: "BARGAIN_OR_DIP", text: "⭐ Bargains & Dips" }),
+      el("option", { value: "FAIR", text: "⚖️ Fair Value" }),
+      el("option", { value: "PREMIUM", text: "🚀 Growth / Premium" }),
+      el("option", { value: "TRAP_RISK", text: "⚠️ Value Trap Warnings" }),
+    );
+
+    const peSlider = el("input.slider-range-input", { type: "range", min: "5", max: "60", step: "1", value: "35" });
+    const peBadge = el("span.slider-filter-badge", { text: "35x" });
+
+    const discountSlider = el("input.slider-range-input", { type: "range", min: "0", max: "50", step: "5", value: "0" });
+    const discountBadge = el("span.slider-filter-badge", { text: "0%" });
+
+    const fcfSlider = el("input.slider-range-input", { type: "range", min: "0", max: "12", step: "1", value: "0" });
+    const fcfBadge = el("span.slider-filter-badge", { text: "0%" });
+
+    const tableWrap = el("div.wrap");
+
+    function update() {
+      peBadge.textContent = `${peSlider.value}x`;
+      discountBadge.textContent = `${discountSlider.value}%`;
+      fcfBadge.textContent = `${fcfSlider.value}%`;
+
+      const maxPeVal = Number(peSlider.value);
+      const minDiscVal = Number(discountSlider.value);
+      const minFcfVal = Number(fcfSlider.value);
+
+      const filtered = allStocks.filter((s) => {
+        if (selectedSector && s.sector !== selectedSector) return false;
+        if (selectedBadge === "BARGAIN" && s.value_badge !== "BARGAIN") return false;
+        if (selectedBadge === "DIP" && s.value_badge !== "DIP") return false;
+        if (selectedBadge === "BARGAIN_OR_DIP" && s.value_badge !== "BARGAIN" && s.value_badge !== "DIP") return false;
+        if (selectedBadge === "FAIR" && s.value_badge !== "FAIR") return false;
+        if (selectedBadge === "PREMIUM" && s.value_badge !== "PREMIUM") return false;
+        if (selectedBadge === "TRAP_RISK" && s.value_badge !== "TRAP_RISK") return false;
+
+        if (s.forward_pe !== null && s.forward_pe !== undefined) {
+          if (s.forward_pe > maxPeVal || s.forward_pe < 0) return false;
+        }
+        if (minDiscVal > 0) {
+          if (s.pct_off_52w_high === null || s.pct_off_52w_high === undefined) return false;
+          if (Math.abs(s.pct_off_52w_high * 100) < minDiscVal) return false;
+        }
+        if (minFcfVal > 0) {
+          if (s.fcf_yield === null || s.fcf_yield === undefined) return false;
+          if (s.fcf_yield * 100 < minFcfVal) return false;
+        }
+        return true;
+      });
+
+      renderTable(filtered);
+    }
+
+    sectorSelect.onchange = (e) => { selectedSector = e.target.value; update(); };
+    badgeSelect.onchange = (e) => { selectedBadge = e.target.value; update(); };
+    peSlider.oninput = () => update();
+    discountSlider.oninput = () => update();
+    fcfSlider.oninput = () => update();
+
+    const controls = el(
+      "div.slider-filter-panel",
+      el(
+        "div.slider-filter-group",
+        el("div.slider-filter-header", el("span", { text: "Sector Filter" })),
+        sectorSelect,
+      ),
+      el(
+        "div.slider-filter-group",
+        el("div.slider-filter-header", el("span", { text: "Valuation Rating" })),
+        badgeSelect,
+      ),
+      el(
+        "div.slider-filter-group",
+        el("div.slider-filter-header", el("span", { text: "Max Forward P/E" }), peBadge),
+        peSlider,
+        el("div.slider-range-labels", el("span", { text: "5x" }), el("span", { text: "60x" })),
+      ),
+      el(
+        "div.slider-filter-group",
+        el("div.slider-filter-header", el("span", { text: "Min Dip from 52W High" }), discountBadge),
+        discountSlider,
+        el("div.slider-range-labels", el("span", { text: "0%" }), el("span", { text: "-50%" })),
+      ),
+      el(
+        "div.slider-filter-group",
+        el("div.slider-filter-header", el("span", { text: "Min Free Cash Flow Yield" }), fcfBadge),
+        fcfSlider,
+        el("div.slider-range-labels", el("span", { text: "0%" }), el("span", { text: "12%" })),
+      ),
+    );
+
+    function renderTable(stocks) {
+      if (!stocks.length) {
+        tableWrap.replaceChildren(el("p.note", { text: "No stocks match the selected filters." }));
+        return;
+      }
+      const headers = [
+        "Ticker", "Name", "Sector", "Price", "Fwd P/E", "P/B", "FCF Yield",
+        "vs 52W High", "Target Upside", "Value Score", "Assessment", "Action"
+      ];
+      const rows = stocks.map((s) => [
+        {
+          node: el("button.linklike", {
+            type: "button",
+            text: s.symbol,
+            title: `Add ${s.symbol} to comparison chart`,
+            onclick: () => onCompare && onCompare(s.symbol),
+          }),
+        },
+        { text: s.name, cls: "name" },
+        { text: s.sector || "—", cls: "prose muted" },
+        { text: s.current_price != null ? `${Number(s.current_price).toFixed(2)} ${s.currency}` : "—", cls: "num" },
+        { text: s.forward_pe != null ? `${Number(s.forward_pe).toFixed(1)}x` : "—", cls: "num" },
+        { text: s.price_to_book != null ? `${Number(s.price_to_book).toFixed(1)}x` : "—", cls: "num" },
+        { text: s.fcf_yield != null ? f.pct(s.fcf_yield) : "—", cls: "num" },
+        {
+          text: s.pct_off_52w_high != null ? f.pct(s.pct_off_52w_high) : "—",
+          cls: s.pct_off_52w_high != null && s.pct_off_52w_high <= -0.2 ? "num loss" : "num",
+        },
+        {
+          text: s.target_upside_pct != null ? f.pct(s.target_upside_pct) : "—",
+          cls: s.target_upside_pct != null && s.target_upside_pct > 0 ? "num gain" : "num",
+        },
+        { node: valueScoreBadge(s.value_score, s.value_badge) },
+        { text: s.value_narrative || "—", cls: "prose small muted", style: "max-width: 260px;" },
+        {
+          node: el("button.small", {
+            type: "button",
+            text: "+ Compare",
+            onclick: () => onCompare && onCompare(s.symbol),
+          }),
+        },
+      ]);
+      const tbl = sortableTable(headers, rows);
+      tableWrap.replaceChildren(tbl);
+    }
+
+    slot.replaceChildren(controls, tableWrap);
+    update();
+  });
+
+  return container;
+}
+
 function scanPanel(scan, onCompare) {
   const s = scan.subject;
-  const columns = ["Instrument", "Risk", "3 months", "6 months", "1 year", "vs yours", "Volatility", "Sharpe", "Fee"];
+  const isStock = scan.is_stock || s.bucket === "EQ_SINGLE_STOCK" || scan.bucket === "EQ_SINGLE_STOCK";
+  let activeMode = isStock ? "value" : "momentum";
 
-  const panel = el(
-    "div.panel",
-    el("h3", { text: `${s.instrument} — ${s.name}` }),
-    el("p.note", {
-      text:
-        `Risk category ${BUCKET_LABEL[scan.bucket] || scan.bucket}` +
-        (scan.risk_level ? ` (Risk Level ${scan.risk_level}/7)` : "") +
-        (scan.vol_band ? `, ${scan.vol_band.toLowerCase()} volatility` : "") +
-        `. ${scan.considered} comparable instrument(s) considered. Returns are ` +
-        "in euros over the period named, not annualised. Volatility is over one year.",
-    }),
-    el(
-      "div.wrap",
-      el(
-        "table",
-        el("thead", el("tr", columns.map((c) => el("th", { text: c })))),
+  const tableWrap = el("div.wrap");
+
+  function renderTable() {
+    if (isStock && activeMode === "value") {
+      const stockCols = [
+        "Instrument", "Sector", "Fwd P/E", "P/B", "EV/EBITDA", "FCF Yield",
+        "vs 52W High", "Target Upside", "Value Assessment"
+      ];
+      tableWrap.replaceChildren(
         el(
-          "tbody",
-          [
-            candidateRow(s, { yours: true }),
-            ...scan.candidates.map((c) => candidateRow(c, { onCompare })),
-          ],
+          "table",
+          el("thead", el("tr", stockCols.map((c) => el("th", { text: c })))),
+          el(
+            "tbody",
+            [
+              stockCandidateRow(s, { yours: true }),
+              ...scan.candidates.map((c) => stockCandidateRow(c, { onCompare })),
+            ],
+          ),
         ),
-      ),
-    ),
+      );
+    } else {
+      const fundCols = [
+        "Instrument", "Risk", "3 months", "6 months", "1 year", "vs yours",
+        "Volatility", "Sharpe", "Fee"
+      ];
+      tableWrap.replaceChildren(
+        el(
+          "table",
+          el("thead", el("tr", fundCols.map((c) => el("th", { text: c })))),
+          el(
+            "tbody",
+            [
+              candidateRow(s, { yours: true }),
+              ...scan.candidates.map((c) => candidateRow(c, { onCompare })),
+            ],
+          ),
+        ),
+      );
+    }
+  }
+
+  renderTable();
+
+  let modeToggle = null;
+  if (isStock) {
+    const valBtn = el("button.stock-toggle-btn.active", {
+      type: "button",
+      text: "Valuation (Cheapest Peers)",
+      onclick: () => {
+        activeMode = "value";
+        valBtn.classList.add("active");
+        momBtn.classList.remove("active");
+        renderTable();
+      },
+    });
+    const momBtn = el("button.stock-toggle-btn", {
+      type: "button",
+      text: "Past Returns & Sharpe",
+      onclick: () => {
+        activeMode = "momentum";
+        momBtn.classList.add("active");
+        valBtn.classList.remove("active");
+        renderTable();
+      },
+    });
+    modeToggle = el("div.stock-toggle-group", valBtn, momBtn);
+  }
+
+  const subNote = isStock
+    ? `Single stock peer comparison in ${s.sector || "sector"}. Ranked by fundamental valuation & cheapness (Fwd P/E, FCF Yield, 52W discount) rather than past momentum.`
+    : `Risk category ${BUCKET_LABEL[scan.bucket] || scan.bucket}` +
+      (scan.risk_level ? ` (Risk Level ${scan.risk_level}/7)` : "") +
+      (scan.vol_band ? `, ${scan.vol_band.toLowerCase()} volatility` : "") +
+      `. ${scan.considered} comparable instrument(s) considered. Returns are in euros.`;
+
+  const headerRow = el(
+    "div",
+    { style: "display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;" },
+    el("h3", { text: `${s.instrument} — ${s.name}`, style: "margin: 0;" }),
+    modeToggle,
   );
+
+  const panel = el("div.panel", headerRow, el("p.note", { text: subNote }), tableWrap);
+
+  if (s.value_narrative) {
+    panel.append(el("p.note", { text: `Holding Valuation: ${s.value_narrative}` }));
+  }
 
   const overlaps = scan.candidates.filter(
     (c) => c.overlap_pct !== null && c.overlap_pct !== undefined,

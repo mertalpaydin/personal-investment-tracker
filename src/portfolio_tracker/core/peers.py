@@ -45,7 +45,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 
 from portfolio_tracker.core import fx, look_through, performance
 from portfolio_tracker.money import ZERO
@@ -150,6 +150,21 @@ class Candidate:
     #: composition. None means unknown, which is not the same as zero.
     overlap_pct: Decimal | None = None
 
+    #: Fundamental valuation metrics (populated for single stocks)
+    sector: str | None = None
+    industry: str | None = None
+    forward_pe: Decimal | None = None
+    trailing_pe: Decimal | None = None
+    fcf_yield: Decimal | None = None
+    dividend_yield: Decimal | None = None
+    price_to_book: Decimal | None = None
+    ev_ebitda: Decimal | None = None
+    pct_off_52w_high: Decimal | None = None
+    target_upside_pct: Decimal | None = None
+    value_score: int | None = None
+    value_badge: str | None = None
+    value_narrative: str | None = None
+
     caveats: list[str] = field(default_factory=list)
 
 
@@ -163,6 +178,9 @@ class PeerScan:
     #: SEEDED when the risk category was stated, DERIVED when guessed from
     #: asset class. A whole-portfolio sweep shows only the stated ones.
     bucket_method: str = "DERIVED"
+    mode: str = "value"
+    is_stock: bool = False
+    sector: str | None = None
     candidates: list[Candidate] = field(default_factory=list)
     universe_size: int = 0
     considered: int = 0
@@ -309,6 +327,15 @@ def _delta(candidate: Decimal | None, subject: Decimal | None) -> Decimal | None
     return None if candidate is None or subject is None else candidate - subject
 
 
+def _to_dec(val: Any) -> Decimal | None:
+    if val is None or val == "" or val != val:
+        return None
+    try:
+        return Decimal(str(val))
+    except (ValueError, TypeError):
+        return None
+
+
 def _candidate(
     row: sqlite3.Row,
     m: performance.Metrics,
@@ -316,6 +343,7 @@ def _candidate(
     *,
     risk_level: int | None = None,
     subject: performance.Metrics | None = None,
+    fundamentals: dict[str, Any] | None = None,
 ) -> Candidate:
     band = vol_band_for(m.vol_3y or m.vol_1y)
     comparable = subject is None or m.basis == subject.basis
@@ -344,6 +372,27 @@ def _candidate(
         ter_bps=row["ter_bps"],
         caveats=list(m.caveats),
     )
+    if fundamentals is not None:
+        out.sector = fundamentals.get("sector")
+        out.industry = fundamentals.get("industry")
+        out.forward_pe = _to_dec(fundamentals.get("forward_pe"))
+        out.trailing_pe = _to_dec(fundamentals.get("trailing_pe"))
+        out.fcf_yield = _to_dec(fundamentals.get("fcf_yield"))
+        out.dividend_yield = _to_dec(fundamentals.get("dividend_yield"))
+        out.price_to_book = _to_dec(fundamentals.get("price_to_book"))
+        out.ev_ebitda = _to_dec(fundamentals.get("ev_ebitda"))
+        out.pct_off_52w_high = _to_dec(fundamentals.get("pct_off_52w_high"))
+        out.target_upside_pct = _to_dec(fundamentals.get("target_upside_pct"))
+        out.value_score = (
+            int(fundamentals["value_score"])
+            if fundamentals.get("value_score") is not None
+            else None
+        )
+        out.value_badge = fundamentals.get("value_badge")
+        out.value_narrative = fundamentals.get("value_narrative")
+    elif "sector" in row.keys() and row["sector"]:  # noqa: SIM118
+        out.sector = row["sector"]
+
     if m.vol_3y is None and m.vol_1y is not None:
         out.caveats.append(
             "Risk band taken from one year of history rather than three, "
@@ -388,18 +437,28 @@ def scan(
     as_of: date | None = None,
     include_owned: bool = False,
     min_observations: int = MIN_HISTORY_OBSERVATIONS,
+    mode: str | None = None,
 ) -> PeerScan:
     """Instruments in the same bucket and band as ``instrument``, ranked.
 
-    Ranked by three-year return difference where available (falling back to
-    one-year), with instruments that cannot be fairly compared placed last
-    however well they scored. A cheaper fee breaks a tie, because between two
-    funds that did the same thing the fee is the only difference that is
-    certain in advance.
+    For ETFs: ranked by three-year return difference (or one-year).
+    For Stocks: when ``mode='value'`` (default), ranked by sector-alignment,
+    composite value score, and forward P/E discount to surface cheap peers.
+    When ``mode='momentum'``, ranked by past return difference.
     """
     horizon = as_of or date.today()
     subject_row = _instrument(conn, instrument)
     subject_id = int(subject_row["id"])
+    is_stock = (subject_row["asset_class"] or "").upper() == "STOCK"
+    scan_mode = mode or ("value" if is_stock else "momentum")
+
+    fundamentals_by_id: dict[int, dict[str, Any]] = {}
+    if is_stock:
+        try:
+            fund_rows = conn.execute("SELECT * FROM stock_fundamental").fetchall()
+            fundamentals_by_id = {int(r["instrument_id"]): dict(r) for r in fund_rows}
+        except sqlite3.OperationalError:
+            fundamentals_by_id = {}
 
     subject_metrics = performance.metrics(
         conn,
@@ -410,7 +469,13 @@ def scan(
     )
     subject_bucket, method = bucket_for(subject_row)
     subject_level = risk_level_for(subject_row, subject_bucket)
-    subject = _candidate(subject_row, subject_metrics, subject_bucket, risk_level=subject_level)
+    subject = _candidate(
+        subject_row,
+        subject_metrics,
+        subject_bucket,
+        risk_level=subject_level,
+        fundamentals=fundamentals_by_id.get(subject_id),
+    )
     band = subject.vol_band
 
     result = PeerScan(
@@ -420,6 +485,9 @@ def scan(
         risk_level=subject_level,
         vol_band=band,
         bucket_method=method,
+        mode=scan_mode,
+        is_stock=is_stock,
+        sector=subject.sector,
     )
     if method == "DERIVED":
         result.caveats.append(
@@ -459,7 +527,14 @@ def scan(
         result.considered += 1
 
         row_level = risk_level_for(row, row_bucket)
-        candidate = _candidate(row, m, row_bucket, risk_level=row_level, subject=subject_metrics)
+        candidate = _candidate(
+            row,
+            m,
+            row_bucket,
+            risk_level=row_level,
+            subject=subject_metrics,
+            fundamentals=fundamentals_by_id.get(int(row["id"])),
+        )
         if band is not None and candidate.vol_band is not None and candidate.vol_band != band:
             candidate.caveats.append(
                 f"Moves {_band_words(candidate.vol_band)} than your holding "
@@ -470,17 +545,37 @@ def scan(
         candidate.overlap_pct = overlap(conn, subject_id, int(row["id"]), on=horizon)
         candidates.append(candidate)
 
-    def rank(c: Candidate) -> tuple[int, int, Decimal, int]:
-        same_band = 0 if (band is None or c.vol_band == band) else 1
-        delta = c.ret_3y_ann_delta if c.ret_3y_ann_delta is not None else c.ret_1y_delta
-        return (
-            0 if c.comparable else 1,  # incomparable last, however well it scored
-            same_band,
-            -(delta if delta is not None else Decimal("-999")),
-            c.ter_bps if c.ter_bps is not None else 9999,
-        )
+    if is_stock and scan_mode == "value":
 
-    candidates.sort(key=rank)
+        def rank_val(c: Candidate) -> tuple[int, int, int, int, Decimal, Decimal]:
+            not_comp = 0 if c.comparable else 1
+            # 1. Prefer same sector if subject sector is known
+            same_sector = 0 if (subject.sector and c.sector and c.sector == subject.sector) else 1
+            # 2. Prefer same volatility band
+            same_band = 0 if (band is None or c.vol_band == band) else 1
+            # 3. Higher composite value score is better (negated)
+            score = -(c.value_score if c.value_score is not None else -1)
+            # 4. Lower forward P/E is better
+            pe = c.forward_pe if (c.forward_pe is not None and c.forward_pe > 0) else Decimal("999")
+            # 5. Higher 1Y return as tie-breaker
+            ret = -(c.ret_1y if c.ret_1y is not None else Decimal("-999"))
+            return (not_comp, same_sector, same_band, score, pe, ret)
+
+        candidates.sort(key=rank_val)
+    else:
+
+        def rank_mom(c: Candidate) -> tuple[int, int, Decimal, int]:
+            same_band = 0 if (band is None or c.vol_band == band) else 1
+            delta = c.ret_3y_ann_delta if c.ret_3y_ann_delta is not None else c.ret_1y_delta
+            return (
+                0 if c.comparable else 1,  # incomparable last, however well it scored
+                same_band,
+                -(delta if delta is not None else Decimal("-999")),
+                c.ter_bps if c.ter_bps is not None else 9999,
+            )
+
+        candidates.sort(key=rank_mom)
+
     result.candidates = candidates[:top]
 
     if not candidates:
@@ -493,7 +588,7 @@ def scan(
             "Overlap is unknown for some candidates: it needs a published "
             "holdings file for both funds, and none has been imported."
         )
-    if subject_row["ter_bps"] is None:
+    if subject_row["ter_bps"] is None and not is_stock:
         result.caveats.append(
             f"No ongoing charge is recorded for {subject.import_key}, so fee "
             "differences are not shown. It is on the fund's key information document."
@@ -592,7 +687,12 @@ class PortfolioPeers:
 
 
 def scan_portfolio(
-    conn: sqlite3.Connection, *, person_id: int = 1, top: int = 3, as_of: date | None = None
+    conn: sqlite3.Connection,
+    *,
+    person_id: int = 1,
+    top: int = 3,
+    as_of: date | None = None,
+    mode: str | None = None,
 ) -> PortfolioPeers:
     """One scan per holding whose risk category has actually been stated.
 
@@ -622,7 +722,7 @@ def scan_portfolio(
     out = PortfolioPeers()
     for row in rows:
         try:
-            found = scan(conn, instrument=row["import_key"], top=top, as_of=horizon)
+            found = scan(conn, instrument=row["import_key"], top=top, as_of=horizon, mode=mode)
         except PeerError:
             continue
         if found.bucket_method != "SEEDED":
