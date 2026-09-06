@@ -1078,9 +1078,28 @@ td.empty-msg {
   white-space: nowrap;
 }
 /* Action buttons: keep together, wrap onto a second line rather than squeeze. */
-.fit-table td:last-child > span { flex-wrap: wrap; justify-content: flex-end; }
-.fit-table td:last-child button,
-.fit-table td:last-child a.button { white-space: nowrap; }
+.row-actions {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.row-actions button,
+.row-actions a.button { white-space: nowrap; }
+
+/* Watched stocks: the sector is a hint, the scores are the point. */
+.watched-stocks td.sector {
+  max-width: 6.5rem;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  white-space: normal;
+}
+.fit-table td.score .tag[class*="badge-"],
+.fit-table td.score .tag[class*="quality-"] {
+  font-size: 1rem;
+  padding: 0.2rem 0.6rem;
+}
 
 /* Hover bubble: the reasoning behind a score, readable, not a browser title. */
 .tip { position: relative; display: inline-block; cursor: help; }

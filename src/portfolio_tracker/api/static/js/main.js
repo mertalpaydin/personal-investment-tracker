@@ -22,6 +22,7 @@ const NAV = [
   { href: "#/plan", pattern: "/plan", label: "Plan" },
   { href: "#/tax", pattern: "/tax", label: "Tax" },
   { href: "#/watchlist", pattern: "/watchlist", label: "Watchlist" },
+  { href: "#/stocks", pattern: "/stocks", label: "Stocks" },
   { href: "#/inbox", pattern: "/inbox", label: "Inbox" },
   { href: "#/settings", pattern: "/settings", label: "Settings" },
 ];
@@ -35,6 +36,7 @@ const VIEWS = {
   "/plan": () => import("./views/plan.js"),
   "/tax": () => import("./views/tax.js"),
   "/watchlist": () => import("./views/watchlist.js"),
+  "/stocks": () => import("./views/stocks.js"),
   "/inbox": () => import("./views/inbox.js"),
   "/settings": () => import("./views/settings.js"),
 };

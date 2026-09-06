@@ -96,6 +96,44 @@ class RebuildRequest(BaseModel):
     end: date | None = Field(default=None, description="Last valuation date; default today")
 
 
+def warm_metrics_cache() -> None:
+    """Compute every priced instrument's metrics once, off the request path.
+
+    The watchlist and stocks pages ask for all of them at once; cold, that is
+    several seconds of walking closes. Done here at startup, the first page
+    load finds them ready.
+    """
+    import logging
+    import threading
+    from contextlib import closing
+
+    from portfolio_tracker.api import deps
+    from portfolio_tracker.core import performance as performance_core
+    from portfolio_tracker.db.connection import connect
+
+    log = logging.getLogger(__name__)
+
+    def run() -> None:
+        try:
+            with closing(connect(deps.DB_PATH, read_only=True)) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT i.id, i.import_key, i.currency FROM instrument i
+                    WHERE i.status IN ('OWNED', 'WATCH', 'UNIVERSE')
+                      AND EXISTS (SELECT 1 FROM price p WHERE p.instrument_id = i.id)
+                    """
+                ).fetchall()
+                for r in rows:
+                    performance_core.metrics(
+                        conn, int(r["id"]), import_key=r["import_key"], currency=r["currency"]
+                    )
+                log.info("metrics cache warmed for %d instruments", len(rows))
+        except Exception as exc:  # a warm-up must never take the server down
+            log.warning("metrics cache warm-up skipped: %s", exc)
+
+    threading.Thread(target=run, daemon=True, name="metrics-warmup").start()
+
+
 app = FastAPI(
     title="Portfolio Tracker",
     version=__version__,

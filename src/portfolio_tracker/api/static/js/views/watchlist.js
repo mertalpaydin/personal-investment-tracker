@@ -63,7 +63,6 @@ export async function render() {
   const data = await all({
     watchlist: get("/api/watchlist"),
     positions: get("/api/positions"),
-    universe: get("/api/universe"),
     // Everything the tool can price, with metrics for performance comparisons
     everything: get("/api/watchlist", { all: true, metrics: true }),
   });
@@ -72,12 +71,11 @@ export async function render() {
     "div",
     el("h1", { text: "Watchlist & Risk Rankings" }),
     el("p.sub", {
-      text: "Track instruments, compare risk groups (1-7 scale), and identify top-performing tickers.",
+      text: "Track ETFs and funds, compare risk groups (1-7 scale), and identify top-performing tickers. Single stocks have their own page.",
     }),
   );
 
   view.append(addSection());
-  if (!isError(data.universe)) view.append(universeSection(data.universe));
 
   const entries = isError(data.watchlist) ? [] : data.watchlist.watchlist || [];
   const everything = isError(data.everything) ? [] : data.everything.watchlist || [];
@@ -86,11 +84,15 @@ export async function render() {
   if (holdings.length || everything.length) {
     view.append(comparisonChart(everything, holdings));
   }
-  view.append(watchTable(entries, isError(data.watchlist) ? null : data.watchlist.basis));
+  view.append(
+    watchedEtfSection(
+      entries.filter((e) => e.asset_class !== "STOCK"),
+      isError(data.watchlist) ? null : data.watchlist.basis,
+    ),
+  );
   if (everything.length) {
     view.append(leaderboardSection(addToComparison));
     view.append(catalogueSection(everything));
-    view.append(stockBargainFinderSection(addToComparison));
   }
 
   // Load heavier peer scan and suggestions asynchronously in background so page renders in ms
@@ -130,60 +132,6 @@ export async function render() {
  * the question people actually have: none of this is owned, and none of it
  * moves a single figure about the portfolio.
  */
-function universeSection(body) {
-  const loaded = body.loaded;
-  const waiting = loaded && body.priced < body.present;
-
-  const act = async (method) => {
-    try {
-      await (method === "POST" ? post("/api/universe", {}) : del("/api/universe"));
-      router.refresh();
-    } catch (err) {
-      window.alert(err.message);
-    }
-  };
-
-  const panel = el(
-    "div.panel",
-    el("h3", { text: "Comparison set" }),
-    el("p.note", { text: body.what_this_is }),
-    el(
-      "p",
-      loaded
-        ? `${body.present} instruments loaded, ${body.priced} with prices.`
-        : `Not loaded. ${body.catalogue_size} well-known shares and funds are ` +
-          "available: the Nasdaq-100, the German large caps, and the biggest " +
-          "European ETFs.",
-    ),
-  );
-
-  if (waiting) {
-    panel.append(
-      el("p.note.warn", {
-        text:
-          `${body.present - body.priced} of them have no price history yet. ` +
-          "They arrive with the next update — until then a peer scan has " +
-          "little to measure. Run one from Settings if you do not want to wait.",
-      }),
-    );
-  }
-
-  panel.append(
-    el(
-      "div.actions",
-      loaded
-        ? el("button", { type: "button", text: "Remove them", onclick: () => act("DELETE") })
-        : el("button.primary", {
-            type: "button",
-            text: `Load ${body.catalogue_size} instruments`,
-            onclick: () => act("POST"),
-          }),
-    ),
-  );
-
-  return el("section", heading("Where comparisons come from"), panel);
-}
-
 /* ---------------------------------------------------------------- adding */
 
 function addSection() {
@@ -370,107 +318,97 @@ export function qualityCell(s) {
   };
 }
 
-function watchTable(entries, basis) {
-  if (!entries.length) {
-    return el(
-      "div.empty",
-      el("p", { text: "Nothing on the watchlist yet." }),
-      el("p", {
-        text:
-          "Add an instrument above and it will be priced alongside your holdings, " +
-          "then compared with them.",
-      }),
-    );
-  }
+const EMPTY_WATCHLIST = () =>
+  el(
+    "div.empty",
+    el("p", { text: "Nothing on the watchlist yet." }),
+    el("p", {
+      text:
+        "Add an instrument on the Watchlist page and it will be priced alongside " +
+        "your holdings, then compared with them.",
+    }),
+  );
 
-  const etfs = entries.filter((e) => e.asset_class !== "STOCK");
-  const stocks = entries.filter((e) => e.asset_class === "STOCK");
+const tickerCol = {
+  label: "Ticker",
+  key: "instrument",
+  type: "str",
+  render: (e) => ({ node: el("strong", { text: e.instrument }), cls: "name" }),
+};
 
-  const tickerCol = {
-    label: "Ticker",
-    key: "instrument",
-    type: "str",
-    render: (e) => ({ node: el("strong", { text: e.instrument }), cls: "name" }),
-  };
-  const riskCol = {
-    label: "Risk",
-    key: (e) => e.risk_level || 0,
-    type: "num",
-    render: (e) => ({ node: riskBadge(e.risk_level) }),
-  };
-  const performanceCols = [
-    {
-      label: "1 year",
-      key: (e) => f.num(e.performance?.ret_1y),
-      type: "pct",
-      defaultSort: true,
-      defaultDir: "desc",
-      render: (e) => {
-        const p = e.performance || {};
-        return { text: f.pct(p.ret_1y, { sign: true }), cls: f.tone(p.ret_1y) };
-      },
-    },
-    {
-      label: "3 years a year",
-      key: (e) => f.num(e.performance?.ret_3y_ann),
-      type: "pct",
-      render: (e) => {
-        const p = e.performance || {};
-        return { text: f.pct(p.ret_3y_ann, { sign: true }), cls: f.tone(p.ret_3y_ann) };
-      },
-    },
-    {
-      label: "Volatility",
-      key: (e) => f.num(e.performance?.vol_1y),
-      type: "pct",
-      render: (e) => ({ text: f.pct(e.performance?.vol_1y) }),
-    },
-    {
-      label: "Worst fall",
-      key: (e) => f.num(e.performance?.max_dd_3y),
-      type: "pct",
-      render: (e) => {
-        const p = e.performance || {};
-        return { text: f.pct(p.max_dd_3y), cls: p.max_dd_3y ? "loss" : "" };
-      },
-    },
-  ];
-  const actionsCol = {
-    label: "",
-    sortable: false,
+function returnCol(label, field) {
+  return {
+    label,
+    key: (e) => f.num(e.performance?.[field]),
+    type: "pct",
     render: (e) => {
       const p = e.performance || {};
-      return {
-        node: el(
-          "span",
-          { style: "display: flex; gap: 0.35rem; align-items: center; justify-content: flex-end;" },
-          e.prices === 0 ? el("span.tag.warn", { text: "no prices yet" }) : null,
-          p.basis === "PRICE"
-            ? el("span.tag.warn", { text: "price only", title: (p.caveats || [])[0] })
-            : null,
-          el("button.small", {
-            type: "button",
-            text: "Chart",
-            title: `Add ${e.instrument} to the comparison chart above.`,
-            onclick: () => addToComparison(e.instrument),
-          }),
-          buyButton(e),
-          removeButton(e),
-        ),
-      };
+      return { text: f.pct(p[field], { sign: true }), cls: f.tone(p[field]) };
     },
   };
+}
 
-  const etfColumns = [
+const volatilityCol = {
+  label: "Volatility",
+  key: (e) => f.num(e.performance?.vol_1y),
+  type: "pct",
+  render: (e) => ({ text: f.pct(e.performance?.vol_1y) }),
+};
+
+const worstFallCol = {
+  label: "Worst fall",
+  key: (e) => f.num(e.performance?.max_dd_3y),
+  type: "pct",
+  render: (e) => {
+    const p = e.performance || {};
+    return { text: f.pct(p.max_dd_3y), cls: p.max_dd_3y ? "loss" : "" };
+  },
+};
+
+const actionsCol = {
+  label: "",
+  sortable: false,
+  render: (e) => {
+    const p = e.performance || {};
+    return {
+      node: el(
+        "span.row-actions",
+        e.prices === 0 ? el("span.tag.warn", { text: "no prices yet" }) : null,
+        p.basis === "PRICE"
+          ? el("span.tag.warn", { text: "price only", title: (p.caveats || [])[0] })
+          : null,
+        el("button.small", {
+          type: "button",
+          text: "Chart",
+          title: `Add ${e.instrument} to the comparison chart above.`,
+          onclick: () => addToComparison(e.instrument),
+        }),
+        removeButton(e),
+      ),
+    };
+  },
+};
+
+/** Watched ETFs and funds: risk group, returns, fee. */
+export function watchedEtfSection(etfs, basis) {
+  const columns = [
     tickerCol,
-    riskCol,
+    {
+      label: "Risk",
+      key: (e) => e.risk_level || 0,
+      type: "num",
+      render: (e) => ({ node: riskBadge(e.risk_level) }),
+    },
     {
       label: "Name",
       key: "name",
       type: "str",
       render: (e) => ({ text: e.name, cls: "name muted" }),
     },
-    ...performanceCols,
+    { ...returnCol("1 year", "ret_1y"), defaultSort: true, defaultDir: "desc" },
+    returnCol("3 years a year", "ret_3y_ann"),
+    volatilityCol,
+    worstFallCol,
     {
       label: "Fee",
       key: (e) => e.ter_bps ?? -1,
@@ -479,13 +417,24 @@ function watchTable(entries, basis) {
     },
     actionsCol,
   ];
+  return el(
+    "section",
+    heading("Watched ETFs & funds"),
+    etfs.length
+      ? sortableTable(columns, etfs, {
+          placeholder: "Search watched tickers, names…",
+          searchKeys: ["instrument", "name", "risk_bucket"],
+        })
+      : EMPTY_WATCHLIST(),
+    basis && etfs.length ? el("p.note", { text: basis }) : null,
+  );
+}
 
-  // Stocks: no fee to show, but a valuation and a quality verdict. The
-  // narratives sit behind a hover on the name and on each score.
+/** Watched single stocks: recent returns plus the Value and Quality verdicts. */
+export function watchedStockSection(stocks, basis) {
   const fund = (e) => e.fundamentals || {};
-  const stockColumns = [
+  const columns = [
     tickerCol,
-    riskCol,
     {
       label: "Name",
       key: "name",
@@ -500,9 +449,13 @@ function watchTable(entries, basis) {
       label: "Sector",
       key: (e) => fund(e).sector || "",
       type: "str",
-      render: (e) => ({ text: fund(e).sector || "—", cls: "prose muted" }),
+      render: (e) => ({ text: fund(e).sector || "—", cls: "prose muted sector" }),
     },
-    ...performanceCols,
+    returnCol("3 months", "ret_3m"),
+    returnCol("6 months", "ret_6m"),
+    { ...returnCol("1 year", "ret_1y"), defaultSort: true, defaultDir: "desc" },
+    volatilityCol,
+    worstFallCol,
     {
       label: "Value",
       tooltip: "Value Score 0-100: how cheap the stock is against its own sector and in absolute terms. Hover a score for the reasons.",
@@ -510,7 +463,7 @@ function watchTable(entries, basis) {
       type: "num",
       render: (e) => {
         const fd = fund(e);
-        return { node: tip(valueScoreBadge(fd.value_score, fd.value_badge), fd.value_narrative) };
+        return { node: tip(valueScoreBadge(fd.value_score, fd.value_badge), fd.value_narrative), cls: "score" };
       },
     },
     {
@@ -518,39 +471,20 @@ function watchTable(entries, basis) {
       tooltip: "Quality Score 0-100: growth record, profitability, balance sheet and price steadiness. Independent of price.",
       key: (e) => fund(e).quality_score ?? -1,
       type: "num",
-      render: (e) => qualityCell(fund(e)),
+      render: (e) => ({ ...qualityCell(fund(e)), cls: "num score" }),
     },
     actionsCol,
   ];
-
-  const group = (title, rows, columns, emptyText, extraCls = "") =>
-    el(
-      `section${extraCls}`,
-      heading(title),
-      rows.length
-        ? sortableTable(columns, rows, {
-            placeholder: "Search watched tickers, names…",
-            searchKeys: ["instrument", "name", "risk_bucket"],
-          })
-        : el("p.note", { text: emptyText }),
-    );
-
   return el(
-    "div",
-    group(
-      "Watched ETFs & funds",
-      etfs,
-      etfColumns,
-      "No ETFs or funds on the watchlist yet.",
-    ),
-    group(
-      "Watched stocks",
-      stocks,
-      stockColumns,
-      "No single stocks on the watchlist yet.",
-      ".fit-table",
-    ),
-    basis ? el("p.note", { text: basis }) : null,
+    "section.fit-table.watched-stocks",
+    heading("Watched stocks"),
+    stocks.length
+      ? sortableTable(columns, stocks, {
+          placeholder: "Search watched tickers, names…",
+          searchKeys: ["instrument", "name"],
+        })
+      : EMPTY_WATCHLIST(),
+    basis && stocks.length ? el("p.note", { text: basis }) : null,
   );
 }
 
@@ -579,22 +513,6 @@ function terCell(entry) {
   };
   input.addEventListener("change", save);
   return input;
-}
-
-/*
- * Straight into the trade form with this instrument already chosen.
- *
- * Watching something and then buying it were two disconnected screens: the
- * only way to record a purchase of a watched instrument was to import a trade
- * in it from elsewhere, which made the watchlist a place things went to be
- * looked at and never acted on.
- */
-function buyButton(entry) {
-  return el("a.button.small", {
-    href: `#/trades?type=BUY&instrument=${encodeURIComponent(entry.instrument)}`,
-    text: "Buy",
-    title: `Record a purchase of ${entry.instrument}.`,
-  });
 }
 
 function removeButton(entry) {
@@ -626,7 +544,7 @@ function removeButton(entry) {
 const compared = new Set();
 let redrawComparison = () => {};
 
-function addToComparison(key) {
+export function addToComparison(key) {
   compared.add(key);
   redrawComparison();
   document.getElementById("compare-chart")?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -1012,7 +930,7 @@ const COMPARE_RANGES = [
 ];
 let compareRange = "1Y";
 
-function comparisonChart(entries, holdings) {
+export function comparisonChart(entries, holdings) {
   const pool = [
     ...holdings.map((h) => ({ key: h.instrument, name: h.name, held: true })),
     ...entries.filter((e) => e.prices).map((e) => ({ key: e.instrument, name: e.name })),

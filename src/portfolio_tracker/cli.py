@@ -588,6 +588,7 @@ def serve(
     # The page's drop folder sits beside the database, so a second database in
     # another directory does not quietly share the first one's incoming files.
     api.configure(db_path=Path(db))
+    api.warm_metrics_cache()
     typer.echo(f"serving {db} at http://{host}:{port}/  (debug page at /debug)")
     typer.echo(f"drop holdings files in {deps.INCOMING_DIR}")
     uvicorn.run(api.app, host=host, port=port, log_level="warning")

@@ -255,6 +255,37 @@ def _periods_per_year(points: list[Point]) -> float:
     return float(TRADING_DAYS_PER_YEAR) if median <= 1 else 365.25 / median
 
 
+#: Computed metrics, keyed by everything that could change them: the
+#: instrument and horizon, plus a stamp of its price rows and of the FX table.
+#: Prices change once a day, so the second request for a page is served from
+#: here instead of re-walking three years of closes for 250 instruments.
+_METRICS_CACHE: dict[tuple, Metrics] = {}
+_METRICS_CACHE_LIMIT = 2000
+
+
+def _data_stamp(conn: sqlite3.Connection, instrument_id: int) -> tuple | None:
+    """What the cache key must carry, or None when caching is unsafe.
+
+    An in-memory database (tests) has no identity across connections, so two
+    unrelated fixtures would collide on the same instrument id: never cache
+    those. For a file, the path plus the newest price and FX rows is enough --
+    the daily update only ever appends.
+    """
+    files = [row[2] for row in conn.execute("PRAGMA database_list") if row[1] == "main"]
+    if not files or not files[0]:
+        return None
+    price = conn.execute(
+        "SELECT max(date), max(rowid), count(*) FROM price WHERE instrument_id = ?",
+        (instrument_id,),
+    ).fetchone()
+    fx_row = conn.execute("SELECT max(date), max(rowid) FROM fx_rate").fetchone()
+    return (files[0], price[0], price[1], price[2], fx_row[0], fx_row[1])
+
+
+def clear_metrics_cache() -> None:
+    _METRICS_CACHE.clear()
+
+
 def metrics(
     conn: sqlite3.Connection,
     instrument_id: int,
@@ -264,8 +295,42 @@ def metrics(
     as_of: date | None = None,
     in_eur: bool = True,
 ) -> Metrics:
-    """Every horizon this instrument has enough history to support."""
+    """Every horizon this instrument has enough history to support.
+
+    Memoised per process: the result only changes when a price or FX row is
+    added, and the cache key carries a stamp of both.
+    """
     horizon = as_of or date.today()
+    stamp = _data_stamp(conn, instrument_id)
+    key = (instrument_id, currency, in_eur, horizon.isoformat(), *stamp) if stamp else None
+    if key is not None:
+        hit = _METRICS_CACHE.get(key)
+        if hit is not None:
+            return hit
+    result = _compute_metrics(
+        conn,
+        instrument_id,
+        import_key=import_key,
+        currency=currency,
+        horizon=horizon,
+        in_eur=in_eur,
+    )
+    if key is not None:
+        if len(_METRICS_CACHE) >= _METRICS_CACHE_LIMIT:
+            _METRICS_CACHE.clear()
+        _METRICS_CACHE[key] = result
+    return result
+
+
+def _compute_metrics(
+    conn: sqlite3.Connection,
+    instrument_id: int,
+    *,
+    import_key: str,
+    currency: str,
+    horizon: date,
+    in_eur: bool,
+) -> Metrics:
     points, basis, caveats = series(
         conn, instrument_id, currency=currency, end=horizon, in_eur=in_eur
     )
