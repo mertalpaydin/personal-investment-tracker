@@ -1709,25 +1709,155 @@ export function stockBargainFinderSection(onCompare) {
       el("option", { value: "TRAP_RISK", text: "⚠️ Value Trap Warnings" }),
     );
 
-    const peSlider = el("input.slider-range-input", { type: "range", min: "5", max: "60", step: "1", value: "35" });
-    const peBadge = el("span.slider-filter-badge", { text: "35x" });
+    const peSlider = el("input.slider-range-input", { type: "range", min: "5", max: "60", step: "1", value: "60" });
+    const peBadge = el("span.slider-filter-badge", { text: "Any P/E" });
 
     const discountSlider = el("input.slider-range-input", { type: "range", min: "0", max: "50", step: "5", value: "0" });
-    const discountBadge = el("span.slider-filter-badge", { text: "0%" });
+    const discountBadge = el("span.slider-filter-badge", { text: "Any" });
 
     const fcfSlider = el("input.slider-range-input", { type: "range", min: "0", max: "12", step: "1", value: "0" });
-    const fcfBadge = el("span.slider-filter-badge", { text: "0%" });
+    const fcfBadge = el("span.slider-filter-badge", { text: "Any" });
 
     const tableWrap = el("div.wrap");
 
-    function update() {
-      peBadge.textContent = `${peSlider.value}x`;
-      discountBadge.textContent = `${discountSlider.value}%`;
-      fcfBadge.textContent = `${fcfSlider.value}%`;
+    const columns = [
+      {
+        label: "Ticker",
+        key: "symbol",
+        render: (s) => ({
+          node: el("button.linklike", {
+            type: "button",
+            text: s.symbol,
+            title: `Add ${s.symbol} to comparison chart`,
+            onclick: () => onCompare && onCompare(s.symbol),
+          }),
+        }),
+      },
+      {
+        label: "Name",
+        key: "name",
+        cls: "name",
+        render: (s) => ({ text: s.name, cls: "name" }),
+      },
+      {
+        label: "Sector",
+        key: (s) => s.sector || "",
+        cls: "prose muted",
+        render: (s) => ({ text: s.sector || "—", cls: "prose muted" }),
+      },
+      {
+        label: "Price",
+        key: (s) => f.num(s.current_price),
+        type: "num",
+        render: (s) => ({
+          text: f.money(s.current_price, s.currency || "EUR"),
+          cls: "num",
+        }),
+      },
+      {
+        label: "Fwd P/E",
+        tooltip: "Forward Price to Earnings ratio. Lower indicates cheaper relative to expected earnings.",
+        key: (s) => (s.forward_pe != null && s.forward_pe > 0 ? Number(s.forward_pe) : 9999),
+        type: "num",
+        render: (s) => ({
+          text: s.forward_pe != null ? `${Number(s.forward_pe).toFixed(1)}x` : "—",
+          cls: s.forward_pe != null && s.forward_pe < 15 ? "gain num" : "num",
+        }),
+      },
+      {
+        label: "P/B",
+        tooltip: "Price to Book ratio. Measures market price relative to book value.",
+        key: (s) => (s.price_to_book != null && s.price_to_book > 0 ? Number(s.price_to_book) : 9999),
+        type: "num",
+        render: (s) => ({
+          text: s.price_to_book != null ? `${Number(s.price_to_book).toFixed(1)}x` : "—",
+          cls: "num",
+        }),
+      },
+      {
+        label: "FCF Yield",
+        tooltip: "Free Cash Flow Yield = Free Cash Flow / Market Cap. Higher indicates strong cash generation.",
+        key: (s) => f.num(s.fcf_yield),
+        type: "pct",
+        render: (s) => ({
+          text: f.pct(s.fcf_yield),
+          cls: s.fcf_yield != null && s.fcf_yield > 0.05 ? "gain num" : "num",
+        }),
+      },
+      {
+        label: "vs 52W High",
+        tooltip: "Percentage discount from 52-week high price.",
+        key: (s) => f.num(s.pct_off_52w_high),
+        type: "pct",
+        render: (s) => ({
+          text: f.pct(s.pct_off_52w_high),
+          cls: s.pct_off_52w_high != null && s.pct_off_52w_high <= -0.2 ? "loss num" : "num",
+        }),
+      },
+      {
+        label: "Target Upside",
+        tooltip: "Wall Street consensus price target upside percentage.",
+        key: (s) => f.num(s.target_upside_pct),
+        type: "pct",
+        render: (s) => ({
+          text: f.pct(s.target_upside_pct, { sign: true }),
+          cls: s.target_upside_pct != null && s.target_upside_pct > 0 ? "gain num" : "num",
+        }),
+      },
+      {
+        label: "Value Score",
+        tooltip: "Composite value score (0-100) based on multiples, pullback discount, consensus upside, and solvency.",
+        key: (s) => s.value_score ?? 0,
+        type: "num",
+        defaultSort: true,
+        defaultDir: "desc",
+        render: (s) => ({
+          node: valueScoreBadge(s.value_score, s.value_badge),
+        }),
+      },
+      {
+        label: "Assessment",
+        key: "value_narrative",
+        sortable: false,
+        render: (s) => ({
+          text: s.value_narrative || "—",
+          cls: "prose small muted",
+          style: "max-width: 260px;",
+        }),
+      },
+      {
+        label: "",
+        sortable: false,
+        render: (s) => ({
+          node: el("button.small", {
+            type: "button",
+            text: "+ Compare",
+            title: `Add ${s.symbol} to comparison chart`,
+            onclick: () => onCompare && onCompare(s.symbol),
+          }),
+        }),
+      },
+    ];
 
+    function renderTable(stocks) {
+      const tbl = sortableTable(columns, stocks, {
+        placeholder: "Filter stocks by ticker, name, sector...",
+        searchKeys: ["symbol", "name", "sector", "value_badge"],
+        emptyText: "No stocks match the selected filters.",
+        pageSize: 15,
+        allowShowAll: true,
+      });
+      tableWrap.replaceChildren(tbl);
+    }
+
+    function update() {
       const maxPeVal = Number(peSlider.value);
       const minDiscVal = Number(discountSlider.value);
       const minFcfVal = Number(fcfSlider.value);
+
+      peBadge.textContent = maxPeVal >= 60 ? "Any P/E" : `≤ ${maxPeVal}x`;
+      discountBadge.textContent = minDiscVal === 0 ? "Any" : `≥ ${minDiscVal}% off`;
+      fcfBadge.textContent = minFcfVal === 0 ? "Any" : `≥ ${minFcfVal}%`;
 
       const filtered = allStocks.filter((s) => {
         if (selectedSector && s.sector !== selectedSector) return false;
@@ -1738,8 +1868,10 @@ export function stockBargainFinderSection(onCompare) {
         if (selectedBadge === "PREMIUM" && s.value_badge !== "PREMIUM") return false;
         if (selectedBadge === "TRAP_RISK" && s.value_badge !== "TRAP_RISK") return false;
 
-        if (s.forward_pe !== null && s.forward_pe !== undefined) {
-          if (s.forward_pe > maxPeVal || s.forward_pe < 0) return false;
+        if (maxPeVal < 60) {
+          if (s.forward_pe === null || s.forward_pe === undefined || s.forward_pe > maxPeVal || s.forward_pe <= 0) {
+            return false;
+          }
         }
         if (minDiscVal > 0) {
           if (s.pct_off_52w_high === null || s.pct_off_52w_high === undefined) return false;
@@ -1777,67 +1909,21 @@ export function stockBargainFinderSection(onCompare) {
         "div.slider-filter-group",
         el("div.slider-filter-header", el("span", { text: "Max Forward P/E" }), peBadge),
         peSlider,
-        el("div.slider-range-labels", el("span", { text: "5x" }), el("span", { text: "60x" })),
+        el("div.slider-range-labels", el("span", { text: "5x" }), el("span", { text: "Any" })),
       ),
       el(
         "div.slider-filter-group",
         el("div.slider-filter-header", el("span", { text: "Min Dip from 52W High" }), discountBadge),
         discountSlider,
-        el("div.slider-range-labels", el("span", { text: "0%" }), el("span", { text: "-50%" })),
+        el("div.slider-range-labels", el("span", { text: "Any" }), el("span", { text: "-50%" })),
       ),
       el(
         "div.slider-filter-group",
         el("div.slider-filter-header", el("span", { text: "Min Free Cash Flow Yield" }), fcfBadge),
         fcfSlider,
-        el("div.slider-range-labels", el("span", { text: "0%" }), el("span", { text: "12%" })),
+        el("div.slider-range-labels", el("span", { text: "Any" }), el("span", { text: "12%" })),
       ),
     );
-
-    function renderTable(stocks) {
-      if (!stocks.length) {
-        tableWrap.replaceChildren(el("p.note", { text: "No stocks match the selected filters." }));
-        return;
-      }
-      const headers = [
-        "Ticker", "Name", "Sector", "Price", "Fwd P/E", "P/B", "FCF Yield",
-        "vs 52W High", "Target Upside", "Value Score", "Assessment", "Action"
-      ];
-      const rows = stocks.map((s) => [
-        {
-          node: el("button.linklike", {
-            type: "button",
-            text: s.symbol,
-            title: `Add ${s.symbol} to comparison chart`,
-            onclick: () => onCompare && onCompare(s.symbol),
-          }),
-        },
-        { text: s.name, cls: "name" },
-        { text: s.sector || "—", cls: "prose muted" },
-        { text: s.current_price != null ? `${Number(s.current_price).toFixed(2)} ${s.currency}` : "—", cls: "num" },
-        { text: s.forward_pe != null ? `${Number(s.forward_pe).toFixed(1)}x` : "—", cls: "num" },
-        { text: s.price_to_book != null ? `${Number(s.price_to_book).toFixed(1)}x` : "—", cls: "num" },
-        { text: s.fcf_yield != null ? f.pct(s.fcf_yield) : "—", cls: "num" },
-        {
-          text: s.pct_off_52w_high != null ? f.pct(s.pct_off_52w_high) : "—",
-          cls: s.pct_off_52w_high != null && s.pct_off_52w_high <= -0.2 ? "num loss" : "num",
-        },
-        {
-          text: s.target_upside_pct != null ? f.pct(s.target_upside_pct) : "—",
-          cls: s.target_upside_pct != null && s.target_upside_pct > 0 ? "num gain" : "num",
-        },
-        { node: valueScoreBadge(s.value_score, s.value_badge) },
-        { text: s.value_narrative || "—", cls: "prose small muted", style: "max-width: 260px;" },
-        {
-          node: el("button.small", {
-            type: "button",
-            text: "+ Compare",
-            onclick: () => onCompare && onCompare(s.symbol),
-          }),
-        },
-      ]);
-      const tbl = sortableTable(headers, rows);
-      tableWrap.replaceChildren(tbl);
-    }
 
     slot.replaceChildren(controls, tableWrap);
     update();
