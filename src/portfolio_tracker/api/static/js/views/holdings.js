@@ -145,12 +145,19 @@ function table(rows, o) {
       type: "num",
       defaultSort: true,
       defaultDir: "desc",
+      render: (r) => ({ text: f.eur(r.value_eur) }),
+    },
+    {
+      label: "% of portfolio",
+      key: (r) => {
+        const portTotal = f.num(o.value?.now_eur) || total;
+        return portTotal ? (f.num(r.value_eur) ?? 0) / portTotal : null;
+      },
+      type: "pct",
       render: (r) => {
-        const weight = total ? (f.num(r.value_eur) ?? 0) / total : null;
-        return {
-          text: f.eur(r.value_eur),
-          title: weight === null ? undefined : `${f.pct(weight, { digits: 1 })} of holdings`,
-        };
+        const portTotal = f.num(o.value?.now_eur) || total;
+        const pctVal = portTotal ? (f.num(r.value_eur) ?? 0) / portTotal : null;
+        return { text: f.pct(pctVal, { digits: 1 }) };
       },
     },
     {

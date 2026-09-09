@@ -559,9 +559,72 @@ def series(
     if until is not None:
         points = [p for p in points if p["date"] <= until.isoformat()]
 
+    # Open holdings daily prices for performance comparison
+    open_instruments = [
+        r["import_key"]
+        for r in conn.execute(
+            """
+            SELECT DISTINCT i.import_key
+            FROM position_daily p
+            JOIN instrument i ON i.id = p.instrument_id
+            JOIN account a ON a.id = p.account_id
+            WHERE a.person_id = ?
+              AND p.date = (SELECT max(date) FROM portfolio_daily WHERE person_id = ?)
+              AND p.quantity > 0
+            ORDER BY p.market_value_eur DESC
+            """,
+            (person_id, person_id),
+        ).fetchall()
+    ]
+
+    holdings_series: list[dict[str, Any]] = []
+    if open_instruments and points:
+        min_date = points[0]["date"]
+        max_date = points[-1]["date"]
+        marks = ",".join("?" for _ in open_instruments)
+        pos_rows = conn.execute(
+            f"""
+            SELECT p.date, i.import_key, i.name, p.price_local, p.fx_rate
+            FROM position_daily p
+            JOIN instrument i ON i.id = p.instrument_id
+            JOIN account a ON a.id = p.account_id
+            WHERE a.person_id = ?
+              AND i.import_key IN ({marks})
+              AND p.date >= ? AND p.date <= ?
+            ORDER BY p.date
+            """,
+            (person_id, *open_instruments, min_date, max_date),
+        ).fetchall()
+
+        by_inst: dict[str, list[dict[str, Any]]] = {k: [] for k in open_instruments}
+        inst_names: dict[str, str] = {}
+        for r in pos_rows:
+            p_loc = Decimal(str(r["price_local"])) if r["price_local"] is not None else None
+            fx_rate = Decimal(str(r["fx_rate"])) if r["fx_rate"] is not None else Decimal(1)
+            eur_price = (p_loc / fx_rate) if (p_loc is not None and fx_rate > ZERO) else None
+            by_inst[r["import_key"]].append(
+                {
+                    "date": r["date"],
+                    "price_eur": _decimal(eur_price),
+                }
+            )
+            inst_names[r["import_key"]] = r["name"]
+
+        for k in open_instruments:
+            pts = by_inst.get(k, [])
+            if pts:
+                holdings_series.append(
+                    {
+                        "instrument": k,
+                        "name": inst_names.get(k, k),
+                        "points": pts,
+                    }
+                )
+
     return {
         "person_id": person_id,
         "points": points,
+        "holdings": holdings_series,
     }
 
 

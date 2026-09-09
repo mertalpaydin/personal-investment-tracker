@@ -28,17 +28,17 @@ const NAV = [
 ];
 
 const VIEWS = {
-  "/": () => import("./views/overview.js"),
-  "/holdings": () => import("./views/holdings.js"),
-  "/holdings/:key": () => import("./views/holding.js"),
-  "/rebalance": () => import("./views/rebalance.js"),
-  "/trades": () => import("./views/trades.js"),
-  "/plan": () => import("./views/plan.js"),
-  "/tax": () => import("./views/tax.js"),
-  "/watchlist": () => import("./views/watchlist.js"),
-  "/stocks": () => import("./views/stocks.js"),
-  "/inbox": () => import("./views/inbox.js"),
-  "/settings": () => import("./views/settings.js"),
+  "/": () => import("./views/overview.js?v=2"),
+  "/holdings": () => import("./views/holdings.js?v=2"),
+  "/holdings/:key": () => import("./views/holding.js?v=2"),
+  "/rebalance": () => import("./views/rebalance.js?v=2"),
+  "/trades": () => import("./views/trades.js?v=2"),
+  "/plan": () => import("./views/plan.js?v=2"),
+  "/tax": () => import("./views/tax.js?v=2"),
+  "/watchlist": () => import("./views/watchlist.js?v=2"),
+  "/stocks": () => import("./views/stocks.js?v=2"),
+  "/inbox": () => import("./views/inbox.js?v=2"),
+  "/settings": () => import("./views/settings.js?v=2"),
 };
 
 function buildNav() {

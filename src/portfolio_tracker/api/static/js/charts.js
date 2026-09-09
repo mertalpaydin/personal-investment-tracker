@@ -148,11 +148,31 @@ export function timeChart(container, opts) {
     });
 
     /*
-     * Fit the axis to the data, not to zero.
+     * Fit the axis to the data, including baseline when specified.
      */
     for (const name of usedScales) {
+      const baselineVal =
+        opts.baseline !== undefined
+          ? opts.baseline
+          : kind === "index"
+            ? 100
+            : kind === "pct" && opts.baseline !== false
+              ? 0
+              : null;
+
       if (zero && name === "y") {
         scales[name] = { range: (_u, min, max) => [Math.min(0, min), max] };
+        continue;
+      }
+      if (baselineVal !== null && name === "y") {
+        scales[name] = {
+          range: (_u, min, max) => {
+            const lo = Math.min(baselineVal, min);
+            const hi = Math.max(baselineVal, max);
+            const pad = (hi - lo) / 20 || 0.01;
+            return [lo - pad, hi + pad];
+          },
+        };
         continue;
       }
       scales[name] = {
@@ -182,18 +202,25 @@ export function timeChart(container, opts) {
       });
     }
 
-    // Draw prominent red dashed line for 100 baseline on index charts
+    // Draw prominent red line for 0% or 100 baseline on return/index charts
     const drawBaseline = (u) => {
-      const yVal = opts.baseline !== undefined ? opts.baseline : (kind === "index" ? 100 : null);
+      const yVal =
+        opts.baseline !== undefined
+          ? opts.baseline
+          : kind === "index"
+            ? 100
+            : kind === "pct" && opts.baseline !== false
+              ? 0
+              : null;
       if (yVal === null) return;
       const yPos = u.valToPos(yVal, "y", true);
       if (yPos >= u.bbox.top && yPos <= u.bbox.top + u.bbox.height) {
         const ctx = u.ctx;
         ctx.save();
         ctx.beginPath();
-        ctx.strokeStyle = "rgba(239, 68, 68, 0.75)";
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([5, 4]);
+        ctx.strokeStyle = opts.baselineColour || "rgba(220, 38, 38, 0.85)";
+        ctx.lineWidth = opts.baselineWidth || 1.6;
+        ctx.setLineDash(opts.baselineDash || [5, 4]);
         ctx.moveTo(u.bbox.left, yPos);
         ctx.lineTo(u.bbox.left + u.bbox.width, yPos);
         ctx.stroke();

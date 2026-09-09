@@ -58,14 +58,48 @@ export async function render({ query }) {
   const series = await get("/api/returns/series", { from: o.window.from }).catch(() => null);
 
   const view = el("div", el("h1", { text: "Overview" }));
+  view.append(topReturnBoxes(o));
   view.append(rangePicker(o));
   view.append(headline(o, isError(data.portfolio) ? null : data.portfolio));
   view.append(explainPanel("/api/brief", {}, "Summarise this in words"));
   if (series) view.append(valueChart(o, series));
-  view.append(splitColumns(o, isError(data.allocation) ? null : data.allocation));
-  view.append(holdingsSection(o));
+  view.append(mainHoldingsLayout(o, isError(data.allocation) ? null : data.allocation));
   if (o.goal) view.append(goalSection(o.goal));
   return view;
+}
+
+/* --------------------------------------------------------- top returns */
+
+function topReturnBoxes(o) {
+  const items = o.top_returns || [];
+  if (!items.length) return el("div");
+
+  const container = el("div.top-returns");
+  for (const item of items) {
+    const isCurrent = item.range_key === range;
+    const cardEl = el(
+      "div.card.return-box",
+      {
+        "aria-pressed": String(isCurrent),
+        title: `Switch overview window to ${item.label}`,
+        onclick: () => {
+          range = item.range_key;
+          router.go("#/?range=" + item.range_key);
+        },
+      },
+      el("span.k", { text: `${item.label} Return` }),
+      el("div.v", {
+        text: f.pct(item.twr, { sign: true }),
+        cls: f.tone(item.twr),
+      }),
+      el("div.sub2", {
+        text: f.eur(item.value_eur, { sign: true }),
+        cls: f.tone(item.value_eur),
+      }),
+    );
+    container.append(cardEl);
+  }
+  return el("section.top-returns-section", container);
 }
 
 /* --------------------------------------------------------------- window */
@@ -108,7 +142,7 @@ function hintCard(label, hint, value, opts = {}) {
 
 function headline(o, p) {
   const v = o.value;
-  const r = o.return;
+  const cashVal = o.cash_eur ?? p?.uninvested_cash_eur ?? 0;
 
   const cards = el(
     "div.cards",
@@ -124,20 +158,16 @@ function headline(o, p) {
       f.pct(v.change_pct, { sign: true }),
       { valueCls: f.tone(v.change_pct), sub: f.eur(v.change_eur, { sign: true }) },
     ),
-    r.reliable
-      ? hintCard(
-          "Return",
-          "What the investments earned, with money paid in and taken out removed. This is the performance figure.",
-          f.pct(r.twr, { sign: true }),
-          {
-            valueCls: f.tone(r.twr),
-            sub:
-              r.twr_annualised === null
-                ? null
-                : `${f.pct(r.twr_annualised, { sign: true })} a year`,
-          },
-        )
-      : hintCard("Return", r.unreliable_because, "—", { cls: "aside", sub: "not reliable" }),
+    hintCard(
+      "Cash balance",
+      "Uninvested cash across depot and bank accounts.",
+      f.eur(cashVal),
+      {
+        sub: p?.uninvested_cash?.from_capital_eur
+          ? `${f.eur(p.uninvested_cash.from_capital_eur)} capital`
+          : "available cash",
+      },
+    ),
   );
 
   if (p) {
@@ -173,7 +203,9 @@ function headline(o, p) {
   }
 
   const section = el("section", cards);
-  if (!r.reliable) section.append(el("p.note.bad", { text: r.unreliable_because }));
+  if (o.return && !o.return.reliable) {
+    section.append(el("p.note.bad", { text: o.return.unreliable_because }));
+  }
   return section;
 }
 
@@ -185,52 +217,91 @@ function valueChart(o, series) {
 
   const pal = palette();
   const box = el("div.chart");
-  const ddBox = el("div.chart");
+  const holdingsBox = el("div.chart");
+  const firstUnitPrice = f.num(pts[0].unit_price);
+  const holdingItems = series.holdings || [];
 
   queueMicrotask(() => {
+    // Portfolio Return
     timeChart(box, {
       x: pts.map((r) => toTs(r.date)),
       height: 280,
-      kind: "eur",
-      sync: "overview",
-      series: [
-        { label: "What it is worth", data: pts.map((r) => f.num(r.total_value_eur)), fill: 0.14 },
-        {
-          label: "What you put in",
-          data: pts.map((r) => f.num(r.net_contributions_eur)),
-          colour: pal.muted,
-          width: 1.4,
-          dash: [4, 4],
-        },
-      ],
-    });
-    timeChart(ddBox, {
-      x: pts.map((r) => toTs(r.date)),
-      height: 280,
       kind: "pct",
+      zero: true,
+      baseline: 0,
       sync: "overview",
       series: [
         {
-          label: "Below the previous peak",
-          data: pts.map((r) => f.num(r.drawdown_pct)),
-          colour: pal.loss,
-          fill: 0.14,
+          label: "Portfolio",
+          data: pts.map((r) =>
+            firstUnitPrice ? f.num(r.unit_price) / firstUnitPrice - 1 : 0,
+          ),
+          colour: pal.accent,
+          width: 2.2,
+          fill: 0.12,
         },
       ],
     });
+
+    // Holdings Performance comparison
+    if (holdingItems.length) {
+      const dates = pts.map((r) => r.date);
+      const hSeries = [];
+
+      holdingItems.forEach((h, i) => {
+        const priceMap = new Map(h.points.map((p) => [p.date, f.num(p.price_eur)]));
+        const alignedPrices = dates.map((d) => priceMap.get(d) ?? null);
+        const firstPrice = alignedPrices.find((p) => p !== null);
+        if (firstPrice) {
+          const returnsData = alignedPrices.map((p) =>
+            p !== null ? p / firstPrice - 1 : null,
+          );
+          hSeries.push({
+            label: h.instrument,
+            data: returnsData,
+            colour: pal.series[i % pal.series.length],
+            width: 1.6,
+            spanGaps: true,
+          });
+        }
+      });
+
+      timeChart(holdingsBox, {
+        x: pts.map((r) => toTs(r.date)),
+        height: 280,
+        kind: "pct",
+        zero: true,
+        baseline: 0,
+        sync: "overview",
+        series: hSeries,
+      });
+    }
   });
 
   return el(
     "section",
-    heading("Value against money put in"),
+    heading("Performance"),
     el(
       "div.chart-pair",
-      el("div", box, el("p.chart-note", {
-        text:
-          "The gap between the lines is everything the portfolio earned. " +
-          "“Money put in” starts at what the accounts already held, not at zero.",
-      })),
-      el("div", el("h3", { text: "How far below its previous peak" }), ddBox),
+      el(
+        "div",
+        el("h3", { text: "Portfolio return" }),
+        box,
+        el("p.chart-note", {
+          text:
+            "Time-weighted return over this window, neutralising deposits and withdrawals. " +
+            "Red dashed line marks 0% return.",
+        }),
+      ),
+      el(
+        "div",
+        el("h3", { text: "Holdings performance" }),
+        holdingsBox,
+        el("p.chart-note", {
+          text:
+            "Individual holding returns over this window. Compares price movement per unit.",
+        }),
+      ),
     ),
   );
 }
@@ -238,15 +309,15 @@ function valueChart(o, series) {
 /* ------------------------------------------------------------- columns */
 
 /*
- * Two columns. A six-row bar chart spanning the full page width is mostly
- * whitespace with a label at either end.
+ * Where the return came from and what it is invested in placed to the left
+ * of By holding.
  */
-function splitColumns(o, allocation) {
-  const cols = el("div.cols");
+function mainHoldingsLayout(o, allocation) {
+  const leftCol = el("div.breakdown-col");
   const a = o.attribution;
 
   if (a) {
-    cols.append(
+    leftCol.append(
       el(
         "section",
         heading("Where the return came from"),
@@ -270,7 +341,7 @@ function splitColumns(o, allocation) {
       right: f.eur(b.value_eur, { compact: true }),
     }));
     if (items.length) {
-      cols.append(
+      leftCol.append(
         el(
           "section",
           heading("What it is invested in"),
@@ -279,7 +350,9 @@ function splitColumns(o, allocation) {
       );
     }
   }
-  return cols;
+
+  const rightCol = el("div.holdings-col", holdingsSection(o));
+  return el("div.overview-split", leftCol, rightCol);
 }
 
 /* ------------------------------------------------------------ holdings */

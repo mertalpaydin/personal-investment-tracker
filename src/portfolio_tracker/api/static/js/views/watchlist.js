@@ -974,6 +974,7 @@ let compareRange = "1Y";
 
 export function comparisonChart(entries, holdings) {
   const pool = [
+    { key: "PORTFOLIO", name: "Total portfolio", isPortfolio: true },
     ...holdings.map((h) => ({ key: h.instrument, name: h.name, held: true })),
     ...entries.filter((e) => e.prices).map((e) => ({ key: e.instrument, name: e.name })),
   ];
@@ -990,11 +991,11 @@ export function comparisonChart(entries, holdings) {
     const chipNodes = keys.map((k) =>
       el(
         "span.chip",
-        el("span", { text: k }),
+        el("span", { text: k === "PORTFOLIO" ? "Total portfolio" : k }),
         el("button.linklike", {
           type: "button",
           text: "×",
-          title: `Take ${k} off the chart.`,
+          title: `Take ${k === "PORTFOLIO" ? "Total portfolio" : k} off the chart.`,
           onclick: () => {
             compared.delete(k);
             draw();
@@ -1013,7 +1014,16 @@ export function comparisonChart(entries, holdings) {
     const pal = palette();
     const loaded = await all(
       Object.fromEntries(
-        keys.map((k) => [k, get(`/api/instruments/${encodeURIComponent(k)}/series`)]),
+        keys.map((k) => [
+          k,
+          k === "PORTFOLIO"
+            ? get("/api/returns/series").then((res) => ({
+                instrument: "PORTFOLIO",
+                name: "Total portfolio",
+                points: (res.points || []).map((p) => ({ date: p.date, level: f.num(p.unit_price) })),
+              }))
+            : get(`/api/instruments/${encodeURIComponent(k)}/series`),
+        ]),
       ),
     );
 
@@ -1095,13 +1105,17 @@ export function comparisonChart(entries, holdings) {
 
       const indexedData = indexTo100(filled);
       if (indexedData.some((v) => v !== null)) {
-        const longName = loaded[k]?.name || pool.find((p) => p.key === k)?.name || k;
+        const isPortfolio = k === "PORTFOLIO";
+        const isHeld = holdings.some((h) => h.instrument === k);
+        const longName = isPortfolio
+          ? "Total portfolio"
+          : loaded[k]?.name || pool.find((p) => p.key === k)?.name || k;
         series.push({
           label: longName,
           data: indexedData,
-          colour: pal.series[i % pal.series.length],
-          width: holdings.some((h) => h.instrument === k) ? 2.4 : 1.8,
-          dash: holdings.some((h) => h.instrument === k) ? undefined : [4, 3],
+          colour: isPortfolio ? (pal.accent || "#2563eb") : pal.series[i % pal.series.length],
+          width: isPortfolio ? 2.8 : (isHeld ? 2.4 : 1.8),
+          dash: isPortfolio ? [6, 3] : (isHeld ? undefined : [4, 3]),
           spanGaps: true,
         });
       }
@@ -1130,9 +1144,10 @@ export function comparisonChart(entries, holdings) {
   };
   updateRangeButtons();
 
-  const option = (x) => el("option", { value: x.key, text: `${x.key} — ${x.name}` });
+  const option = (x) => el("option", { value: x.key, text: x.isPortfolio ? x.name : `${x.key} — ${x.name}` });
+  const portfolioOpt = pool.filter((x) => x.isPortfolio);
   const held = pool.filter((x) => x.held);
-  const rest = pool.filter((x) => !x.held);
+  const rest = pool.filter((x) => !x.held && !x.isPortfolio);
   const picker = el(
     "select",
     {
@@ -1142,6 +1157,7 @@ export function comparisonChart(entries, holdings) {
       },
     },
     el("option", { value: "", text: "Add an instrument to compare…" }),
+    portfolioOpt.length ? el("optgroup", { label: "Portfolio" }, portfolioOpt.map(option)) : null,
     held.length ? el("optgroup", { label: "You hold" }, held.map(option)) : null,
     rest.length
       ? el("optgroup", { label: "Watched and comparison set" }, rest.map(option))
@@ -1161,7 +1177,7 @@ export function comparisonChart(entries, holdings) {
       box,
       el("p.chart-note", {
         text:
-          "All indexed to 100 at the start of the selected window, in euros. Solid line is held, dashed is watched. Red dashed line marks baseline.",
+          "All indexed to 100 at the start of the selected window, in euros. Solid line is held, dashed is watched or total portfolio. Red dashed line marks baseline.",
       }),
     ),
   );

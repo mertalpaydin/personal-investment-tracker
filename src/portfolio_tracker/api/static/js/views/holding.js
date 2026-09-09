@@ -68,9 +68,9 @@ export async function render({ params }) {
   view.append(rangePicker(window));
 
   const chartPair1 = el(
-    "div.chart-pair",
-    valueVsCost(h, window),
-    vsPortfolio(h, window, isError(data.portfolio) ? null : data.portfolio),
+    "div.holding-chart-layout",
+    returnVsPortfolio(h, window, isError(data.portfolio) ? null : data.portfolio),
+    statsVsPortfolio(h, window, isError(data.portfolio) ? null : data.portfolio),
   );
   view.append(chartPair1);
 
@@ -201,39 +201,69 @@ function sliceToRange(history) {
 
 /* -------------------------------------------------------------- charts */
 
-function valueVsCost(h, pts) {
+function returnVsPortfolio(h, pts, portfolio) {
   const pal = palette();
   const box = el("div.chart");
-
   const marks = markers(h, pts);
+
+  // The holding's own euro unit price: local price converted at that day's rate.
+  const euroPrices = pts.map((p) => {
+    const price = f.num(p.price_local);
+    const rate = f.num(p.fx_rate);
+    if (price === null || !rate) return null;
+    return price / rate;
+  });
+
+  const firstPrice = euroPrices.find((v) => v !== null);
+  const returnPct = euroPrices.map((v) =>
+    v !== null && firstPrice ? v / firstPrice - 1 : null,
+  );
+
+  const series = [
+    {
+      label: h.instrument,
+      data: returnPct,
+      colour: pal.series[0],
+      width: 2.2,
+      fill: 0.12,
+    },
+  ];
+
+  if (portfolio) {
+    const byDate = new Map(portfolio.points.map((p) => [p.date, f.num(p.unit_price)]));
+    const aligned = pts.map((p) => byDate.get(p.date) ?? null);
+    const firstPort = aligned.find((v) => v !== null);
+    if (firstPort) {
+      series.push({
+        label: "Whole portfolio",
+        data: aligned.map((v) => (v !== null ? v / firstPort - 1 : null)),
+        colour: pal.muted,
+        width: 1.5,
+        dash: [4, 4],
+      });
+    }
+  }
 
   queueMicrotask(() =>
     timeChart(box, {
       x: pts.map((p) => toTs(p.date)),
       height: 270,
-      kind: "eur",
+      kind: "pct",
+      zero: true,
+      baseline: 0,
       sync: `holding-${h.instrument}`,
-      series: [
-        { label: "Value", data: pts.map((p) => f.num(p.market_value_eur)), fill: 0.14 },
-        {
-          label: "Cost",
-          data: pts.map((p) => f.num(p.cost_basis_eur)),
-          colour: pal.muted,
-          width: 1.4,
-          dash: [4, 4],
-        },
-      ],
+      series,
     }),
   );
 
   return el(
-    "section",
-    heading("Value against cost"),
+    "div",
+    el("h3", { text: "Return vs whole portfolio" }),
     box,
     el("p.chart-note", {
       text:
-        "The dashed line is what was paid, in euros, at the exchange rate on " +
-        "each purchase date. Where value sits above cost, the holding is ahead.",
+        `${h.instrument} return compared with the whole portfolio over this window. ` +
+        "Red dashed line marks 0% return.",
     }),
     marks,
   );
@@ -257,58 +287,156 @@ function markers(h, pts) {
   );
 }
 
-function vsPortfolio(h, pts, portfolio) {
-  const pal = palette();
-  const box = el("div.chart");
+function statsVsPortfolio(h, pts, portfolio) {
+  // 1. Holding return & daily returns
+  const euroPrices = pts
+    .map((p) => {
+      const price = f.num(p.price_local);
+      const rate = f.num(p.fx_rate);
+      return price !== null && rate ? price / rate : null;
+    })
+    .filter((p) => p !== null);
 
-  // The holding's own euro unit price: local price converted at that day's
-  // rate. Using market value instead would make a purchase look like a gain,
-  // since buying more raises the value without the holding having moved.
-  const own = pts.map((p) => {
-    const price = f.num(p.price_local);
-    const rate = f.num(p.fx_rate);
-    if (price === null || !rate) return null;
-    return price / rate;
-  });
+  const hFirst = euroPrices[0];
+  const hLast = euroPrices[euroPrices.length - 1];
+  const hReturn = hFirst && hLast ? hLast / hFirst - 1 : null;
 
-  const series = [
-    { label: h.instrument, data: indexTo100(own), colour: pal.series[0], width: 2 },
-  ];
-
-  if (portfolio) {
-    const byDate = new Map(portfolio.points.map((p) => [p.date, f.num(p.unit_price)]));
-    const aligned = pts.map((p) => byDate.get(p.date) ?? null);
-    if (aligned.some((v) => v !== null)) {
-      series.push({
-        label: "Whole portfolio",
-        data: indexTo100(aligned),
-        colour: pal.muted,
-        width: 1.4,
-        dash: [4, 4],
-      });
+  const hDailies = [];
+  for (let i = 1; i < euroPrices.length; i++) {
+    if (euroPrices[i - 1] > 0) {
+      hDailies.push(euroPrices[i] / euroPrices[i - 1] - 1);
     }
   }
 
-  queueMicrotask(() =>
-    timeChart(box, {
-      x: pts.map((p) => toTs(p.date)),
-      height: 270,
-      kind: "index",
-      sync: `holding-${h.instrument}`,
-      series,
-    }),
+  // 2. Portfolio return & daily returns over same window
+  let pReturn = null;
+  const pDailies = [];
+  let pPoints = [];
+  if (portfolio && portfolio.points?.length) {
+    const fromDate = pts[0]?.date;
+    const toDate = pts[pts.length - 1]?.date;
+    pPoints = portfolio.points
+      .filter((p) => p.date >= fromDate && p.date <= toDate)
+      .map((p) => f.num(p.unit_price))
+      .filter((p) => p !== null);
+
+    if (pPoints.length >= 2) {
+      pReturn = pPoints[pPoints.length - 1] / pPoints[0] - 1;
+      for (let i = 1; i < pPoints.length; i++) {
+        if (pPoints[i - 1] > 0) {
+          pDailies.push(pPoints[i] / pPoints[i - 1] - 1);
+        }
+      }
+    }
+  }
+
+  // Volatility calculation helper (annualized std dev * sqrt(252))
+  const calcVol = (returns) => {
+    if (returns.length < 2) return null;
+    const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
+    const variance =
+      returns.reduce((acc, r) => acc + (r - mean) ** 2, 0) / (returns.length - 1);
+    return Math.sqrt(variance * 252);
+  };
+
+  // Drawdown helper
+  const calcMaxDd = (levels) => {
+    if (levels.length < 2) return null;
+    let peak = levels[0];
+    let worst = 0;
+    for (const v of levels) {
+      if (v > peak) peak = v;
+      if (peak > 0) worst = Math.min(worst, v / peak - 1);
+    }
+    return worst;
+  };
+
+  const hVol = calcVol(hDailies);
+  const pVol = calcVol(pDailies);
+  const hMaxDd = calcMaxDd(euroPrices);
+  const pMaxDd = calcMaxDd(pPoints);
+  const spread = hReturn !== null && pReturn !== null ? hReturn - pReturn : null;
+  const volRatio = hVol && pVol ? hVol / pVol : null;
+
+  const lastPt =
+    portfolio?.points?.length ? portfolio.points[portfolio.points.length - 1] : null;
+  const lastPortVal =
+    lastPt ? f.num(lastPt.total_value_eur ?? lastPt.value) : null;
+  const weightPct =
+    lastPortVal && f.num(h.market_value_eur)
+      ? f.num(h.market_value_eur) / lastPortVal
+      : null;
+
+  const cardNode = el(
+    "div.holding-stats-card",
+    el(
+      "table.holding-stats-table",
+      el(
+        "tbody",
+        el(
+          "tr",
+          el("td.metric-label", { text: "Return in window" }),
+          el("td.metric-val", {
+            text: `${f.pct(hReturn, { sign: true })} vs ${f.pct(pReturn, { sign: true })} port`,
+            cls: f.tone(hReturn),
+          }),
+        ),
+        el(
+          "tr",
+          el("td.metric-label", { text: "Performance spread" }),
+          el("td.metric-val", {
+            text:
+              spread !== null
+                ? `${f.pct(spread, { sign: true })} ${spread >= 0 ? "ahead" : "behind"}`
+                : "—",
+            cls: f.tone(spread),
+          }),
+        ),
+        el(
+          "tr",
+          el("td.metric-label", { text: "Variability (ann. vol)" }),
+          el("td.metric-val", {
+            text:
+              hVol !== null && pVol !== null
+                ? `${f.pct(hVol, { digits: 1 })} vs ${f.pct(pVol, { digits: 1 })} port (${volRatio ? volRatio.toFixed(1) + "x" : ""})`
+                : hVol !== null
+                  ? f.pct(hVol, { digits: 1 })
+                  : "—",
+          }),
+        ),
+        el(
+          "tr",
+          el("td.metric-label", { text: "Worst drop from peak" }),
+          el("td.metric-val", {
+            text:
+              hMaxDd !== null && pMaxDd !== null
+                ? `${f.pct(hMaxDd, { sign: true })} vs ${f.pct(pMaxDd, { sign: true })} port`
+                : hMaxDd !== null
+                  ? f.pct(hMaxDd, { sign: true })
+                  : "—",
+            cls: "loss",
+          }),
+        ),
+        el(
+          "tr",
+          el("td.metric-label", { text: "Position value (% of port)" }),
+          el("td.metric-val", {
+            text:
+              weightPct !== null
+                ? `${f.eur(h.market_value_eur)} (${f.pct(weightPct, { digits: 1 })})`
+                : f.eur(h.market_value_eur),
+          }),
+        ),
+      ),
+    ),
   );
 
   return el(
-    "section",
-    heading("Against the rest of the portfolio"),
-    box,
+    "div",
+    el("h3", { text: "Variability & return vs portfolio" }),
+    cardNode,
     el("p.chart-note", {
-      text:
-        "Both start at 100 on the first day shown, so the lines compare rates " +
-        "of change rather than sizes. This holding's line is its euro price: " +
-        "dividends are not added back, so a distributing fund understates here " +
-        "by roughly its yield.",
+      text: "Variability is annualised standard deviation of daily price returns over this window.",
     }),
   );
 }

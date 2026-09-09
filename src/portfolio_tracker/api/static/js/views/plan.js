@@ -1020,26 +1020,86 @@ function savingsSection(s) {
     }),
   );
 
-  if (months.length > 1) {
-    const box = el("div.chart");
+  const currentMonth = s.as_of ? s.as_of.slice(0, 7) : new Date().toISOString().slice(0, 7);
+  const chartMonths = all.filter((m) => m.period >= "2025-08" && m.period <= currentMonth);
+
+  if (chartMonths.length > 1) {
+    const chartBox = el("div.chart");
     const pal = palette();
     queueMicrotask(() =>
-      timeChart(box, {
-        x: months.map((m) => toTs(`${m.period}-01`)),
-        height: 200,
+      timeChart(chartBox, {
+        x: chartMonths.map((m) => toTs(`${m.period}-01`)),
+        height: 220,
         kind: "eur",
         zero: true,
         series: [
           {
             label: "Money you paid in",
-            data: months.map((m) => f.num(m.net_new_money_eur)),
+            data: chartMonths.map((m) => f.num(m.net_new_money_eur)),
             colour: pal.series[1],
             fill: 0.15,
           },
         ],
       }),
     );
-    section.append(el("h3", { text: "Month by month" }), box);
+
+    const periodTotal = chartMonths.reduce(
+      (sum, m) => sum + (f.num(m.net_new_money_eur) || 0),
+      0,
+    );
+    const avgMonthly = chartMonths.length ? periodTotal / chartMonths.length : 0;
+    const peakMonth = chartMonths.reduce(
+      (max, m) =>
+        f.num(m.net_new_money_eur) > (f.num(max?.net_new_money_eur) || 0) ? m : max,
+      null,
+    );
+    const positiveMonths = chartMonths.filter((m) => (f.num(m.net_new_money_eur) || 0) > 0).length;
+
+    const statsWidget = el(
+      "div.savings-stats-card",
+      el("h4", {
+        text: "Savings pace & highlights",
+        style: "margin: 0 0 0.8rem; font-size: 0.95rem;",
+      }),
+      el(
+        "div.savings-stat-row",
+        el("span.label", { text: "Total saved in period" }),
+        el("span.val", { text: f.eur(periodTotal) }),
+      ),
+      el(
+        "div.savings-stat-row",
+        el("span.label", { text: "Monthly average" }),
+        el("span.val", { text: `${f.eur(avgMonthly)} / mo` }),
+      ),
+      peakMonth
+        ? el(
+            "div.savings-stat-row",
+            el("span.label", { text: "Highest month" }),
+            el("span.val", {
+              text: `${f.eur(peakMonth.net_new_money_eur)} (${f.month(peakMonth.period + "-01")})`,
+            }),
+          )
+        : null,
+      el(
+        "div.savings-stat-row",
+        el("span.label", { text: "Active savings months" }),
+        el("span.val", { text: `${positiveMonths} of ${chartMonths.length} months` }),
+      ),
+      el(
+        "div.savings-stat-row",
+        el("span.label", { text: `Latest (${f.month(currentMonth + "-01")})` }),
+        el("span.val", {
+          text: f.eur(chartMonths[chartMonths.length - 1]?.net_new_money_eur || 0),
+        }),
+      ),
+    );
+
+    const layout = el(
+      "div.savings-layout",
+      el("div", el("h3", { text: "Month by month" }), chartBox),
+      el("div", el("h3", { text: "Summary" }), statsWidget),
+    );
+    section.append(layout);
   }
 
   section.append(caveats(s.caveats));

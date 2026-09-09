@@ -236,6 +236,7 @@ section { margin-bottom: 2rem; }
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
   gap: var(--gap);
+  margin-bottom: 1.25rem;
 }
 
 .card {
@@ -606,6 +607,71 @@ button.linklike {
 }
 .chart-pair > * { min-width: 0; }
 
+.holding-chart-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 1.5rem;
+  align-items: start;
+  margin-bottom: 1.5rem;
+}
+.holding-chart-layout > * { min-width: 0; }
+
+.holding-stats-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  padding: 0.6rem 0.9rem;
+  width: 100%;
+  max-width: 380px;
+  min-height: 270px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.holding-stats-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.holding-stats-table tr {
+  border-bottom: 1px solid var(--line);
+}
+
+.holding-stats-table tr:last-child {
+  border-bottom: none;
+}
+
+.holding-stats-table td {
+  padding: 0.62rem 0.4rem;
+  font-size: 0.9rem;
+  vertical-align: middle;
+}
+
+.holding-stats-table td.metric-label {
+  color: var(--muted);
+  text-align: left;
+  font-weight: 450;
+  width: 44%;
+  white-space: normal;
+}
+
+.holding-stats-table td.metric-val {
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  width: 56%;
+}
+
+@media (max-width: 1024px) {
+  .holding-chart-layout {
+    grid-template-columns: 1fr;
+  }
+  .holding-stats-card {
+    max-width: none;
+  }
+}
+
 /* A German statutory term shown beside its plain-English name. Never bold,
    never alone -- it is there so a figure can be matched against a bank
    document, not because the reader is expected to know it. */
@@ -641,9 +707,9 @@ abbr[title] { text-decoration: underline dotted; cursor: help; }
  */
 .ranges {
   display: flex;
-  gap: .25rem;
+  gap: .35rem .5rem;
   flex-wrap: wrap;
-  margin: 0 0 1.5rem;
+  margin: 1.25rem 0 1.5rem;
   align-items: center;
 }
 .ranges button {
@@ -655,6 +721,7 @@ abbr[title] { text-decoration: underline dotted; cursor: help; }
   background: transparent;
   color: var(--muted);
   cursor: pointer;
+  box-sizing: border-box;
 }
 .ranges button:hover { border-color: var(--line-strong); color: var(--fg); }
 .ranges button[aria-pressed="true"] {
@@ -663,7 +730,7 @@ abbr[title] { text-decoration: underline dotted; cursor: help; }
   color: var(--bg);
   font-weight: 600;
 }
-.ranges .over { color: var(--muted); font-size: .85rem; margin-left: .5rem; }
+.ranges .over { color: var(--muted); font-size: .85rem; margin-left: .85rem; white-space: nowrap; }
 
 /* --------------------------------------------------------- layout */
 
@@ -679,6 +746,130 @@ abbr[title] { text-decoration: underline dotted; cursor: help; }
   align-items: start;
 }
 .cols > section { margin-bottom: 0; }
+
+/* -------------------------------------------------- top return boxes */
+
+.top-returns {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--gap);
+  margin-bottom: 1.25rem;
+}
+
+.return-box {
+  cursor: pointer;
+  border-radius: var(--radius);
+  transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.1s ease;
+  user-select: none;
+}
+.return-box:hover {
+  border-color: var(--line-strong);
+  background: var(--bg-sunken);
+}
+.return-box[aria-pressed="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  background: var(--bg-sunken);
+}
+.return-box .k {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.return-box .v {
+  font-size: 1.45rem;
+  font-weight: 650;
+  margin-top: 0.1rem;
+}
+.return-box .sub2 {
+  font-size: 0.85rem;
+  font-weight: 500;
+  margin-top: 0.15rem;
+}
+
+@media (max-width: 900px) {
+  .top-returns {
+    grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  }
+}
+
+/* -------------------------------------------------- overview layout */
+
+.overview-split {
+  display: grid;
+  grid-template-columns: minmax(20rem, 26rem) minmax(0, 1fr);
+  gap: 2rem;
+  align-items: start;
+  margin-bottom: 2rem;
+}
+
+.overview-split .breakdown-col {
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+}
+
+.overview-split .breakdown-col section {
+  margin-bottom: 0;
+}
+
+.overview-split .holdings-col {
+  min-width: 0;
+}
+
+.overview-split .holdings-col section {
+  margin-bottom: 0;
+}
+
+@media (max-width: 1060px) {
+  .overview-split {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+}
+
+/* -------------------------------------------------- plan savings layout */
+
+.savings-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+  margin-top: 0.5rem;
+}
+
+.savings-stats-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.25rem;
+  background: var(--bg);
+}
+
+.savings-stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.92rem;
+}
+.savings-stat-row:last-child {
+  border-bottom: none;
+}
+.savings-stat-row .label {
+  color: var(--muted);
+}
+.savings-stat-row .val {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 960px) {
+  .savings-layout {
+    grid-template-columns: 1fr;
+  }
+}
 
 /* For prose and bar lists, which get unreadable past about 90 characters. */
 .narrow { max-width: 46rem; }

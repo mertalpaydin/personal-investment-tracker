@@ -186,10 +186,14 @@ def _holdings(conn: sqlite3.Connection, person_id: int, window: Window) -> list[
         then_qty = Decimal(str(r["then_qty"])) if r["then_qty"] is not None else None
 
         own: Decimal | None = None
+        change_eur: Decimal | None = None
         if then_value is not None and then_qty and now_qty and then_qty > ZERO:
             before, after = then_value / then_qty, now_value / now_qty
             if before > ZERO:
                 own = after / before - 1
+                change_eur = now_qty * (after - before)
+        elif then_value is not None:
+            change_eur = now_value - then_value
 
         out.append(
             {
@@ -197,9 +201,7 @@ def _holdings(conn: sqlite3.Connection, person_id: int, window: Window) -> list[
                 "name": r["name"],
                 "currency": r["currency"],
                 "value_eur": _num(now_value),
-                "value_change_eur": (
-                    _num(now_value - then_value) if then_value is not None else None
-                ),
+                "value_change_eur": _num(change_eur),
                 # What this holding did, on its own money.
                 "own_return": _num(own),
                 # When the measurement actually starts. Later than the window
@@ -209,6 +211,55 @@ def _holdings(conn: sqlite3.Connection, person_id: int, window: Window) -> list[
                 "valuation_status": r["valuation_status"],
             }
         )
+    return out
+
+
+def _multi_window_returns(conn: sqlite3.Connection, person_id: int) -> list[dict[str, Any]]:
+    """Compute performance for 1W, 1M, 3M, 6M, and 12M windows."""
+    windows_to_calc = [
+        ("1W", "1W"),
+        ("1M", "1M"),
+        ("3M", "3M"),
+        ("6M", "6M"),
+        ("12M", "1Y"),
+    ]
+    out: list[dict[str, Any]] = []
+    for label, range_key in windows_to_calc:
+        try:
+            w = resolve(conn, person_id, range_key)
+            s = returns.summarise(conn, person_id=person_id, start=w.start, end=w.end)
+            r_end = conn.execute(
+                "SELECT valuation_basis_eur FROM portfolio_daily WHERE person_id = ? AND date = ?",
+                (person_id, w.end.isoformat()),
+            ).fetchone()
+            r_start = conn.execute(
+                "SELECT valuation_basis_eur FROM portfolio_daily WHERE person_id = ? AND date = ?",
+                (person_id, w.start.isoformat()),
+            ).fetchone()
+            v_end = (
+                Decimal(str(r_end["valuation_basis_eur"]))
+                if r_end and r_end["valuation_basis_eur"] is not None
+                else ZERO
+            )
+            v_start = (
+                Decimal(str(r_start["valuation_basis_eur"]))
+                if r_start and r_start["valuation_basis_eur"] is not None
+                else ZERO
+            )
+            gain_eur = v_end - v_start - s.external_flows_eur
+            out.append(
+                {
+                    "key": label,
+                    "range_key": range_key,
+                    "label": label,
+                    "from": w.start.isoformat(),
+                    "to": w.end.isoformat(),
+                    "twr": _num(s.twr),
+                    "value_eur": _num(gain_eur),
+                }
+            )
+        except Exception:
+            continue
     return out
 
 
@@ -246,8 +297,20 @@ def overview(
     unfunded = cash.compute_flows(conn).unfunded
     unexplained = sum((event.amount for event in unfunded if event.currency == "EUR"), ZERO)
 
+    cash_row = conn.execute(
+        "SELECT cash_eur FROM portfolio_daily WHERE person_id = ? AND date = ?",
+        (person_id, window.end.isoformat()),
+    ).fetchone()
+    cash_balance = (
+        Decimal(str(cash_row["cash_eur"]))
+        if cash_row and cash_row["cash_eur"] is not None
+        else ZERO
+    )
+
     body: dict[str, Any] = {
         "range": key,
+        "cash_eur": _num(cash_balance),
+        "top_returns": _multi_window_returns(conn, person_id),
         "window": {
             "from": window.start.isoformat(),
             "to": window.end.isoformat(),
