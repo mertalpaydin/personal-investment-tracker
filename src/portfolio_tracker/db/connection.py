@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 
 from portfolio_tracker.money import register_decimal_support
@@ -85,7 +85,19 @@ def connect(
         # is a no-op after the first write connection. In-memory databases do
         # not support it and silently stay in "memory" journal mode.
         conn.execute("PRAGMA journal_mode = WAL")
+        # FULL ensures transactions and WAL frames are synced to disk before
+        # reporting commit, preventing file cache corruption on Windows.
+        conn.execute("PRAGMA synchronous = FULL")
     return conn
+
+
+def wal_checkpoint(conn: sqlite3.Connection, mode: str = "TRUNCATE") -> None:
+    """Fold WAL pages back into the main database file.
+
+    Safe no-op for in-memory or read-only databases.
+    """
+    with suppress(sqlite3.OperationalError):
+        conn.execute(f"PRAGMA wal_checkpoint({mode})")
 
 
 @contextmanager

@@ -98,9 +98,45 @@ def _prepare() -> str | None:
 
     from portfolio_tracker.core import inbox, rebuild
     from portfolio_tracker.db import migrate as migrations
-    from portfolio_tracker.db.connection import connect
+    from portfolio_tracker.db.connection import connect, wal_checkpoint
 
     with contextlib.closing(connect(DB_PATH)) as conn:
+        # Fast integrity verification (< 5ms) to catch any partial writes
+        try:
+            check_rows = conn.execute("PRAGMA quick_check(1);").fetchall()
+            is_healthy = len(check_rows) == 1 and check_rows[0][0] == "ok"
+        except Exception as exc:
+            is_healthy = False
+            check_rows = [(str(exc),)]
+
+        if not is_healthy:
+            print(
+                "database integrity alert detected; attempting self-healing rebuild...", flush=True
+            )
+            try:
+                rebuild.run(conn, end=date.today())
+                recheck = conn.execute("PRAGMA quick_check(1);").fetchall()
+                if len(recheck) == 1 and recheck[0][0] == "ok":
+                    print("self-healing rebuild succeeded: derived layer restored.", flush=True)
+                    wal_checkpoint(conn, "TRUNCATE")
+                else:
+                    backups_dir = DB_PATH.parent / "backups"
+                    backups = sorted(backups_dir.glob("*.db")) if backups_dir.exists() else []
+                    latest = f" (latest available: {backups[-1].name})" if backups else ""
+                    return (
+                        f"Database integrity alert: {check_rows[0][0]}.\n"
+                        f"Automatic self-healing could not resolve the core tables{latest}.\n"
+                        "Check data/backups/ to restore from a recent backup.\n"
+                    )
+            except Exception as exc:
+                backups_dir = DB_PATH.parent / "backups"
+                backups = sorted(backups_dir.glob("*.db")) if backups_dir.exists() else []
+                latest = f" (latest available: {backups[-1].name})" if backups else ""
+                return (
+                    f"The database has an integrity error: {exc}\n"
+                    f"Please check data/backups/ to restore from a recent backup{latest}.\n"
+                )
+
         try:
             applied = migrations.migrate(conn)
         except migrations.MigrationError as exc:
@@ -120,6 +156,8 @@ def _prepare() -> str | None:
             result = rebuild.run(conn, end=date.today())
             for problem in result.breaks:
                 print(f"  {problem}", file=sys.stderr)
+
+        wal_checkpoint(conn, "TRUNCATE")
     return None
 
 

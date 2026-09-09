@@ -42,7 +42,7 @@ from portfolio_tracker.core import fx as core_fx
 from portfolio_tracker.core import locking, rebuild
 from portfolio_tracker.core.calendars import business_days_between
 from portfolio_tracker.db import migrate as migrations
-from portfolio_tracker.db.connection import connect, transaction
+from portfolio_tracker.db.connection import connect, transaction, wal_checkpoint
 from portfolio_tracker.ingest import fx as ingest_fx
 from portfolio_tracker.ingest import prices as ingest_prices
 
@@ -213,15 +213,20 @@ def run_update(
     with connect(target) as conn:
         try:
             with locking.exclusive(target.with_suffix(".updatelock")):
-                return _run_locked(
+                outcome = _run_locked(
                     conn,
+                    db_path=target,
                     trigger=trigger,
                     end=horizon,
                     rebuild_after=rebuild_after,
                     only=only,
                 )
+                wal_checkpoint(conn, "TRUNCATE")
+                return outcome
         except locking.LockBusy as exc:
             return _skipped(conn, trigger, str(exc))
+        finally:
+            wal_checkpoint(conn, "PASSIVE")
 
 
 def _snapshot_scores(conn: sqlite3.Connection, outcome: UpdateOutcome, *, end: date) -> None:
@@ -248,11 +253,21 @@ def _snapshot_scores(conn: sqlite3.Connection, outcome: UpdateOutcome, *, end: d
 def _run_locked(
     conn: sqlite3.Connection,
     *,
+    db_path: Path | None = None,
     trigger: str,
     end: date,
     rebuild_after: bool,
     only: list[int] | None,
 ) -> UpdateOutcome:
+    # 0. Take a rolling backup before modifying the database
+    if db_path and str(db_path) != ":memory:":
+        try:
+            from portfolio_tracker.db.backup import create_backup
+
+            create_backup(conn, db_path=db_path)
+        except Exception as exc:
+            log.warning("automatic rolling backup failed: %s", exc)
+
     # The checkout may have moved on since the scheduled task was registered.
     migrations.migrate(conn)
 

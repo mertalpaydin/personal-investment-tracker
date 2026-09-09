@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from portfolio_tracker.db import migrate as M
-from portfolio_tracker.db.connection import connect, transaction
+from portfolio_tracker.db.connection import connect, transaction, wal_checkpoint
 from portfolio_tracker.money import DECIMAL_SQL_TYPE, plain, quantize_money, to_decimal
 
 
@@ -471,3 +471,16 @@ def test_fintables_is_an_allowed_price_source(db: sqlite3.Connection) -> None:
             "INSERT INTO instrument (import_key, name, asset_class, currency, price_source) "
             "VALUES ('TR2', 'Bad', 'FUND', 'TRY', 'not-a-source')"
         )
+
+
+def test_write_connection_uses_synchronous_full_and_checkpoints(tmp_path: Path) -> None:
+    db_file = tmp_path / "sync_test.db"
+    conn = connect(db_file)
+    # PRAGMA synchronous in SQLite: 0=OFF, 1=NORMAL, 2=FULL, 3=EXTRA
+    sync_mode = conn.execute("PRAGMA synchronous;").fetchone()[0]
+    assert sync_mode == 2, f"expected synchronous=FULL (2), got {sync_mode}"
+
+    # Verify wal_checkpoint runs without error
+    wal_checkpoint(conn, "PASSIVE")
+    wal_checkpoint(conn, "TRUNCATE")
+    conn.close()

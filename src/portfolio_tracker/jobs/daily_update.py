@@ -70,12 +70,16 @@ def main(argv: list[str] | None = None) -> int:
     log = logging.getLogger("portfolio_tracker.jobs.daily_update")
     log.info("starting %s update against %s", args.trigger, db_path)
 
-    outcome = update.run_update(
-        db_path,
-        trigger=args.trigger,
-        end=args.end,
-        rebuild_after=not args.no_rebuild,
-    )
+    try:
+        outcome = update.run_update(
+            db_path,
+            trigger=args.trigger,
+            end=args.end,
+            rebuild_after=not args.no_rebuild,
+        )
+    except BaseException as exc:
+        log.exception("unexpected failure during %s update: %s", args.trigger, exc)
+        return EXIT_CODES["FAILED"]
 
     log.info(
         "finished %s: %s prices, %s rates, %s instruments, rebuilt=%s, problems=%s",
