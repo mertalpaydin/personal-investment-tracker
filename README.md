@@ -11,6 +11,43 @@ its inputs are, and what it is missing.
 > by default in `.gitignore` and enforced by `scripts/check_no_pii.py` running as
 > both a pre-commit hook and a CI job.
 
+**Stack:** Python 3.12+, FastAPI, SQLite, `uv`; a plain HTML/CSS/ES-module front
+end with uPlot vendored — no framework, no build step, no CDN. Tested with pytest,
+ruff and mypy `--strict`.
+
+## Screenshots
+
+All screenshots below are taken against the synthetic example corpus in
+`data/example/`. None of the figures are real.
+
+![Overview: return tiles, total value split by prices and currency, portfolio and holdings performance charts](docs/screenshots/dashboard.png)
+
+| | |
+| --- | --- |
+| ![Holdings table](docs/screenshots/holdings.png) *Holdings: value, own return and share of the total, per window* | ![One holding](docs/screenshots/holding-detail.png) *One holding against the portfolio, with variability stats* |
+| ![Tax page](docs/screenshots/tax.png) *Tax: allowance used, Vorabpauschale forecast per fund* | ![Plan page](docs/screenshots/plan.png) *Goal: when the target is reached, across stated returns* |
+| ![Trades page](docs/screenshots/trades.png) *Trade entry, with the consequence shown before saving* | ![Watchlist page](docs/screenshots/watchlist.png) *Watchlist: instruments you do not own, indexed against one you do* |
+| ![Settings page](docs/screenshots/settings.png) *Settings: price updates, the scheduled daily task, the goal* | ![Overview, light theme](docs/screenshots/dashboard-light.png) *The same overview in the light theme* |
+
+
+## Contents
+
+- [Why it exists](#why-it-exists)
+- [What it does](#what-it-does)
+- [Quickstart](#quickstart)
+- [Where the return came from](#where-the-return-came-from)
+- [The tax charge nobody sends you a bill for](#the-tax-charge-nobody-sends-you-a-bill-for)
+- [Everything routine lives on the page](#everything-routine-lives-on-the-page)
+- [When you reach the target](#when-you-reach-the-target)
+- [What a sale would cost, before you make it](#what-a-sale-would-cost-before-you-make-it)
+- [What a fund is quoted in is not what it holds](#what-a-fund-is-quoted-in-is-not-what-it-holds)
+- [The data is the interesting part](#the-data-is-the-interesting-part)
+- [Honest limitations](#honest-limitations)
+- [Known gaps](#known-gaps)
+- [Architecture](#architecture)
+- [Development](#development)
+- [Licence](#licence)
+
 ---
 
 ## Why it exists
@@ -57,6 +94,10 @@ both be true and visible at once.
   updates you schedule from a button — no command line in normal use
 - **A goal target you set**, projected across stated returns and against the
   portfolio's own resampled history — never a single blessed date
+- **A watchlist and peer comparison**: instruments you do not own, priced and
+  measured against what you do hold at the same stated risk level; stock
+  fundamentals with Value and Quality scores, dated snapshots, and a forward-return
+  backtest that checks whether those scores predicted anything
 
 Not a trading system. Nothing places orders. Output is a planning worksheet, not
 tax advice — the bank's *Steuerbescheinigung* is authoritative.
@@ -75,7 +116,10 @@ browser. Everything else — recording a trade, updating prices, scheduling the
 daily update, confirming an inferred dividend, reading the tax position — lives
 on the page. Nothing in normal use requires a terminal.
 
-To build a database on a clean clone, with no real data present:
+### Try it with the example data
+
+Everything under `data/example/` is fictional and generated from a fixed seed. To
+build a database from it on a clean clone:
 
 ```bash
 uv sync --extra api --extra ingest
@@ -94,6 +138,10 @@ look-through has something to look through:
 uv run pt look-through import -i ZGEQ -f data/example/holdings/ZGEQ.csv --as-of 2026-07-31
 uv run pt look-through exposure --dim currency
 ```
+
+`uv run pt --help` lists the rest of the CLI (`rebuild`, `fetch-prices`, `fetch-fx`,
+`report`, `tax`, `sync-fundamentals`, `score-backtest`, …). In normal use none of it
+is needed; the page does the same work.
 
 ### Why `run.py` does the preparation itself
 
@@ -161,6 +209,10 @@ GET  /api/admin/doctor         the integrity checks
 POST /api/admin/recompute      throw away the derived layer and rebuild it
 GET  /api/goal  · PUT          progress toward the target
 GET  /api/goal/projection      when it is reached, across stated returns
+GET  /api/watchlist · POST · DELETE   instruments followed but not owned; priced like holdings
+GET  /api/peers/{key}          comparable instruments at the same risk level, and how they did
+GET  /api/stocks/fundamentals  the watched stocks table, with Value and Quality scores
+GET  /api/stocks/score-backtest   did a high score go with a better forward return?
 POST /api/pending/{id}/confirm · /reject      decide an inference
 POST /api/admin/rebuild        recompute the derived layer
 ```
@@ -488,6 +540,11 @@ ingest/look_through.py     issuer holdings files; refuses rather than guesses a 
 core/ledger.py             writes a trade somebody typed; freezes its EUR leg
 core/glossary.py           German statutory terms, in English, German kept alongside
 core/locking.py            one update at a time, across processes; refuses, never queues
+core/watchlist.py          instruments you do not own but want measured
+core/peers.py              comparable instruments at the same stated risk level
+core/universe.py           the comparison catalogue; loaded on request, never on startup
+core/score_snapshots.py    dated Value/Quality scores, so they can be checked later
+core/score_backtest.py     rank correlation, bucket returns, hit rate vs a benchmark
 jobs/update.py             fetch what is missing, then recompute; unattended
 jobs/windows_task.py       registers the daily update with Task Scheduler, from the page
 api/transactions.py        record a trade -- and say what it will do before you save it
@@ -507,6 +564,20 @@ Three currency rules hold everywhere:
    contain none.
 
 Design decisions and the reasoning behind them are in [`docs/adr/`](docs/adr/).
+
+## Development
+
+```bash
+uv sync --all-extras --dev
+uv run pytest -q                     # ~970 tests, incl. golden fixtures under tests/golden/
+uv run ruff check . && uv run ruff format --check .
+uv run mypy                          # strict
+uv run python scripts/check_no_pii.py --all
+```
+
+CI runs the same five steps, plus a history scan for anything that was ever
+committed and later deleted. `pre-commit install` wires the PII guard into every
+commit locally.
 
 ## Licence
 
