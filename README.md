@@ -507,9 +507,6 @@ Three currency rules hold everywhere:
    contain none.
 
 Design decisions and the reasoning behind them are in [`docs/adr/`](docs/adr/).
-[`docs/HANDOVER.md`](docs/HANDOVER.md) is the map for anyone picking this up: what
-exists, the invariants that must not be broken, the traps already fallen into, and
-what v2 should tackle first.
 
 ## Licence
 

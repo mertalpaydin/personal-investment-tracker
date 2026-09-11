@@ -125,3 +125,12 @@ desktop.ini
 .vscode/*
 !.vscode/extensions.json
 *.swp
+
+# ---------------------------------------------------------------
+# INTERNAL NOTES — handover, changelogs and superseded design briefs
+# written for the maintainer, not for readers of the public repo.
+# ---------------------------------------------------------------
+/docs/HANDOVER.md
+/docs/v2-changes.md
+/docs/reference/implementation-brief.md
+/docs/reference/design-notes.md
