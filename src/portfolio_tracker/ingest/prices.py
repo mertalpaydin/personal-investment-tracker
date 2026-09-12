@@ -15,7 +15,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
-from portfolio_tracker.core.calendars import grid_days
+from portfolio_tracker.core.calendars import grid_days, is_business_day
+from portfolio_tracker.ingest.onvista_cache import NotationCache
 from portfolio_tracker.ingest.providers.base import (
     InstrumentRef,
     PriceObservation,
@@ -26,6 +27,7 @@ from portfolio_tracker.ingest.providers.base import (
 from portfolio_tracker.ingest.providers.manual import ManualProvider
 from portfolio_tracker.ingest.providers.market import (
     FintablesProvider,
+    OnvistaProvider,
     SyntheticProvider,
     TefasProvider,
     YFinanceProvider,
@@ -46,11 +48,29 @@ WATCHLIST_BACKFILL_YEARS = 5
 REFETCH_OVERLAP_DAYS = 5
 
 
-def default_providers() -> dict[str, PriceProvider]:
+#: When the primary source for an instrument fails with `ProviderUnavailable`
+#: (not `RateLimited`), the run tries this one before giving up on it. Yahoo
+#: is unreliable for Xetra ETFs, which is why onvista is primary now, but it
+#: is a public undocumented endpoint too -- one that stops answering should
+#: not leave an instrument unpriced when the very feed it replaced still works.
+FALLBACK_PROVIDER: dict[str, str] = {"onvista": "yfinance"}
+
+
+def default_providers(conn: sqlite3.Connection | None = None) -> dict[str, PriceProvider]:
+    """The standard provider registry.
+
+    ``conn`` backs onvista's notation cache -- a resolved instrument/market
+    lookup is written there once and read on every later call, so a caller
+    with no connection at hand (a one-off `describe()`, a unit test building
+    providers in isolation) still gets a working, if uncached, provider.
+    """
     return {
         "yfinance": YFinanceProvider(),
         "tefas": TefasProvider(),
         "fintables": FintablesProvider(),
+        "onvista": OnvistaProvider(
+            notation_cache=NotationCache(conn) if conn is not None else None
+        ),
         "synthetic": SyntheticProvider(),
         "manual": ManualProvider(),
     }
@@ -76,7 +96,7 @@ def priced_instruments(
     rows = conn.execute(
         f"""
         SELECT i.id, i.import_key, i.currency, i.price_source,
-               i.price_symbol, i.trading_calendar, i.status
+               i.price_symbol, i.trading_calendar, i.status, i.isin
         FROM instrument i
         WHERE EXISTS (SELECT 1 FROM transaction_ t WHERE t.instrument_id = i.id){clause}
         ORDER BY i.import_key
@@ -92,6 +112,7 @@ def priced_instruments(
             price_symbol=r["price_symbol"],
             trading_calendar=r["trading_calendar"],
             status=str(r["status"] or "OWNED"),
+            isin=r["isin"],
         )
         for r in rows
     ]
@@ -165,6 +186,10 @@ class InstrumentCoverage:
     #: older than the newest price already stored, so "rows newer than before"
     #: reports a successful backfill as having done nothing.
     written: int = 0
+    #: Set when the primary provider failed but a fallback recovered it. Kept
+    #: separate from `error`, which stays `None` on a successful run -- this
+    #: is informational, not something that should make the run look failed.
+    note: str | None = None
 
     @property
     def pct(self) -> Decimal:
@@ -372,7 +397,7 @@ def run_fetch(
     at daily resolution is a great deal of somebody else's bandwidth to answer
     a question about three-year returns.
     """
-    registry = providers or default_providers()
+    registry = providers or default_providers(conn)
     manual = registry.get("manual")
     run = FetchRun()
     results = run.coverage
@@ -390,6 +415,7 @@ def run_fetch(
         coverage_from = max(window_start, traded_from) if traded_from else window_start
         provider = registry.get(instrument.price_source)
         error: str | None = None
+        note: str | None = None
         used: str | None = None
         added_any = 0
 
@@ -415,6 +441,36 @@ def run_fetch(
             except ProviderUnavailable as exc:
                 error = str(exc)
 
+            # A source with a registered fallback (currently onvista ->
+            # yfinance) gets one try at it before the instrument is reported
+            # as failed. onvista is a public, undocumented endpoint too --
+            # one that stops answering should not leave an instrument unpriced
+            # when the feed it replaced still works.
+            fallback_name = FALLBACK_PROVIDER.get(provider.name)
+            fallback = registry.get(fallback_name) if fallback_name else None
+            if error is not None and fallback is not None and fallback is not provider:
+                try:
+                    fallback_observations = _fetch_with_backoff(
+                        fallback, instrument, window_start, end, weekly=weekly, sleeper=sleeper
+                    )
+                except RateLimited as exc:
+                    conn.commit()
+                    run.stopped_early = True
+                    run.reason = str(exc)
+                    run.remaining = len(queue) - position
+                    return run
+                except ProviderUnavailable as fb_exc:
+                    error = f"{error}  [{fallback.name} fallback also failed: {fb_exc}]"
+                else:
+                    fallback_added = store(conn, instrument, fallback_observations, fallback.name)
+                    added_any += fallback_added
+                    if fallback_added:
+                        used = fallback.name
+                        note = f"[{provider.name} failed: {error}; used {fallback.name}]"
+                        error = None
+                    else:
+                        error = f"{error}  [{fallback.name} fallback returned nothing]"
+
             # A manual file is a *supplement*, not only a rescue. Some feeds
             # serve only the latest observation, so history has to come from a
             # file alongside them; and a user who has taken the trouble to
@@ -436,6 +492,7 @@ def run_fetch(
         conn.commit()
         report = coverage(conn, instrument, coverage_from, end)
         report.error = error
+        report.note = note
         # `coverage` reports the source most rows actually came from. Only
         # override it when this run contributed something, so a run that
         # inserted one new price does not claim credit for a history someone
@@ -446,3 +503,169 @@ def run_fetch(
         results.append(report)
 
     return run
+
+
+# ---------------------------------------------------------------------------
+# Reprice: compare a source's history against what is stored, and optionally
+# replace it. Built for the onvista migration (Yahoo's Xetra ETF history is
+# wrong for roughly half the .DE ETFs in this database), but not specific to
+# it: any `--source` registered in the provider map can be checked this way.
+# ---------------------------------------------------------------------------
+
+#: How far back to compare. Five years, matching `WATCHLIST_BACKFILL_YEARS`:
+#: long enough to catch a scaling error or a wrong-fund mixup that only shows
+#: up outside the last year or two, short enough to stay one request.
+REPRICE_HISTORY_YEARS = 5
+
+#: A coverage gap longer than this many business days is what "the new
+#: source covers dates the old one lacks" means -- short of that, a handful
+#: of extra days is exactly what a backfill is expected to add incrementally,
+#: not a sign the old series is missing history.
+REPRICE_COVERAGE_GAP_DAYS = 3
+
+
+@dataclass
+class RepriceRow:
+    import_key: str
+    instrument_id: int
+    stored_rows: int
+    new_rows: int
+    overlap: int
+    max_rel_diff: Decimal | None
+    verdict: str  # MATCH / REPLACE / UNRESOLVED
+    reason: str | None = None
+
+
+def _reprice_classify(
+    stored: dict[date, tuple[Decimal, str]],
+    new: dict[date, PriceObservation],
+    *,
+    tolerance: Decimal,
+    calendar: str,
+) -> tuple[Decimal | None, bool]:
+    """Max relative difference on overlapping dates, and whether it flags a gap."""
+    overlap = set(stored) & set(new)
+    max_rel_diff: Decimal | None = None
+    for day in overlap:
+        old_close, _source = stored[day]
+        new_close = new[day].close
+        if old_close == 0:
+            continue
+        rel = abs(new_close - old_close) / abs(old_close)
+        if max_rel_diff is None or rel > max_rel_diff:
+            max_rel_diff = rel
+
+    stored_from_yfinance = any(src == "yfinance" for _close, src in stored.values())
+    gap = False
+    if stored_from_yfinance:
+        extra = [d for d in new if d not in stored]
+        extra_business_days = [d for d in extra if is_business_day(d, calendar)]
+        gap = len(extra_business_days) > REPRICE_COVERAGE_GAP_DAYS
+    return max_rel_diff, gap
+
+
+def reprice(
+    conn: sqlite3.Connection,
+    *,
+    source: str = "onvista",
+    tolerance: Decimal = Decimal("0.005"),
+    only_mismatched: bool = True,
+    apply: bool = False,
+    providers: dict[str, PriceProvider] | None = None,
+    sleeper: Callable[[float], None] = time.sleep,
+) -> tuple[list[RepriceRow], bool]:
+    """Compare ``source``'s history against what is stored, per instrument.
+
+    An instrument is "mismatched" (verdict ``REPLACE``) if any overlapping
+    close differs by more than ``tolerance`` relative, or if the stored series
+    has ``yfinance`` rows and the new one covers more than
+    ``REPRICE_COVERAGE_GAP_DAYS`` business days the stored one lacks.
+
+    With ``apply``, every ``REPLACE`` instrument has its ``yfinance`` rows
+    deleted (manual rows are never touched) and the new rows inserted, then
+    `core.rebuild.run` is called once after the loop -- once, not per
+    instrument, because it recomputes the whole derived layer regardless of
+    how many prices changed.
+
+    Returns the rows and whether a `RateLimited` response stopped the run
+    before every instrument was checked -- what is already classified (and,
+    under ``apply``, already replaced) stays as it is; the run resumes from
+    there next time.
+    """
+    registry = providers or default_providers(conn)
+    provider = registry.get(source)
+    rows: list[RepriceRow] = []
+    if provider is None:
+        return rows, False
+
+    instruments = [i for i in priced_instruments(conn) if i.price_source == source]
+    end = date.today()
+    start = end - timedelta(days=365 * REPRICE_HISTORY_YEARS)
+    stopped_early = False
+
+    for instrument in instruments:
+        stored_rows = conn.execute(
+            "SELECT date, close, source FROM price WHERE instrument_id = ? ORDER BY date",
+            (instrument.instrument_id,),
+        ).fetchall()
+        stored = {
+            date.fromisoformat(r["date"]): (Decimal(str(r["close"])), r["source"])
+            for r in stored_rows
+        }
+
+        try:
+            observations = _fetch_with_backoff(
+                provider, instrument, start, end, weekly=False, sleeper=sleeper
+            )
+        except RateLimited:
+            stopped_early = True
+            break
+        except ProviderUnavailable as exc:
+            rows.append(
+                RepriceRow(
+                    import_key=instrument.import_key,
+                    instrument_id=instrument.instrument_id,
+                    stored_rows=len(stored),
+                    new_rows=0,
+                    overlap=0,
+                    max_rel_diff=None,
+                    verdict="UNRESOLVED",
+                    reason=str(exc),
+                )
+            )
+            continue
+
+        new = {o.on: o for o in observations}
+        max_rel_diff, gap = _reprice_classify(
+            stored, new, tolerance=tolerance, calendar=instrument.trading_calendar
+        )
+        mismatched = (max_rel_diff is not None and max_rel_diff > tolerance) or gap
+        verdict = "REPLACE" if mismatched else "MATCH"
+        row = RepriceRow(
+            import_key=instrument.import_key,
+            instrument_id=instrument.instrument_id,
+            stored_rows=len(stored),
+            new_rows=len(new),
+            overlap=len(set(stored) & set(new)),
+            max_rel_diff=max_rel_diff,
+            verdict=verdict,
+        )
+
+        if verdict == "REPLACE" and apply:
+            conn.execute(
+                "DELETE FROM price WHERE instrument_id = ? AND source = 'yfinance'",
+                (instrument.instrument_id,),
+            )
+            written = store(conn, instrument, observations, provider.name)
+            conn.commit()
+            row.reason = f"replaced; {written} row(s) inserted"
+
+        if not only_mismatched or verdict != "MATCH":
+            rows.append(row)
+
+    if apply and any(r.verdict == "REPLACE" for r in rows):
+        from portfolio_tracker.core import rebuild as rebuild_all
+
+        rebuild_all.run(conn, end=date.today(), strict=False)
+
+    return rows, stopped_early

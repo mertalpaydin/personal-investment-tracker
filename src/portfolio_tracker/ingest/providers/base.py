@@ -60,6 +60,9 @@ class InstrumentRef:
     #: OWNED / WATCH / UNIVERSE. Only what is owned is valued daily; the rest
     #: exists to be compared against, and can be sampled less often.
     status: str = "OWNED"
+    #: Used by providers that search a third-party catalogue (onvista) to
+    #: match a security precisely; ``None`` for anything without one on file.
+    isin: str | None = None
 
 
 @runtime_checkable

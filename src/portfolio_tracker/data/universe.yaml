@@ -1188,7 +1188,7 @@ instruments:
     name: Amundi MSCI USA ESG Broad Transition UCITS ETF Dist
     asset_class: ETF
     currency: EUR
-    price_symbol: 2324453D.DE
+    price_symbol: LYYB.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 7
@@ -1808,7 +1808,7 @@ instruments:
     name: iShares Dow Jones Asia Pacific Select Dividend 50 UCITS ETF (DE)
     asset_class: ETF
     currency: EUR
-    price_symbol: APSDEX.DE
+    price_symbol: EXXW.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 31
@@ -2499,7 +2499,7 @@ instruments:
     name: iShares DivDAX UCITS ETF (DE)
     asset_class: ETF
     currency: EUR
-    price_symbol: DDAXKEX.DE
+    price_symbol: EXSB.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 31
@@ -2559,7 +2559,7 @@ instruments:
     name: iShares Dow Jones Global Titans 50 UCITS ETF (DE) EUR (Dist)
     asset_class: ETF
     currency: EUR
-    price_symbol: DJGTEEX.DE
+    price_symbol: EXI2.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 51
@@ -2599,7 +2599,7 @@ instruments:
     name: UBS Core EURO STOXX 50 UCITS ETF EUR dis
     asset_class: ETF
     currency: EUR
-    price_symbol: E50EUA.DE
+    price_symbol: UIM1.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 6
@@ -2619,7 +2619,7 @@ instruments:
     name: iShares eb.rexx Government Germany 0-1yr UCITS ETF (DE)
     asset_class: ETF
     currency: EUR
-    price_symbol: EBMMEX.DE
+    price_symbol: EXVM.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 13
@@ -2980,7 +2980,7 @@ instruments:
     name: Deka DAX UCITS ETF
     asset_class: ETF
     currency: EUR
-    price_symbol: ETFDAX.DE
+    price_symbol: EL4A.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 15
@@ -2990,7 +2990,7 @@ instruments:
     name: Deka DAX (ausschüttend) UCITS ETF
     asset_class: ETF
     currency: EUR
-    price_symbol: ETFDAXK.DE
+    price_symbol: EL4F.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 15
@@ -3000,7 +3000,7 @@ instruments:
     name: Deka MSCI Europe UCITS ETF
     asset_class: ETF
     currency: EUR
-    price_symbol: ETFEUAC.DE
+    price_symbol: EL42.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 30
@@ -3010,7 +3010,7 @@ instruments:
     name: Deka Deutsche Boerse EUROGOV Germany Money Market UCITS ETF
     asset_class: ETF
     currency: EUR
-    price_symbol: ETFGSMM.DE
+    price_symbol: EL4W.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 12
@@ -3020,7 +3020,7 @@ instruments:
     name: Deka EURO STOXX 50 UCITS ETF
     asset_class: ETF
     currency: EUR
-    price_symbol: ETFSX5E.DE
+    price_symbol: EL4B.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 15
@@ -5524,7 +5524,7 @@ instruments:
     name: Amundi DAX II UCITS ETF Acc
     asset_class: ETF
     currency: EUR
-    price_symbol: LYXDAX.DE
+    price_symbol: LYY7.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 15
@@ -5674,7 +5674,7 @@ instruments:
     name: Amundi Russell 1000 Growth UCITS ETF Acc
     asset_class: ETF
     currency: EUR
-    price_symbol: MWOT.DE
+    price_symbol: MWOW.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 19
@@ -6185,7 +6185,7 @@ instruments:
     name: iShares EURO STOXX Select Dividend 30 UCITS ETF (DE)
     asset_class: ETF
     currency: EUR
-    price_symbol: SD3EEX.DE
+    price_symbol: EXSG.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 32
@@ -6195,7 +6195,7 @@ instruments:
     name: Invesco STOXX Europe 600 UCITS ETF
     asset_class: ETF
     currency: EUR
-    price_symbol: SDJ600.DE
+    price_symbol: SC0C.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 19
@@ -6205,7 +6205,7 @@ instruments:
     name: Invesco EURO STOXX 50 UCITS ETF
     asset_class: ETF
     currency: EUR
-    price_symbol: SDJE50.DE
+    price_symbol: SC0D.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 5
@@ -6627,7 +6627,7 @@ instruments:
     name: iShares EURO STOXX 50 UCITS ETF (DE)
     asset_class: ETF
     currency: EUR
-    price_symbol: SX5EEX.DE
+    price_symbol: EXW1.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 9
@@ -6897,7 +6897,7 @@ instruments:
     name: iShares EURO STOXX UCITS ETF (DE)
     asset_class: ETF
     currency: EUR
-    price_symbol: SXXEEX.DE
+    price_symbol: EXSI.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 20
@@ -6907,7 +6907,7 @@ instruments:
     name: iShares STOXX Europe 600 UCITS ETF (DE)
     asset_class: ETF
     currency: EUR
-    price_symbol: SXXPIEX.DE
+    price_symbol: EXSA.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 20
@@ -7701,7 +7701,7 @@ instruments:
     name: Amundi CAC 40 UCITS ETF Acc
     asset_class: ETF
     currency: EUR
-    price_symbol: VOOP.DE
+    price_symbol: FR0013380607.SG
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 25
@@ -8001,7 +8001,7 @@ instruments:
     name: Xtrackers II Eurozone Government Bond 3-5 UCITS ETF 1C
     asset_class: ETF
     currency: EUR
-    price_symbol: X35E.DE
+    price_symbol: DBXQ.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 15
@@ -8041,7 +8041,7 @@ instruments:
     name: Invesco European Banks Sector UCITS ETF
     asset_class: ETF
     currency: EUR
-    price_symbol: X7PS.DE
+    price_symbol: SC0U.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 20
@@ -8141,7 +8141,7 @@ instruments:
     name: Xtrackers II EUR Corporate Bond UCITS ETF 1C
     asset_class: ETF
     currency: EUR
-    price_symbol: XBLC.DE
+    price_symbol: D5BG.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 9
@@ -8191,7 +8191,7 @@ instruments:
     name: Xtrackers Euro Stoxx Quality Dividend UCITS ETF 1D
     asset_class: ETF
     currency: EUR
-    price_symbol: XD3E.DE
+    price_symbol: DXSA.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 30
@@ -8641,7 +8641,7 @@ instruments:
     name: Xtrackers MSCI Japan UCITS ETF 1C
     asset_class: ETF
     currency: EUR
-    price_symbol: XMJP.DE
+    price_symbol: DBXJ.DE
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 12

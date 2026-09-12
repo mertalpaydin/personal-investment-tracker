@@ -61,7 +61,8 @@ def test_every_view_the_router_names_exists() -> None:
     fails at click time -- which is to say, in front of the user.
     """
     main = (STATIC / "js" / "main.js").read_text(encoding="utf-8")
-    imported = set(re.findall(r"""import\(["'](\./[\w./-]+\.js)["']\)""", main))
+    # The imports carry a `?v=N` cache-buster; the module is the part before it.
+    imported = set(re.findall(r"""import\(["'](\./[\w./-]+\.js)(?:\?[\w=&]*)?["']\)""", main))
     assert imported, "main.js declares no views; the route table must have moved"
     missing = [ref for ref in imported if not (STATIC / "js" / ref[2:]).is_file()]
     assert not missing, f"main.js imports modules that do not exist: {sorted(missing)}"

@@ -6,6 +6,7 @@ with no business logic of its own.
 
 from __future__ import annotations
 
+import csv
 import json
 from contextlib import closing
 from datetime import date
@@ -288,13 +289,13 @@ def fetch_prices(
     external dependency, and pointing at ``data/example/prices`` is how the
     synthetic corpus gets valued without touching the network.
     """
-    providers = None
-    if manual_dir is not None:
-        providers = ingest_prices.default_providers()
-        providers["manual"] = ManualProvider(manual_dir)
-
     conn = connect(db)
     try:
+        providers = None
+        if manual_dir is not None:
+            providers = ingest_prices.default_providers(conn)
+            providers["manual"] = ManualProvider(manual_dir)
+
         results = ingest_prices.fetch_all(
             conn,
             end=date.fromisoformat(end) if end else date.today(),
@@ -330,6 +331,117 @@ def fetch_prices(
         typer.echo(f"{len(failed)} instrument(s) below 98% coverage")
         if strict:
             raise typer.Exit(code=1)
+
+
+REPRICE_REPORT_PATH = Path("data/reprice_report.csv")
+
+
+@app.command()
+def reprice(
+    db: DbPath = DEFAULT_DB_PATH,
+    source: Annotated[
+        str, typer.Option("--source", help="Provider to check every instrument on it against.")
+    ] = "onvista",
+    apply: Annotated[
+        bool,
+        typer.Option(
+            "--apply/--dry-run",
+            help="Actually replace mismatched history. Default is dry-run.",
+        ),
+    ] = False,
+    tolerance: Annotated[
+        float,
+        typer.Option("--tolerance", help="Relative close difference that counts as a mismatch."),
+    ] = 0.005,
+    only_mismatched: Annotated[
+        bool,
+        typer.Option(
+            "--only-mismatched/--all", help="List every instrument, not only REPLACE/UNRESOLVED."
+        ),
+    ] = True,
+    report_path: Annotated[
+        Path, typer.Option("--report", help="Where to write the CSV report.")
+    ] = REPRICE_REPORT_PATH,
+) -> None:
+    """Compare a source's history against what is stored, and optionally fix it.
+
+    Built for onvista replacing Yahoo Finance as the price source for German
+    Xetra ETFs and stocks: Yahoo's history for roughly half of them turned out
+    to be wrong (USD figures stored against EUR instruments, among other
+    mismatches). Dry-run by default -- pass ``--apply`` to actually delete the
+    mismatched ``yfinance`` rows (never a manually-entered one) and replace
+    them, then rebuild the derived layer once.
+    """
+    conn = connect(db)
+    try:
+        rows, stopped_early = ingest_prices.reprice(
+            conn,
+            source=source,
+            tolerance=Decimal(str(tolerance)),
+            only_mismatched=only_mismatched,
+            apply=apply,
+        )
+    finally:
+        conn.close()
+
+    if not rows:
+        typer.echo(f"no instrument on source {source!r}, or none mismatched")
+        return
+
+    typer.echo(
+        f"{'import_key':<12} {'verdict':<11} {'stored':>7} {'new':>7} "
+        f"{'overlap':>8} {'max_diff':>9}  reason"
+    )
+    for r in sorted(rows, key=lambda x: (x.verdict, x.import_key)):
+        colour = {
+            "MATCH": None,
+            "REPLACE": typer.colors.YELLOW,
+            "UNRESOLVED": typer.colors.RED,
+        }[r.verdict]
+        diff = f"{r.max_rel_diff * 100:.2f}%" if r.max_rel_diff is not None else "-"
+        typer.secho(
+            f"{r.import_key:<12} {r.verdict:<11} {r.stored_rows:>7} {r.new_rows:>7} "
+            f"{r.overlap:>8} {diff:>9}  {r.reason or ''}",
+            fg=colour,
+        )
+
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    with report_path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(
+            [
+                "import_key",
+                "verdict",
+                "stored_rows",
+                "new_rows",
+                "overlap",
+                "max_rel_diff",
+                "reason",
+            ]
+        )
+        for r in rows:
+            writer.writerow(
+                [
+                    r.import_key,
+                    r.verdict,
+                    r.stored_rows,
+                    r.new_rows,
+                    r.overlap,
+                    r.max_rel_diff,
+                    r.reason or "",
+                ]
+            )
+    typer.echo(f"\nreport written to {report_path}")
+
+    counts = {v: sum(1 for r in rows if r.verdict == v) for v in ("MATCH", "REPLACE", "UNRESOLVED")}
+    typer.echo(
+        f"MATCH {counts['MATCH']}, REPLACE {counts['REPLACE']}, UNRESOLVED {counts['UNRESOLVED']}"
+    )
+    if stopped_early:
+        typer.secho(
+            "stopped early: rate-limited. Run again to continue from here.",
+            fg=typer.colors.YELLOW,
+        )
 
 
 @app.command()

@@ -23,7 +23,7 @@ dependencies = [
 [project.optional-dependencies]
 # Added as the phases that need them land, so the foundation does not
 # carry dependencies it never exercises.
-ingest = ["httpx>=0.27", "yfinance>=0.2.40"]
+ingest = ["httpx>=0.27", "yfinance>=0.2.40", "curl_cffi>=0.15,<0.16"]
 # No jinja2: the debug page is rendered by `api/render.py` in plain Python.
 # A template engine buys nothing for one page and costs a second place where
 # escaping can be forgotten.

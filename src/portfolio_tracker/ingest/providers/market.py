@@ -13,16 +13,30 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Protocol
 
+from portfolio_tracker.ingest.onvista_cache import OnvistaNotation
 from portfolio_tracker.ingest.providers.base import (
     InstrumentRef,
     PriceObservation,
     ProviderUnavailable,
     RateLimited,
 )
+
+
+class _NotationCache(Protocol):
+    """What `OnvistaProvider` needs from a notation cache.
+
+    A structural type rather than importing a concrete class: the provider
+    stays database-free, and any object with these two methods -- backed by
+    a table, a dict in a test, or nothing at all -- works.
+    """
+
+    def get(self, instrument_id: int) -> OnvistaNotation | None: ...
+
+    def put(self, instrument_id: int, notation: OnvistaNotation) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -438,6 +452,325 @@ def _looks_rate_limited(exc: BaseException) -> bool:
     """
     text = f"{type(exc).__name__} {exc}".lower()
     return any(marker in text for marker in _RATE_LIMIT_MARKERS)
+
+
+class OnvistaProvider:
+    """German-listed ETFs and stocks, via onvista's public JSON API.
+
+    Built because Yahoo Finance is unreliable for Xetra ETFs: it dropped 110
+    Xetra symbols in September 2026, publishes ETF daily bars a day late, and
+    -- worst -- its history for roughly half of the .DE ETFs in this database
+    turned out to be USD figures stored against EUR instruments (a constant
+    ~14.4% gap; some series 100x off; some a different fund entirely).
+    onvista publishes correct Xetra EUR closes with same-day availability.
+
+    Three calls make up one resolution: a search matches the instrument to
+    onvista's ``entityType``/``entityValue``, a snapshot lists the markets it
+    quotes on (Xetra preferred, then Tradegate, gettex, Stuttgart) and their
+    currency, and the EOD history call then serves the actual series. The
+    first two are cached (by whatever ``notation_cache`` is handed in, keyed
+    on ``instrument.instrument_id``) so a repeat fetch skips straight to
+    history -- the provider itself stays database-free, like the others.
+    """
+
+    name = "onvista"
+
+    _SEARCH_URL = "https://api.onvista.de/api/v1/instruments/query"
+    _SNAPSHOT_URL = "https://api.onvista.de/api/v1/{kind}s/{entity_id}/snapshot"
+    _HISTORY_URL = "https://api.onvista.de/api/v1/instruments/{entity_type}/{entity_id}/eod_history"
+
+    #: Notation preference, in order: Xetra, then Tradegate, then gettex.
+    #: Stuttgart has no stable ``codeExchange`` seen so far, so it is matched
+    #: by market name instead, as the last resort before giving up.
+    _EXCHANGE_PREFERENCE: tuple[str, ...] = ("GER", "BSX", "TRO")
+
+    def __init__(
+        self,
+        fetcher: Callable[[str], str] | None = None,
+        notation_cache: _NotationCache | None = None,
+    ) -> None:
+        self._fetch = fetcher or self._get
+        self._cache = notation_cache
+
+    def supports(self, instrument: InstrumentRef) -> bool:
+        return instrument.price_source == "onvista"
+
+    @staticmethod
+    def _get(url: str) -> str:
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+                ),
+                "Accept": "application/json",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            body: bytes = response.read()
+            return body.decode("utf-8")
+
+    # -- search ------------------------------------------------------------
+
+    @staticmethod
+    def parse_search(text: str, query: str, isin: str | None) -> tuple[str, str]:
+        """Return ``(entity_type, entity_id)`` for the best match.
+
+        Matched on ISIN when the instrument has one, else the first FUND or
+        STOCK hit -- which is how owned ETFs with no ISIN on file (EGV2,
+        FLXD, IS0E, LYBK, NQSE, SEC0) are resolved, by their bare symbol.
+        """
+        try:
+            payload: dict[str, Any] = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ProviderUnavailable(
+                f"{query}: onvista search returned non-JSON; the endpoint may have changed"
+            ) from exc
+        candidates = payload.get("list") or []
+        match: dict[str, Any] | None = None
+        if isin:
+            match = next((c for c in candidates if c.get("isin") == isin), None)
+        if match is None:
+            match = next((c for c in candidates if c.get("entityType") in ("FUND", "STOCK")), None)
+        if match is None:
+            raise ProviderUnavailable(
+                f"{query}: onvista search found no FUND/STOCK match "
+                f"(isin={isin!r}, {len(candidates)} candidate(s))"
+            )
+        entity_type = str(match["entityType"]).lower()
+        entity_id = str(match["entityValue"])
+        return entity_type, entity_id
+
+    def _search(self, instrument: InstrumentRef) -> tuple[str, str]:
+        query = instrument.isin or (instrument.price_symbol or instrument.import_key).removesuffix(
+            ".DE"
+        )
+        url = f"{self._SEARCH_URL}?{urllib.parse.urlencode({'searchValue': query, 'limit': 5})}"
+        try:
+            text = self._fetch(url)
+        except urllib.error.HTTPError as exc:
+            raise ProviderUnavailable(
+                f"{instrument.import_key}: onvista search returned HTTP {exc.code}. "
+                f"Use data/prices_manual/{instrument.import_key}.csv instead."
+            ) from exc
+        except urllib.error.URLError as exc:
+            raise ProviderUnavailable(
+                f"{instrument.import_key}: could not reach onvista ({exc.reason}). "
+                f"Use data/prices_manual/{instrument.import_key}.csv instead."
+            ) from exc
+        return self.parse_search(text, query, instrument.isin)
+
+    # -- snapshot ------------------------------------------------------------
+
+    @staticmethod
+    def parse_snapshot(text: str, import_key: str, want_currency: str) -> OnvistaNotation:
+        """Choose a notation from ``quoteList.list`` and check its currency.
+
+        The currency check is load-bearing, not decorative: a stored price in
+        the wrong currency silently misvalues the whole position, so a
+        mismatch is refused here rather than passed downstream.
+        """
+        try:
+            payload: dict[str, Any] = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ProviderUnavailable(
+                f"{import_key}: onvista snapshot returned non-JSON; the endpoint may have changed"
+            ) from exc
+        quotes = ((payload.get("quoteList") or {}).get("list")) or []
+        if not quotes:
+            raise ProviderUnavailable(f"{import_key}: onvista snapshot has no quotes")
+
+        chosen: dict[str, Any] | None = None
+        for code in OnvistaProvider._EXCHANGE_PREFERENCE:
+            chosen = next(
+                (q for q in quotes if (q.get("market") or {}).get("codeExchange") == code), None
+            )
+            if chosen is not None:
+                break
+        if chosen is None:
+            chosen = next(
+                (
+                    q
+                    for q in quotes
+                    if "stuttgart" in str((q.get("market") or {}).get("name") or "").lower()
+                ),
+                None,
+            )
+        if chosen is None:
+            raise ProviderUnavailable(
+                f"{import_key}: onvista has no Xetra/Tradegate/gettex/Stuttgart notation "
+                f"among {[(q.get('market') or {}).get('codeExchange') for q in quotes]}"
+            )
+
+        market = chosen.get("market") or {}
+        id_notation = market.get("idNotation")
+        if id_notation is None:
+            raise ProviderUnavailable(f"{import_key}: onvista notation has no idNotation")
+        currency = (
+            chosen.get("isoCurrency") or chosen.get("currency") or chosen.get("currencySymbol")
+        )
+        if currency != want_currency:
+            raise ProviderUnavailable(
+                f"{import_key}: onvista notation currency {currency!r} does not match "
+                f"instrument currency {want_currency!r}"
+            )
+        market_label = str(market.get("name") or market.get("codeExchange") or "unknown")
+        return OnvistaNotation(
+            entity_type="",  # filled in by the caller, which already knows it
+            entity_id="",
+            id_notation=str(id_notation),
+            market=market_label,
+            currency=str(currency),
+        )
+
+    def _resolve(self, instrument: InstrumentRef) -> OnvistaNotation:
+        if self._cache is not None:
+            cached = self._cache.get(instrument.instrument_id)
+            if cached is not None:
+                return cached
+
+        entity_type, entity_id = self._search(instrument)
+        url = self._SNAPSHOT_URL.format(kind=entity_type, entity_id=entity_id)
+        try:
+            text = self._fetch(url)
+        except urllib.error.HTTPError as exc:
+            raise ProviderUnavailable(
+                f"{instrument.import_key}: onvista snapshot returned HTTP {exc.code}. "
+                f"Use data/prices_manual/{instrument.import_key}.csv instead."
+            ) from exc
+        except urllib.error.URLError as exc:
+            raise ProviderUnavailable(
+                f"{instrument.import_key}: could not reach onvista ({exc.reason}). "
+                f"Use data/prices_manual/{instrument.import_key}.csv instead."
+            ) from exc
+        partial = self.parse_snapshot(text, instrument.import_key, instrument.currency)
+        notation = OnvistaNotation(
+            entity_type=entity_type,
+            entity_id=entity_id,
+            id_notation=partial.id_notation,
+            market=partial.market,
+            currency=partial.currency,
+        )
+        if self._cache is not None:
+            self._cache.put(instrument.instrument_id, notation)
+        return notation
+
+    # -- history ------------------------------------------------------------
+
+    #: What each ``range`` value spans, verified live. The endpoint's window is
+    #: ``[startDate, startDate + range]``; ``range`` alone returns only the
+    #: most recent month whatever value is passed. That is why history is
+    #: paged from ``start`` forward rather than requested in one call.
+    _RANGE_DAYS: tuple[tuple[str, int], ...] = (("M1", 31), ("Y1", 365), ("Y5", 5 * 365))
+
+    @classmethod
+    def _range_for(cls, start: date, end: date) -> str:
+        """Smallest onvista ``range`` value that covers ``[start, end]``."""
+        span_days = (end - start).days
+        for name, days in cls._RANGE_DAYS:
+            if span_days <= days:
+                return name
+        return cls._RANGE_DAYS[-1][0]
+
+    @classmethod
+    def _range_days(cls, name: str) -> int:
+        return dict(cls._RANGE_DAYS)[name]
+
+    @staticmethod
+    def parse_history(text: str, import_key: str) -> list[PriceObservation]:
+        try:
+            payload: dict[str, Any] = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ProviderUnavailable(
+                f"{import_key}: onvista eod_history returned non-JSON; the endpoint may "
+                "have changed"
+            ) from exc
+        times = payload.get("datetimeLast") or []
+        closes = payload.get("last") or []
+        volumes = payload.get("volume") or []
+        if not times or not closes:
+            raise ProviderUnavailable(f"{import_key}: onvista eod_history returned no rows")
+
+        observations: list[PriceObservation] = []
+        for i, ts in enumerate(times):
+            if i >= len(closes) or closes[i] is None:
+                continue
+            try:
+                on = datetime.fromtimestamp(int(ts), tz=UTC).date()
+                close = Decimal(str(closes[i]))
+            except (InvalidOperation, ValueError, OSError, OverflowError) as exc:
+                raise ProviderUnavailable(
+                    f"{import_key}: unparseable onvista history row at index {i}"
+                ) from exc
+            volume = (
+                Decimal(str(volumes[i])) if i < len(volumes) and volumes[i] is not None else None
+            )
+            # onvista publishes no adjusted close, so total_return_close stays
+            # None rather than being faked from the raw close -- as with TEFAS
+            # and fintables.
+            observations.append(PriceObservation(on, close, None, volume))
+        return observations
+
+    def fetch(
+        self, instrument: InstrumentRef, start: date, end: date, *, weekly: bool = False
+    ) -> list[PriceObservation]:
+        notation = self._resolve(instrument)
+        # Verified live: this endpoint wants the entity type upper-cased
+        # ("FUND"/"STOCK"), unlike the snapshot endpoint's lower-cased path
+        # segment ("funds"/"stocks") -- passing it through as stored fails
+        # every request with HTTP 400 "Entity type must not be null".
+        base = self._HISTORY_URL.format(
+            entity_type=notation.entity_type.upper(), entity_id=notation.entity_id
+        )
+        # The window is [startDate, startDate + range], so a five-year
+        # history that should end today would otherwise stop a few days
+        # short. Page forward from `start` until `end` is inside a window.
+        observations: list[PriceObservation] = []
+        cursor = start
+        while cursor <= end:
+            range_param = self._range_for(cursor, end)
+            query = urllib.parse.urlencode(
+                {
+                    "idNotation": notation.id_notation,
+                    "range": range_param,
+                    "startDate": cursor.isoformat(),
+                }
+            )
+            try:
+                text = self._fetch(f"{base}?{query}")
+            except urllib.error.HTTPError as exc:
+                raise ProviderUnavailable(
+                    f"{instrument.import_key}: onvista eod_history returned HTTP {exc.code}. "
+                    f"Use data/prices_manual/{instrument.import_key}.csv instead."
+                ) from exc
+            except urllib.error.URLError as exc:
+                raise ProviderUnavailable(
+                    f"{instrument.import_key}: could not reach onvista ({exc.reason}). "
+                    f"Use data/prices_manual/{instrument.import_key}.csv instead."
+                ) from exc
+            observations.extend(self.parse_history(text, instrument.import_key))
+            cursor = cursor + timedelta(days=self._range_days(range_param) + 1)
+        seen: set[date] = set()
+        unique = []
+        for o in sorted(observations, key=lambda o: o.on):
+            if start <= o.on <= end and o.on not in seen:
+                seen.add(o.on)
+                unique.append(o)
+        return _weekly_sample(unique) if weekly else unique
+
+
+def _weekly_sample(observations: list[PriceObservation]) -> list[PriceObservation]:
+    """One observation per ISO week: the last trading day of each week.
+
+    Used for instruments only ever compared against, never valued -- a daily
+    series for two hundred of them is a great deal of somebody else's
+    bandwidth to answer a question about three-year returns.
+    """
+    by_week: dict[tuple[int, int], PriceObservation] = {}
+    for obs in sorted(observations, key=lambda o: o.on):
+        by_week[obs.on.isocalendar()[:2]] = obs
+    return [by_week[key] for key in sorted(by_week)]
 
 
 class SyntheticProvider:

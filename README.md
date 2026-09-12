@@ -140,8 +140,8 @@ uv run pt look-through exposure --dim currency
 ```
 
 `uv run pt --help` lists the rest of the CLI (`rebuild`, `fetch-prices`, `fetch-fx`,
-`report`, `tax`, `sync-fundamentals`, `score-backtest`, …). In normal use none of it
-is needed; the page does the same work.
+`report`, `tax`, `reprice`, `sync-fundamentals`, `score-backtest`, …). In normal
+use none of it is needed; the page does the same work.
 
 ### Why `run.py` does the preparation itself
 
@@ -492,6 +492,14 @@ Stated here rather than buried, because they bound what the numbers mean:
    snapshot: nothing refreshes it, and `LOOK_THROUGH_STALE` fires after 180 days.
 5. **Turkish mutual funds are not on mainstream price feeds.** A TEFAS provider
    exists, but the manual CSV path is a co-equal requirement, not a fallback.
+6. **Yahoo Finance is not a reliable source for German-listed ETFs.** In
+   September 2026 it dropped over a hundred Xetra symbols, publishes ETF daily
+   bars a day late, and served USD histories against EUR listings for roughly
+   half of the funds in the comparison set. German ETFs and stocks are therefore
+   priced from onvista's public Xetra feed, with Yahoo kept only as a fallback,
+   and `pt reprice` compares a source's history against what is stored and
+   replaces it where it disagrees. Both feeds are undocumented and can change
+   without notice; the manual CSV path is what remains when they do.
 
 ## Known gaps
 
@@ -537,6 +545,8 @@ core/inbox.py              what confirming an inference means, for every front e
 core/goal.py               target and projection; contributions only, no assumed return
 ingest/dividends.py        distributions, proposed for review rather than booked
 ingest/look_through.py     issuer holdings files; refuses rather than guesses a unit
+ingest/providers/          prices: onvista (Xetra, primary for .DE), yfinance (fallback, US),
+                           fintables (Turkish funds), manual CSV; one contract, one fallback map
 core/ledger.py             writes a trade somebody typed; freezes its EUR leg
 core/glossary.py           German statutory terms, in English, German kept alongside
 core/locking.py            one update at a time, across processes; refuses, never queues
