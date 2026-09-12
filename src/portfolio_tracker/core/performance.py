@@ -259,11 +259,11 @@ def _periods_per_year(points: list[Point]) -> float:
 #: instrument and horizon, plus a stamp of its price rows and of the FX table.
 #: Prices change once a day, so the second request for a page is served from
 #: here instead of re-walking three years of closes for 250 instruments.
-_METRICS_CACHE: dict[tuple, Metrics] = {}
+_METRICS_CACHE: dict[tuple[object, ...], Metrics] = {}
 _METRICS_CACHE_LIMIT = 2000
 
 
-def _data_stamp(conn: sqlite3.Connection, instrument_id: int) -> tuple | None:
+def _data_stamp(conn: sqlite3.Connection, instrument_id: int) -> tuple[object, ...] | None:
     """What the cache key must carry, or None when caching is unsafe.
 
     An in-memory database (tests) has no identity across connections, so two

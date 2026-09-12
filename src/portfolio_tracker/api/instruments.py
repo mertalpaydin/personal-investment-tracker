@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from portfolio_tracker.api import deps
 from portfolio_tracker.api.deps import get_db, get_writable_db
 from portfolio_tracker.core import classify, peers, performance, universe, watchlist
+from portfolio_tracker.core.peers import DEFAULT_RISK_LEVEL
 from portfolio_tracker.db.connection import transaction
 from portfolio_tracker.ingest.providers.base import ProviderUnavailable
 from portfolio_tracker.ingest.providers.market import YFinanceProvider
@@ -124,15 +125,16 @@ def lookup(
         else (found.symbol if "." in sym_clean else found.symbol.split(".")[0].upper())
     )
 
+    # `suggest` is the one classifier; calling a function that did not exist
+    # here made every lookup of a not-yet-known symbol a 500.
+    suggestion = classify.suggest(suggested_key, found.name, found.quote_type or "ETF")
     inferred_bucket = (
-        existing["risk_bucket"]
-        if existing and existing["risk_bucket"]
-        else classify.infer_category(found.name, found.quote_type or "ETF")
+        existing["risk_bucket"] if existing and existing["risk_bucket"] else suggestion.bucket
     )
     inferred_level = (
         existing["risk_level"]
         if existing and existing["risk_level"]
-        else (classify.DEFAULT_RISK_LEVEL.get(inferred_bucket) if inferred_bucket else None)
+        else (DEFAULT_RISK_LEVEL.get(inferred_bucket) if inferred_bucket else None)
     )
 
     return {

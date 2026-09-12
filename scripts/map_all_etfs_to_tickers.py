@@ -46,7 +46,7 @@ LEGACY_NAME_FIXES = {
 }
 
 
-def fix_legacy_names(conn: sqlite3.Connection):
+def fix_legacy_names(conn: sqlite3.Connection) -> None:
     print("Fixing 19 legacy mismatched ETF names...")
     for ticker, (name, bucket, lvl) in LEGACY_NAME_FIXES.items():
         conn.execute(
@@ -61,7 +61,7 @@ def fix_legacy_names(conn: sqlite3.Connection):
     print("Legacy names updated in database.")
 
 
-def map_isins_to_tickers(conn: sqlite3.Connection):
+def map_isins_to_tickers(conn: sqlite3.Connection) -> None:
     rows = conn.execute("""
         SELECT id, import_key, isin, name, status
         FROM instrument
@@ -116,9 +116,9 @@ def map_isins_to_tickers(conn: sqlite3.Connection):
             inst_id, old_key, isin, _name, _status = r
             entries = item.get("data", [])
             ticker = None
-            for e in entries:
-                t = e.get("ticker", "").strip()
-                ex = e.get("exchCode", "").strip()
+            for entry in entries:
+                t = entry.get("ticker", "").strip()
+                ex = entry.get("exchCode", "").strip()
                 if not t:
                     continue
                 if ex in ("GY", "GR", "GF", "GE", "GD", "GM"):
@@ -160,7 +160,7 @@ def map_isins_to_tickers(conn: sqlite3.Connection):
     )
 
 
-def sync_universe_yaml(conn: sqlite3.Connection):
+def sync_universe_yaml(conn: sqlite3.Connection) -> None:
     print(f"Updating {UNIVERSE_YAML}...")
     with open(UNIVERSE_YAML, encoding="utf-8") as f:
         existing_yaml = yaml.safe_load(f) or {}
@@ -204,7 +204,7 @@ def sync_universe_yaml(conn: sqlite3.Connection):
     print(f"universe.yaml updated with {len(new_yaml_instruments)} instruments.")
 
 
-def main():
+def main() -> None:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
 

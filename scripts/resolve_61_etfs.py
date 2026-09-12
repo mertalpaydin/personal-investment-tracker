@@ -75,7 +75,7 @@ MAPPINGS = {
 }
 
 
-def main():
+def main() -> None:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
 
@@ -98,7 +98,7 @@ def main():
     print(f"Writing {CSV_OUT}...")
     csv_data = []
     for r in rows:
-        isin = r["isin"] or r["import_key"]
+        isin: str = r["isin"] or r["import_key"]
         ticker = MAPPINGS.get(isin, "")
         csv_data.append(
             {
@@ -135,7 +135,7 @@ def main():
     print("Updating price_symbol in database...")
     for r in rows:
         isin = r["isin"] or r["import_key"]
-        ticker = MAPPINGS.get(isin)
+        ticker = MAPPINGS.get(isin, "")
         if ticker:
             conn.execute(
                 "UPDATE instrument SET price_symbol = ? WHERE id = ?",

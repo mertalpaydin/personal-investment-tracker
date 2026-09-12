@@ -187,7 +187,7 @@ def main() -> None:
                 """,
                 (isin, isin, fname, isin, ter_bps, dist_policy, bucket, risk_lvl),
             )
-            inserted_new.append((cursor.lastrowid, isin, fname))
+            inserted_new.append((int(cursor.lastrowid or 0), isin, fname))
         except sqlite3.IntegrityError as err:
             print(f"Warning: skipped {isin} ({fname}) due to {err}")
 

@@ -23,7 +23,7 @@ from portfolio_tracker.core.stock_indicators import (  # noqa: E402
 DB_PATH = BASE_DIR / "data" / "portfolio.db"
 
 
-def sync_stocks():
+def sync_stocks() -> None:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
 
