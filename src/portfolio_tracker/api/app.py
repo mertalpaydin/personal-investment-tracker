@@ -253,8 +253,24 @@ def health(
             "GROUP BY i.import_key ORDER BY i.import_key"
         )
     ]
+    # The valuation date is driven by whichever instrument was priced most
+    # recently, and the cash proxies are "priced" every day. So `as_of` alone
+    # can read as today while every real holding is two days stale. The
+    # header shows the oldest price behind an owned position instead: the
+    # date the whole portfolio value is actually good to.
+    oldest = conn.execute(
+        """
+        SELECT min(pd.price_asof) AS priced_to
+        FROM position_daily pd
+        JOIN instrument i ON i.id = pd.instrument_id
+        WHERE pd.date = ? AND CAST(pd.quantity AS REAL) > 0
+          AND i.is_cash_proxy = 0 AND i.price_source <> 'synthetic'
+        """,
+        (row["date"],),
+    ).fetchone()
     return {
         "as_of": row["date"],
+        "priced_to": (oldest["priced_to"] if oldest and oldest["priced_to"] else row["date"]),
         "schema_version": conn.execute("PRAGMA user_version").fetchone()[0],
         "completeness": row["completeness"],
         "data_quality": _data_quality(conn, person_id, row["date"]),

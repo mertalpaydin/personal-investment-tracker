@@ -1414,16 +1414,6 @@ instruments:
     ter_bps: 50
     risk_bucket: BOND
     risk_level: 3
-  4BRZ.DE:
-    name: iShares MSCI Brazil UCITS ETF (DE) USD (Acc)
-    asset_class: ETF
-    currency: EUR
-    price_symbol: 4BRZ.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 31
-    risk_bucket: EQ_EM
-    risk_level: 5
   4UB5.DE:
     name: UBS MSCI United Kingdom IMI Socially Responsible UCITS ETF GBP dis
     asset_class: ETF
@@ -3667,16 +3657,6 @@ instruments:
     ter_bps: 63
     risk_bucket: EQ_SECTOR
     risk_level: 6
-  GTSB.DE:
-    name: Amundi Global Treasury Bond UCITS ETF USD Hedged Acc
-    asset_class: ETF
-    currency: EUR
-    price_symbol: GTSB.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 12
-    risk_bucket: BOND
-    risk_level: 3
   H1D5.DE:
     name: Amundi S&P 500 Swap UCITS ETF EUR Hedged Acc
     asset_class: ETF
@@ -5470,16 +5450,6 @@ instruments:
     ter_bps: 17
     risk_bucket: BOND
     risk_level: 3
-  LYTG.DE:
-    name: Amundi Core UK Government Bond UCITS ETF Dist
-    asset_class: ETF
-    currency: EUR
-    price_symbol: LYTG.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 5
-    risk_bucket: BOND
-    risk_level: 3
   LYTR.DE:
     name: Amundi Bloomberg Equal-weight Commodity ex-Agriculture UCITS ETF Acc
     asset_class: ETF
@@ -5669,16 +5639,6 @@ instruments:
     is_fund: true
     ter_bps: 18
     risk_bucket: EQ_GLOBAL_BROAD
-    risk_level: 4
-  MWOT.DE:
-    name: Amundi Russell 1000 Growth UCITS ETF Acc
-    asset_class: ETF
-    currency: EUR
-    price_symbol: MWOW.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 19
-    risk_bucket: EQ_US_LARGE
     risk_level: 4
   MWRD.DE:
     name: Amundi Core MSCI World UCITS ETF Acc
@@ -6793,26 +6753,6 @@ instruments:
     ter_bps: 7
     risk_bucket: BOND
     risk_level: 2
-  SXRL.DE:
-    name: iShares USD Treasury Bond 3-7yr UCITS ETF (Acc)
-    asset_class: ETF
-    currency: EUR
-    price_symbol: SXRL.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 7
-    risk_bucket: BOND
-    risk_level: 3
-  SXRM.DE:
-    name: iShares USD Treasury Bond 7-10yr UCITS ETF (Acc)
-    asset_class: ETF
-    currency: EUR
-    price_symbol: SXRM.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 7
-    risk_bucket: BOND
-    risk_level: 3
   SXRN.DE:
     name: iShares Euro Government Bond 1-3yr UCITS ETF (Acc)
     asset_class: ETF
@@ -7297,16 +7237,6 @@ instruments:
     ter_bps: 65
     risk_bucket: EQ_GLOBAL_BROAD
     risk_level: 4
-  USBD.DE:
-    name: Amundi Global Corporate Bond UCITS ETF USD Hedged Acc
-    asset_class: ETF
-    currency: EUR
-    price_symbol: USBD.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 17
-    risk_bucket: BOND
-    risk_level: 3
   USEE.DE:
     name: iShares US Equity Enhanced Active UCITS ETF USD (Acc)
     asset_class: ETF
@@ -7796,26 +7726,6 @@ instruments:
     is_fund: true
     ter_bps: 22
     risk_bucket: EQ_GLOBAL_BROAD
-    risk_level: 4
-  WEB2.DE:
-    name: Amundi MSCI USA ESG Broad Transition UCITS ETF Acc
-    asset_class: ETF
-    currency: EUR
-    price_symbol: WEB2.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 7
-    risk_bucket: EQ_GLOBAL_BROAD
-    risk_level: 4
-  WEBE.DE:
-    name: Amundi S&P 500 Climate Paris Aligned UCITS ETF Dist
-    asset_class: ETF
-    currency: EUR
-    price_symbol: WEBE.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 7
-    risk_bucket: EQ_US_LARGE
     risk_level: 4
   WEBK.DE:
     name: Amundi Prime All Country World UCITS ETF Dist

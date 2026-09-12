@@ -276,6 +276,10 @@ def test_staleness_is_reported_rather_than_hidden(client: TestClient) -> None:
     )
     assert row["price_stale_days"] == 3
     assert row["valuation_status"] == "STALE"
+    # The header date is the oldest price behind an owned position, so a
+    # holding three days stale pulls it back three business days behind as_of.
+    assert body["priced_to"] < body["as_of"]
+    assert body["priced_to"] == row["price_asof"]
 
 
 @pytest.mark.parametrize(

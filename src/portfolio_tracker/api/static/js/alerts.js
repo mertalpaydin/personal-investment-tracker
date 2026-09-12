@@ -42,9 +42,12 @@ export async function refreshAlerts() {
   if (!isError(data.health)) {
     const h = data.health;
 
-    if (h.as_of) {
+    // The oldest price behind an owned position, not the newest row: a cash
+    // proxy is "priced" every day and would otherwise make stale ETFs look current.
+    const pricedTo = h.priced_to || h.as_of;
+    if (pricedTo) {
       const stamp = document.getElementById("asof");
-      if (stamp) stamp.textContent = `Priced to ${ago(h.as_of)}`;
+      if (stamp) stamp.textContent = `Priced to ${ago(pricedTo)}`;
     }
 
     // The one that changes what every other figure means: money that funded a
