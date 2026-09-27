@@ -244,24 +244,36 @@ class YFinanceProvider:
 
 
 class TefasProvider:
-    """Turkish investment funds.
+    """Turkish investment funds, from TEFAS itself.
 
-    TEFAS publishes an undocumented JSON endpoint with no versioning, no
-    stability guarantee and no announcement when it changes. As of 2026-08-15 it
-    returns HTTP 404 for every known path while the site itself serves 200,
-    which is exactly the failure this design anticipated.
+    TEFAS is the official register: every fund's daily price is reported there
+    by its founder through Takasbank. The site was rebuilt in 2026 and the old
+    ``/api/DB/BindHistoryInfo`` form endpoint was removed. The new site's own
+    fund page posts ``{"fonKodu", "dil", "periyod"}`` as JSON to
+    ``/api/funds/fonFiyatBilgiGetir`` and receives dated daily prices; that is
+    the request made here, found by recording what the page itself sends.
 
-    It is kept because the endpoint may well return, and because a working
-    request is a one-line change. But the manual provider is the supported path
-    for these funds, not the contingency -- so this raises with instructions
-    rather than pretending a fund has no prices.
+    The HTML pages sit behind an F5 bot challenge; this JSON endpoint did not,
+    as of 2026-09-27. It is still undocumented, so a changed response raises
+    with the manual path as the remedy rather than returning nothing.
+
+    ``periyod`` is a look-back in months from the latest price, not a date
+    range: 1, 12 and 60 were verified. The smallest one that reaches ``start``
+    is requested and the result is trimmed to ``[start, end]``.
     """
 
     name = "tefas"
-    url = "https://www.tefas.gov.tr/api/DB/BindHistoryInfo"
+    url = "https://www.tefas.gov.tr/api/funds/fonFiyatBilgiGetir"
+    _PERIODS: tuple[tuple[int, int], ...] = ((1, 28), (12, 360), (60, 5 * 365))
 
-    def __init__(self, fetcher: Callable[[str, bytes], str] | None = None) -> None:
+    def __init__(
+        self,
+        fetcher: Callable[[str, bytes], str] | None = None,
+        *,
+        today: Callable[[], date] = date.today,
+    ) -> None:
         self._fetch = fetcher or self._post
+        self._today = today
 
     def supports(self, instrument: InstrumentRef) -> bool:
         return instrument.price_source == "tefas"
@@ -272,22 +284,35 @@ class TefasProvider:
             url,
             data=payload,
             headers={
-                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-                "X-Requested-With": "XMLHttpRequest",
-                "Referer": "https://www.tefas.gov.tr/TarihselVeriler.aspx",
-                "User-Agent": "Mozilla/5.0",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "Origin": "https://www.tefas.gov.tr",
+                "Referer": "https://www.tefas.gov.tr/",
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+                ),
             },
         )
         with urllib.request.urlopen(request, timeout=30) as response:
             body: bytes = response.read()
             return body.decode("utf-8")
 
+    @classmethod
+    def _period_for(cls, start: date, today: date) -> int:
+        span = (today - start).days
+        for months, days in cls._PERIODS:
+            if span <= days:
+                return months
+        return cls._PERIODS[-1][0]
+
     @staticmethod
     def parse(text: str, import_key: str) -> list[PriceObservation]:
-        """Read the ``{"data": [{"TARIH": ..., "FIYAT": ...}]}`` shape.
+        """Read ``{"errorMessage": null, "resultList": [{"tarih", "fiyat"}]}``.
 
-        ``TARIH`` is milliseconds since the epoch. A fault payload is detected
-        explicitly, because it arrives with HTTP 200 in some deployments.
+        ``tarih`` is an ISO date. An ``errorMessage`` arrives with HTTP 200
+        ("Sistem Hatasi!!", "system error", for a request the service does not understand), so
+        it is checked explicitly.
         """
         try:
             payload: dict[str, Any] = json.loads(text)
@@ -296,22 +321,21 @@ class TefasProvider:
                 f"{import_key}: TEFAS returned non-JSON; the endpoint has changed. "
                 f"Use data/prices_manual/{import_key}.csv instead."
             ) from exc
-
-        if "fault" in payload or "data" not in payload:
+        if payload.get("errorMessage") or not isinstance(payload.get("resultList"), list):
             raise ProviderUnavailable(
-                f"{import_key}: TEFAS returned no data ({payload.get('fault', payload)}). "
+                f"{import_key}: TEFAS returned no prices "
+                f"({payload.get('errorMessage') or 'no resultList'}). "
                 f"Use data/prices_manual/{import_key}.csv instead."
             )
-
         observations: list[PriceObservation] = []
-        for row in payload["data"]:
-            raw_price, raw_date = row.get("FIYAT"), row.get("TARIH")
+        for row in payload["resultList"]:
+            raw_price, raw_date = row.get("fiyat"), row.get("tarih")
             if raw_price in (None, "") or raw_date in (None, ""):
                 continue
             try:
                 price = Decimal(str(raw_price))
-                on = date.fromtimestamp(int(raw_date) / 1000)
-            except (InvalidOperation, ValueError, OSError) as exc:
+                on = date.fromisoformat(str(raw_date)[:10])
+            except (InvalidOperation, ValueError) as exc:
                 raise ProviderUnavailable(f"{import_key}: unparseable TEFAS row {row!r}") from exc
             # NAV only: no distribution-adjusted series is published, so
             # total_return_close is left None rather than being faked from NAV.
@@ -322,28 +346,23 @@ class TefasProvider:
         self, instrument: InstrumentRef, start: date, end: date, *, weekly: bool = False
     ) -> list[PriceObservation]:
         code = instrument.price_symbol or instrument.import_key
-        payload = urllib.parse.urlencode(
-            {
-                "fontip": "YAT",
-                "fonkod": code,
-                "bastarih": start.strftime("%d.%m.%Y"),
-                "bittarih": end.strftime("%d.%m.%Y"),
-            }
+        payload = json.dumps(
+            {"fonKodu": code, "dil": "TR", "periyod": self._period_for(start, self._today())}
         ).encode()
         try:
             text = self._fetch(self.url, payload)
         except urllib.error.HTTPError as exc:
             raise ProviderUnavailable(
-                f"{instrument.import_key}: TEFAS returned HTTP {exc.code}. This endpoint is "
-                f"undocumented and is currently unavailable. Supply prices in "
-                f"data/prices_manual/{instrument.import_key}.csv instead."
+                f"{instrument.import_key}: TEFAS returned HTTP {exc.code}. "
+                f"Use data/prices_manual/{instrument.import_key}.csv instead."
             ) from exc
         except urllib.error.URLError as exc:
             raise ProviderUnavailable(
                 f"{instrument.import_key}: could not reach TEFAS ({exc.reason}). "
                 f"Use data/prices_manual/{instrument.import_key}.csv instead."
             ) from exc
-        return self.parse(text, instrument.import_key)
+        observations = [o for o in self.parse(text, instrument.import_key) if start <= o.on <= end]
+        return _weekly_sample(observations) if weekly else observations
 
 
 class FintablesProvider:

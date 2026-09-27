@@ -29,7 +29,7 @@ import json
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from portfolio_tracker.money import ZERO, quantize_money
@@ -58,6 +58,8 @@ class DividendReport:
     distributions: list[Distribution] = field(default_factory=list)
     proposed: int = 0
     skipped_no_holding: int = 0
+    #: Already booked by hand, or already proposed and decided either way.
+    skipped_known: int = 0
     findings: list[str] = field(default_factory=list)
 
     @property
@@ -133,6 +135,44 @@ def discover(
     return report
 
 
+#: How long after the ex-date a payment can land. A hand-entered dividend is
+#: usually dated on the pay date the broker statement shows, which for US
+#: stocks is about ten days after the ex-date the feed reports.
+PAYMENT_LAG_DAYS = 45
+
+
+def _already_known(conn: sqlite3.Connection, item: Distribution) -> bool:
+    """Whether this distribution is booked or was already put to the owner.
+
+    The unique index on ``pending_entry`` covers an identical proposal only.
+    It does not see a dividend typed in from a statement, dated on the pay
+    date at the bank's amount, and it does not see an earlier proposal whose
+    amount differed because the quantity held was corrected since. Both would
+    otherwise be proposed again, and confirming one would count it twice.
+    """
+    booked = conn.execute(
+        "SELECT 1 FROM transaction_ WHERE type = 'DIVIDEND' AND instrument_id = ? "
+        "AND trade_date >= ? AND trade_date <= ?",
+        (
+            item.instrument_id,
+            (item.ex_date - timedelta(days=5)).isoformat(),
+            (item.ex_date + timedelta(days=PAYMENT_LAG_DAYS)).isoformat(),
+        ),
+    ).fetchone()
+    if booked is not None:
+        return True
+    for row in conn.execute(
+        "SELECT derivation FROM pending_entry WHERE kind = 'DIVIDEND' AND proposed_date = ?",
+        (item.ex_date.isoformat(),),
+    ):
+        try:
+            if json.loads(row["derivation"] or "{}").get("instrument_id") == item.instrument_id:
+                return True
+        except json.JSONDecodeError:
+            continue
+    return False
+
+
 def propose(
     conn: sqlite3.Connection, *, since: date, fetcher: DividendFetcher | None = None
 ) -> DividendReport:
@@ -145,6 +185,9 @@ def propose(
     now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     for item in report.distributions:
+        if _already_known(conn, item):
+            report.skipped_known += 1
+            continue
         account = conn.execute(
             "SELECT account_id FROM transaction_ WHERE instrument_id = ? LIMIT 1",
             (item.instrument_id,),

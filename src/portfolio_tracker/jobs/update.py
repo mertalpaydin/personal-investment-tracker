@@ -43,6 +43,7 @@ from portfolio_tracker.core import locking, rebuild
 from portfolio_tracker.core.calendars import business_days_between
 from portfolio_tracker.db import migrate as migrations
 from portfolio_tracker.db.connection import connect, transaction, wal_checkpoint
+from portfolio_tracker.ingest import dividends as ingest_dividends
 from portfolio_tracker.ingest import fx as ingest_fx
 from portfolio_tracker.ingest import prices as ingest_prices
 
@@ -76,6 +77,9 @@ class UpdateOutcome:
     days_covered: int | None = None
     last_price_date: date | None = None
     rebuilt: bool = False
+    #: New inbox proposals this run created: dividends found in the price
+    #: feed, and deposit interest that fell due. Proposed, never booked.
+    proposed: int = 0
     problems: list[str] = field(default_factory=list)
     error: str | None = None
 
@@ -201,6 +205,7 @@ def run_update(
     end: date | None = None,
     rebuild_after: bool = True,
     only: list[int] | None = None,
+    dividend_fetcher: ingest_dividends.DividendFetcher | None = None,
 ) -> UpdateOutcome:
     """Fetch rates and prices, then recompute. Never raises on a data problem.
 
@@ -220,6 +225,7 @@ def run_update(
                     end=horizon,
                     rebuild_after=rebuild_after,
                     only=only,
+                    dividend_fetcher=dividend_fetcher,
                 )
                 wal_checkpoint(conn, "TRUNCATE")
                 return outcome
@@ -250,6 +256,50 @@ def _snapshot_scores(conn: sqlite3.Connection, outcome: UpdateOutcome, *, end: d
         outcome.problems.append(f"score snapshot: {type(exc).__name__}: {exc}")
 
 
+#: How far back each run looks for distributions. Wider than any gap between
+#: runs, so a missed week is caught up; proposals already made or booked are
+#: skipped, so looking again costs nothing but one request per holding.
+DIVIDEND_LOOKBACK_DAYS = 90
+
+
+def _propose_income(
+    conn: sqlite3.Connection,
+    outcome: UpdateOutcome,
+    *,
+    end: date,
+    dividend_fetcher: ingest_dividends.DividendFetcher | None,
+) -> None:
+    """Put new dividends and due deposit interest in the inbox.
+
+    Both detectors existed and neither ran on its own: dividend discovery had
+    no caller at all, and interest proposals only ran from one CLI command. So
+    a dividend or a matured deposit reached the ledger only if someone
+    remembered to look. Running them here means they surface on the next
+    update. They are proposals: nothing is booked until a person confirms.
+    """
+    # Imported here, like the score snapshot: core.interest pulls in the
+    # accounts module, which a price-only caller does not need.
+    from portfolio_tracker.core import interest as core_interest
+
+    try:
+        report = ingest_dividends.propose(
+            conn, since=end - timedelta(days=DIVIDEND_LOOKBACK_DAYS), fetcher=dividend_fetcher
+        )
+        outcome.proposed += report.proposed
+        outcome.problems.extend(f for f in report.findings if "lookup failed" in f)
+    except Exception as exc:  # a dividend feed fault must not fail the price update
+        log.exception("dividend discovery failed")
+        outcome.problems.append(f"dividends: {type(exc).__name__}: {exc}")
+    for row in conn.execute("SELECT id FROM account WHERE interest_rate IS NOT NULL").fetchall():
+        try:
+            outcome.proposed += core_interest.propose(conn, account_id=int(row["id"]), as_of=end)
+        except Exception as exc:
+            log.exception("interest proposal failed for account %s", row["id"])
+            outcome.problems.append(f"interest (account {row['id']}): {type(exc).__name__}: {exc}")
+    conn.commit()
+    log.info("inbox proposals created: %d", outcome.proposed)
+
+
 def _run_locked(
     conn: sqlite3.Connection,
     *,
@@ -258,6 +308,7 @@ def _run_locked(
     end: date,
     rebuild_after: bool,
     only: list[int] | None,
+    dividend_fetcher: ingest_dividends.DividendFetcher | None = None,
 ) -> UpdateOutcome:
     # 0. Take a rolling backup before modifying the database
     if db_path and str(db_path) != ":memory:":
@@ -289,6 +340,11 @@ def _run_locked(
         outcome.days_covered = business_days_between(before, after) if before and after else None
 
         _snapshot_scores(conn, outcome, end=end)
+
+        # A backfill for one newly watched instrument is not the moment to
+        # scan every holding for income.
+        if only is None:
+            _propose_income(conn, outcome, end=end, dividend_fetcher=dividend_fetcher)
 
         if rebuild_after and conn.execute("SELECT 1 FROM transaction_ LIMIT 1").fetchone():
             # One transaction, so readers never see a half-rebuilt derived layer.

@@ -108,42 +108,56 @@ def test_manual_provider_filters_to_the_window(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# TEFAS -- currently unavailable, and must say so usefully
+# TEFAS -- the rebuilt site's JSON price endpoint
 # ---------------------------------------------------------------------------
 
 
-def test_tefas_parses_its_documented_shape() -> None:
-    payload = json.dumps({"data": [{"TARIH": "1786752000000", "FIYAT": "0.627"}]})
-    observations = TefasProvider.parse(payload, "TTA")
-    assert observations[0].close == Decimal("0.627")
+def _tefas_payload(*rows: tuple[str, float]) -> str:
+    return json.dumps(
+        {
+            "errorCode": None,
+            "errorMessage": None,
+            "resultList": [{"fonKodu": "TTA", "tarih": d, "fiyat": p} for d, p in rows],
+        }
+    )
+
+
+def test_tefas_parses_the_price_list() -> None:
+    observations = TefasProvider.parse(_tefas_payload(("2026-09-25", 0.614713)), "TTA")
+    assert observations[0].on == date(2026, 9, 25)
+    assert observations[0].close == Decimal("0.614713")
     # NAV only: no distribution-adjusted series is published, and faking one
     # from NAV would overstate a distributing fund's performance.
     assert observations[0].total_return_close is None
 
 
-def test_tefas_fault_payload_points_at_the_manual_path() -> None:
-    """The live endpoint returns a fault; the message must be actionable."""
-    payload = json.dumps({"fault": {"faultString": "Method not found or disabled!"}})
+def test_tefas_error_message_points_at_the_manual_path() -> None:
+    """The service answers HTTP 200 with an error text for a request it rejects."""
+    payload = json.dumps({"errorCode": None, "errorMessage": "Sistem Hatasi!!", "resultList": None})
     with pytest.raises(ProviderUnavailable, match=r"prices_manual/TTA\.csv"):
         TefasProvider.parse(payload, "TTA")
 
 
 def test_tefas_non_json_response_points_at_the_manual_path() -> None:
     with pytest.raises(ProviderUnavailable, match="endpoint has changed"):
-        TefasProvider.parse("<html>404</html>", "TTA")
+        TefasProvider.parse("<html>Request Rejected</html>", "TTA")
 
 
-def test_tefas_uses_the_injected_fetcher() -> None:
-    seen: list[bytes] = []
+@pytest.mark.parametrize(
+    ("start", "period"),
+    [(date(2026, 9, 20), 1), (date(2026, 3, 1), 12), (date(2021, 10, 1), 60)],
+)
+def test_tefas_asks_for_the_smallest_look_back_that_reaches_start(start: date, period: int) -> None:
+    seen: list[dict[str, object]] = []
 
     def fake(url: str, payload: bytes) -> str:
-        seen.append(payload)
-        return json.dumps({"data": []})
+        seen.append(json.loads(payload))
+        return _tefas_payload(("2026-09-24", 0.61), ("2026-09-25", 0.62))
 
-    provider = TefasProvider(fetcher=fake)
-    provider.fetch(ref(import_key="TTA", price_source="tefas"), date(2026, 8, 1), date(2026, 8, 14))
-    assert b"fonkod=TTA" in seen[0]
-    assert b"bastarih=01.08.2026" in seen[0]
+    provider = TefasProvider(fetcher=fake, today=lambda: date(2026, 9, 27))
+    rows = provider.fetch(ref(import_key="TTA", price_source="tefas"), start, date(2026, 9, 24))
+    assert seen[0] == {"fonKodu": "TTA", "dil": "TR", "periyod": period}
+    assert [r.on for r in rows] == [date(2026, 9, 24)], "trimmed to [start, end]"
 
 
 # ---------------------------------------------------------------------------

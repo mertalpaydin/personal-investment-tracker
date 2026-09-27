@@ -481,6 +481,9 @@ Stated here rather than buried, because they bound what the numbers mean:
    derived from the price feed's per-share amounts against the quantity held on the
    ex-date — but nothing reaches the ledger without confirmation, and the feed
    publishes *gross*, so withholding is stored as unknown rather than as zero.
+   Every price update scans the last 90 days and puts new distributions, and any
+   deposit interest that has fallen due, in the inbox. A dividend already typed in
+   from a statement is recognised and not proposed again.
 3. **External cash flows are inferred.** The source records no deposits, so a
    purchase not funded by a prior sale implies a contribution, which the tool
    proposes and the owner confirms. XIRR is therefore labelled
@@ -490,8 +493,12 @@ Stated here rather than buried, because they bound what the numbers mean:
    reported on its wrapper's own currency. Every response says which share rests
    on evidence, and `pt doctor` warns about the rest. A composition is also a
    snapshot: nothing refreshes it, and `LOOK_THROUGH_STALE` fires after 180 days.
-5. **Turkish mutual funds are not on mainstream price feeds.** A TEFAS provider
-   exists, but the manual CSV path is a co-equal requirement, not a fallback.
+5. **Turkish mutual funds are not on mainstream price feeds.** They are priced
+   from TEFAS, the official register, through the JSON endpoint its own fund
+   pages call. The republisher used before started blocking automated requests
+   in September 2026, and TEFAS's older endpoint was removed in the same site
+   rebuild. The endpoint is undocumented, so the manual CSV path, which reads
+   TEFAS's own export format, stays a co-equal requirement rather than a fallback.
 6. **Yahoo Finance is not a reliable source for German-listed ETFs.** In
    September 2026 it dropped over a hundred Xetra symbols, publishes ETF daily
    bars a day late, and served USD histories against EUR listings for roughly
@@ -546,7 +553,7 @@ core/goal.py               target and projection; contributions only, no assumed
 ingest/dividends.py        distributions, proposed for review rather than booked
 ingest/look_through.py     issuer holdings files; refuses rather than guesses a unit
 ingest/providers/          prices: onvista (Xetra, primary for .DE), yfinance (fallback, US),
-                           fintables (Turkish funds), manual CSV; one contract, one fallback map
+                           TEFAS (Turkish funds), manual CSV; one contract, one fallback map
 core/ledger.py             writes a trade somebody typed; freezes its EUR leg
 core/glossary.py           German statutory terms, in English, German kept alongside
 core/locking.py            one update at a time, across processes; refuses, never queues
