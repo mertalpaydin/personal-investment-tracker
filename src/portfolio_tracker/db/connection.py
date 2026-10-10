@@ -42,6 +42,7 @@ def connect(
     *,
     read_only: bool = False,
     same_thread: bool = True,
+    auto_heal: bool = True,
 ) -> sqlite3.Connection:
     """Open a configured connection, creating the parent directory if needed.
 
@@ -60,9 +61,14 @@ def connect(
         conn = sqlite3.connect(
             ":memory:", detect_types=sqlite3.PARSE_DECLTYPES, check_same_thread=same_thread
         )
-    else:
-        target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+        return conn
+
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
         if read_only:
             conn = sqlite3.connect(
                 f"file:{target}?mode=ro",
@@ -75,20 +81,30 @@ def connect(
                 target, detect_types=sqlite3.PARSE_DECLTYPES, check_same_thread=same_thread
             )
 
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    # Set on read-only connections too: a reader is exactly what collides with
-    # the update job's commit, and it is the reader that must be patient.
-    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
-    if not read_only:
-        # WAL survives across connections and is a property of the file, so this
-        # is a no-op after the first write connection. In-memory databases do
-        # not support it and silently stay in "memory" journal mode.
-        conn.execute("PRAGMA journal_mode = WAL")
-        # FULL ensures transactions and WAL frames are synced to disk before
-        # reporting commit, preventing file cache corruption on Windows.
-        conn.execute("PRAGMA synchronous = FULL")
-    return conn
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        # Set on read-only connections too: a reader is exactly what collides with
+        # the update job's commit, and it is the reader that must be patient.
+        conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+        if not read_only:
+            # WAL survives across connections and is a property of the file, so this
+            # is a no-op after the first write connection. In-memory databases do
+            # not support it and silently stay in "memory" journal mode.
+            conn.execute("PRAGMA journal_mode = WAL")
+            # FULL ensures transactions and WAL frames are synced to disk before
+            # reporting commit, preventing file cache corruption on Windows.
+            conn.execute("PRAGMA synchronous = FULL")
+        return conn
+    except sqlite3.DatabaseError:
+        with suppress(Exception):
+            conn.close()
+        if auto_heal and target.exists():
+            from portfolio_tracker.db.backup import restore_latest_healthy_backup
+
+            restored = restore_latest_healthy_backup(target)
+            if restored:
+                return connect(path, read_only=read_only, same_thread=same_thread, auto_heal=False)
+        raise
 
 
 def wal_checkpoint(conn: sqlite3.Connection, mode: str = "TRUNCATE") -> None:

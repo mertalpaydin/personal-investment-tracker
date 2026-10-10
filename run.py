@@ -41,6 +41,8 @@ import webbrowser
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
+if str(REPO_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / "src"))
 DB_PATH = REPO_ROOT / "data" / "portfolio.db"
 #: Drop issuer holdings files here and they appear on the page. Created on
 #: startup, because a folder you are told about but have to make yourself is
@@ -98,9 +100,32 @@ def _prepare() -> str | None:
 
     from portfolio_tracker.core import inbox, rebuild
     from portfolio_tracker.db import migrate as migrations
+    from portfolio_tracker.db.backup import restore_latest_healthy_backup
     from portfolio_tracker.db.connection import connect, wal_checkpoint
 
-    with contextlib.closing(connect(DB_PATH)) as conn:
+    try:
+        conn = connect(DB_PATH)
+    except Exception as exc:
+        print(
+            f"database connection failed ({exc}); attempting self-healing restore...",
+            flush=True,
+        )
+        restored = restore_latest_healthy_backup(DB_PATH)
+        if restored:
+            archive, backup_used = restored
+            print(
+                f"self-healing restore succeeded: restored {backup_used.name} "
+                f"(archived corrupt db to {archive.name})",
+                flush=True,
+            )
+            conn = connect(DB_PATH)
+        else:
+            return (
+                f"Database error: {exc}\n"
+                "Automatic self-healing could not find a healthy backup to restore.\n"
+            )
+
+    with contextlib.closing(conn):
         # Fast integrity verification (< 5ms) to catch any partial writes
         try:
             check_rows = conn.execute("PRAGMA quick_check(1);").fetchall()
@@ -113,11 +138,33 @@ def _prepare() -> str | None:
             print(
                 "database integrity alert detected; attempting self-healing rebuild...", flush=True
             )
+            repaired = False
             try:
                 rebuild.run(conn, end=date.today())
                 recheck = conn.execute("PRAGMA quick_check(1);").fetchall()
                 if len(recheck) == 1 and recheck[0][0] == "ok":
                     print("self-healing rebuild succeeded: derived layer restored.", flush=True)
+                    wal_checkpoint(conn, "TRUNCATE")
+                    repaired = True
+            except Exception:
+                pass
+
+            if not repaired:
+                print(
+                    "rebuild did not resolve integrity alert; restoring from latest backup...",
+                    flush=True,
+                )
+                conn.close()
+                restored = restore_latest_healthy_backup(DB_PATH)
+                if restored:
+                    archive, backup_used = restored
+                    print(
+                        f"self-healing restore succeeded: restored {backup_used.name} "
+                        f"(archived corrupt db to {archive.name})",
+                        flush=True,
+                    )
+                    conn = connect(DB_PATH)
+                    rebuild.run(conn, end=date.today())
                     wal_checkpoint(conn, "TRUNCATE")
                 else:
                     backups_dir = DB_PATH.parent / "backups"
@@ -125,17 +172,9 @@ def _prepare() -> str | None:
                     latest = f" (latest available: {backups[-1].name})" if backups else ""
                     return (
                         f"Database integrity alert: {check_rows[0][0]}.\n"
-                        f"Automatic self-healing could not resolve the core tables{latest}.\n"
-                        "Check data/backups/ to restore from a recent backup.\n"
+                        "Automatic self-healing could not resolve the database and no healthy "
+                        f"backup was available{latest}.\n"
                     )
-            except Exception as exc:
-                backups_dir = DB_PATH.parent / "backups"
-                backups = sorted(backups_dir.glob("*.db")) if backups_dir.exists() else []
-                latest = f" (latest available: {backups[-1].name})" if backups else ""
-                return (
-                    f"The database has an integrity error: {exc}\n"
-                    f"Please check data/backups/ to restore from a recent backup{latest}.\n"
-                )
 
         try:
             applied = migrations.migrate(conn)

@@ -7,7 +7,9 @@ without deadlocking concurrent readers or leaving locks held.
 from __future__ import annotations
 
 import logging
+import shutil
 import sqlite3
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -86,3 +88,62 @@ def create_backup(
 
     prune_backups(destination.parent, prefix=f"{source_path.stem}_", keep=keep)
     return destination
+
+
+def restore_latest_healthy_backup(
+    db_path: Path | str,
+    *,
+    backups_dir: Path | str | None = None,
+) -> tuple[Path, Path] | None:
+    """Find the newest valid backup in `backups_dir`, archive the current file, and restore it.
+
+    Returns (archived_corrupt_path, restored_backup_path) on success, or None if
+    no healthy backup could be found.
+    """
+    target = Path(db_path)
+    bdir = Path(backups_dir) if backups_dir else target.parent / "backups"
+    if not bdir.exists():
+        return None
+
+    # Search newest to oldest
+    candidates = list_backups(bdir, prefix=f"{target.stem}_")
+    selected: Path | None = None
+    for cand in candidates:
+        try:
+            with sqlite3.connect(f"file:{cand}?mode=ro", uri=True) as conn:
+                res = conn.execute("PRAGMA quick_check(1);").fetchall()
+                if len(res) == 1 and res[0][0] == "ok":
+                    selected = cand
+                    break
+        except Exception:
+            continue
+
+    if not selected:
+        return None
+
+    # Archive the existing database if present
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    archive_path = target.parent / f"{target.stem}.corrupt-{ts}{target.suffix}"
+    if target.exists():
+        try:
+            shutil.move(target, archive_path)
+            log.warning("archived corrupted database %s to %s", target, archive_path)
+        except OSError as exc:
+            log.error("could not archive corrupted database %s: %s", target, exc)
+            return None
+
+    # Remove lingering WAL/SHM and OneDrive conflict files
+    for stray_suffix in [
+        f"{target.name}-wal",
+        f"{target.name}-shm",
+        f"{target.stem} (1).db-wal",
+        f"{target.stem} (1).db-shm",
+    ]:
+        stray = target.parent / stray_suffix
+        with suppress(OSError):
+            stray.unlink(missing_ok=True)
+
+    # Copy the healthy backup over
+    shutil.copy2(selected, target)
+    log.info("successfully restored %s from healthy backup %s", target, selected)
+    return archive_path, selected
