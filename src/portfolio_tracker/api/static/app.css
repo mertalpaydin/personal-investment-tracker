@@ -1362,3 +1362,210 @@ td:nth-last-child(3) .tip .tip-bubble { left: auto; right: 0; }
   font-weight: 600;
   box-shadow: 0 1px 2px rgba(0,0,0,0.08);
 }
+
+/* -------------------------------------------------- aggregated return charts */
+
+.agg-returns-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.agg-returns-ranges {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.agg-chart-wrapper {
+  position: relative;
+  width: 100%;
+  min-height: 250px;
+}
+
+.agg-chart-tooltip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 20;
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.8rem;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  min-width: 140px;
+  backdrop-filter: blur(8px);
+}
+
+.agg-tip-header {
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 0.4rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.agg-tip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1.2rem;
+  margin-bottom: 0.2rem;
+  color: var(--muted);
+}
+
+.agg-tip-row:last-child {
+  margin-bottom: 0;
+}
+
+.agg-tip-lbl {
+  color: var(--muted);
+}
+
+.agg-tip-val {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* -------------------------------------------------- holdings page table */
+
+.holdings-view {
+  width: 100%;
+}
+
+.view:has(.holdings-view) {
+  max-width: min(99vw, 132rem);
+  padding-inline: 0.85rem;
+}
+
+.holdings-view table.data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.holdings-view table.data-table th,
+.holdings-view table.data-table td {
+  padding: 0.4rem 0.52rem;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.holdings-view table.data-table th {
+  font-size: 0.72rem;
+  padding-block: 0.45rem;
+  letter-spacing: 0.03em;
+}
+
+.holdings-view table.data-table td.name {
+  max-width: 13rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.holdings-view table.data-table td.ticker {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------- cumulative dividends & closed trades */
+
+.dividends-panel,
+.realized-trades-panel {
+  margin-top: 2rem;
+  padding: 1.35rem 1.6rem;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.panel-header-left h3 {
+  margin: 0 0 0.25rem 0;
+  font-size: 1.15rem;
+  font-weight: 650;
+  color: var(--fg);
+}
+
+.panel-header-left p.sub {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.panel-header-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0.45rem 0.9rem;
+}
+
+.panel-header-badge .badge-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.panel-header-badge .badge-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin-top: 0.1rem;
+}
+
+.dividends-panel table.data-table,
+.realized-trades-panel table.data-table {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) - 2px);
+  width: 100%;
+}
+
+.holdings-view .dividends-panel table.data-table th,
+.holdings-view .dividends-panel table.data-table td,
+.holdings-view .realized-trades-panel table.data-table th,
+.holdings-view .realized-trades-panel table.data-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+
+.holdings-view .dividends-panel table.data-table th,
+.holdings-view .realized-trades-panel table.data-table th {
+  background: var(--bg-sunken);
+  font-weight: 600;
+}
+
+.holdings-view .dividends-panel table.data-table th.num,
+.holdings-view .dividends-panel table.data-table td.num,
+.holdings-view .realized-trades-panel table.data-table th.num,
+.holdings-view .realized-trades-panel table.data-table td.num {
+  text-align: right;
+}
+
+.holdings-view .dividends-panel table.data-table td.ticker,
+.holdings-view .realized-trades-panel table.data-table td.ticker {
+  font-weight: 600;
+  text-align: left;
+}
+
+.holdings-view .dividends-panel table.data-table td.name,
+.holdings-view .realized-trades-panel table.data-table td.name {
+  text-align: left;
+}

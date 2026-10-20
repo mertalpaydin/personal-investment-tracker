@@ -28,17 +28,17 @@ const NAV = [
 ];
 
 const VIEWS = {
-  "/": () => import("./views/overview.js?v=2"),
-  "/holdings": () => import("./views/holdings.js?v=2"),
-  "/holdings/:key": () => import("./views/holding.js?v=2"),
-  "/rebalance": () => import("./views/rebalance.js?v=2"),
-  "/trades": () => import("./views/trades.js?v=2"),
-  "/plan": () => import("./views/plan.js?v=2"),
-  "/tax": () => import("./views/tax.js?v=2"),
-  "/watchlist": () => import("./views/watchlist.js?v=2"),
-  "/stocks": () => import("./views/stocks.js?v=2"),
-  "/inbox": () => import("./views/inbox.js?v=2"),
-  "/settings": () => import("./views/settings.js?v=2"),
+  "/": () => import("./views/overview.js?v=6"),
+  "/holdings": () => import("./views/holdings.js?v=6"),
+  "/holdings/:key": () => import("./views/holding.js?v=6"),
+  "/rebalance": () => import("./views/rebalance.js?v=6"),
+  "/trades": () => import("./views/trades.js?v=6"),
+  "/plan": () => import("./views/plan.js?v=6"),
+  "/tax": () => import("./views/tax.js?v=6"),
+  "/watchlist": () => import("./views/watchlist.js?v=6"),
+  "/stocks": () => import("./views/stocks.js?v=6"),
+  "/inbox": () => import("./views/inbox.js?v=6"),
+  "/settings": () => import("./views/settings.js?v=6"),
 };
 
 function buildNav() {

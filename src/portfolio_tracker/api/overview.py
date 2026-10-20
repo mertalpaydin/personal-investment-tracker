@@ -120,38 +120,26 @@ def _value_on(conn: sqlite3.Connection, person_id: int, on: date) -> Decimal:
 
 
 def _holdings(conn: sqlite3.Connection, person_id: int, window: Window) -> list[dict[str, Any]]:
-    """Each holding's own return over the window, and its value change.
+    """Each holding's performance over the window: price gain, dividends, and total gain.
 
-    Measured **per unit** -- market value divided by quantity -- so buying more
-    of something during the window does not read as a gain.
-
-    A holding first bought inside the window is measured from the first day it
-    was held rather than reported as unknown. "Bought three weeks ago, up 4%
-    since" is the answer somebody wants; a dash where a number belongs reads as
-    a fault. `held_from` says which it is.
+    Every metric strictly respects the selected window:
+    - If window is ALL:
+      Price gain is the life-to-date capital gain (unrealized_eur against cost basis).
+      Dividends is all dividends ever received.
+      Total gain is Price gain + Dividends.
+    - If window is a time range (1D, 1W, 1M, 3M, 6M, YTD, 1Y):
+      Price gain is the economic capital gain during the window:
+      (now_val - then_val) - buys_eur + sells_eur.
+      Dividends is dividends received between window.start and window.end.
+      Total gain is Price gain + Dividends.
+    All percentage returns are strictly additive:
+      Total return (%) = Price return (%) + Dividend return (%).
     """
     rows = conn.execute(
         """
-        SELECT i.import_key, i.name, i.currency, p.quantity, p.market_value_eur,
+        SELECT i.id AS instrument_id, i.import_key, i.name, i.currency,
+               p.account_id, p.quantity, p.market_value_eur, p.cost_basis_eur,
                p.unrealized_eur, p.valuation_status,
-               -- The position as the window opened, or on the first day it
-               -- existed if it was bought part-way through.
-               COALESCE(
-                 (SELECT q.market_value_eur FROM position_daily q
-                   WHERE q.instrument_id = p.instrument_id AND q.account_id = p.account_id
-                     AND q.date <= ? ORDER BY q.date DESC LIMIT 1),
-                 (SELECT q.market_value_eur FROM position_daily q
-                   WHERE q.instrument_id = p.instrument_id AND q.account_id = p.account_id
-                     AND q.date >= ? ORDER BY q.date ASC LIMIT 1)
-               ) AS then_value,
-               COALESCE(
-                 (SELECT q.quantity FROM position_daily q
-                   WHERE q.instrument_id = p.instrument_id AND q.account_id = p.account_id
-                     AND q.date <= ? ORDER BY q.date DESC LIMIT 1),
-                 (SELECT q.quantity FROM position_daily q
-                   WHERE q.instrument_id = p.instrument_id AND q.account_id = p.account_id
-                     AND q.date >= ? ORDER BY q.date ASC LIMIT 1)
-               ) AS then_qty,
                COALESCE(
                  (SELECT q.date FROM position_daily q
                    WHERE q.instrument_id = p.instrument_id AND q.account_id = p.account_id
@@ -169,10 +157,6 @@ def _holdings(conn: sqlite3.Connection, person_id: int, window: Window) -> list[
         (
             window.start.isoformat(),
             window.start.isoformat(),
-            window.start.isoformat(),
-            window.start.isoformat(),
-            window.start.isoformat(),
-            window.start.isoformat(),
             window.end.isoformat(),
             person_id,
         ),
@@ -180,20 +164,130 @@ def _holdings(conn: sqlite3.Connection, person_id: int, window: Window) -> list[
 
     out: list[dict[str, Any]] = []
     for r in rows:
+        inst_id = r["instrument_id"]
+        account_id = r["account_id"]
         now_value = Decimal(str(r["market_value_eur"]))
-        now_qty = Decimal(str(r["quantity"]))
-        then_value = Decimal(str(r["then_value"])) if r["then_value"] is not None else None
-        then_qty = Decimal(str(r["then_qty"])) if r["then_qty"] is not None else None
+        now_qty = Decimal(str(r["quantity"])) if r["quantity"] is not None else ZERO
+        cost_basis = Decimal(str(r["cost_basis_eur"])) if r["cost_basis_eur"] else ZERO
+        unrealized = Decimal(str(r["unrealized_eur"])) if r["unrealized_eur"] else ZERO
 
-        own: Decimal | None = None
-        change_eur: Decimal | None = None
-        if then_value is not None and then_qty and now_qty and then_qty > ZERO:
-            before, after = then_value / then_qty, now_value / now_qty
-            if before > ZERO:
-                own = after / before - 1
-                change_eur = now_qty * (after - before)
-        elif then_value is not None:
-            change_eur = now_value - then_value
+        # Open lots currently remaining for this holding
+        open_lots = conn.execute(
+            """
+            SELECT id, open_date, qty_remaining, cost_per_unit_eur, cost_total_eur
+            FROM lot
+            WHERE instrument_id = ? AND account_id = ? AND qty_remaining > 0
+            """,
+            (inst_id, account_id),
+        ).fetchall()
+
+        # Price gain amounting to current holdings
+        if window.key == "ALL":
+            price_gain = unrealized
+            base = cost_basis
+        else:
+            # Position at start of window
+            pos_then = conn.execute(
+                """
+                SELECT market_value_eur, quantity, date
+                FROM position_daily
+                WHERE instrument_id = ? AND account_id = ? AND date <= ?
+                ORDER BY date DESC LIMIT 1
+                """,
+                (inst_id, account_id, window.start.isoformat()),
+            ).fetchone()
+
+            p_start = (
+                Decimal(str(pos_then["market_value_eur"])) / Decimal(str(pos_then["quantity"]))
+                if (
+                    pos_then
+                    and pos_then["quantity"]
+                    and Decimal(str(pos_then["quantity"])) > ZERO
+                    and pos_then["date"] == window.start.isoformat()
+                )
+                else None
+            )
+
+            base = ZERO
+            for lot in open_lots:
+                q_rem = Decimal(str(lot["qty_remaining"]))
+                lot_open_date = lot["open_date"]
+                if lot_open_date <= window.start.isoformat() and p_start is not None:
+                    base += q_rem * p_start
+                else:
+                    # Bought within window
+                    cost_unit = (
+                        Decimal(str(lot["cost_per_unit_eur"]))
+                        if lot["cost_per_unit_eur"]
+                        else (now_value / now_qty if now_qty > ZERO else ZERO)
+                    )
+                    base += q_rem * cost_unit
+
+            price_gain = now_value - base
+
+        # Dividends earned by currently held shares during the window
+        if window.key == "ALL":
+            div_txns = conn.execute(
+                """
+                SELECT trade_date, gross_amount_eur
+                FROM transaction_ t
+                JOIN account atxn ON atxn.id = t.account_id
+                WHERE t.instrument_id = ? AND atxn.person_id = ?
+                  AND t.type = 'DIVIDEND'
+                  AND t.trade_date <= ?
+                ORDER BY t.trade_date ASC
+                """,
+                (inst_id, person_id, window.end.isoformat()),
+            ).fetchall()
+        else:
+            div_txns = conn.execute(
+                """
+                SELECT trade_date, gross_amount_eur
+                FROM transaction_ t
+                JOIN account atxn ON atxn.id = t.account_id
+                WHERE t.instrument_id = ? AND atxn.person_id = ?
+                  AND t.type = 'DIVIDEND'
+                  AND t.trade_date > ? AND t.trade_date <= ?
+                ORDER BY t.trade_date ASC
+                """,
+                (inst_id, person_id, window.start.isoformat(), window.end.isoformat()),
+            ).fetchall()
+
+        holding_divs = ZERO
+        for dt in div_txns:
+            if not dt["gross_amount_eur"]:
+                continue
+            amt = Decimal(str(dt["gross_amount_eur"]))
+            pos_at_div = conn.execute(
+                """
+                SELECT quantity FROM position_daily
+                WHERE instrument_id = ? AND account_id = ? AND date <= ?
+                ORDER BY date DESC LIMIT 1
+                """,
+                (inst_id, account_id, dt["trade_date"]),
+            ).fetchone()
+            if not pos_at_div or Decimal(str(pos_at_div["quantity"])) <= ZERO:
+                continue
+            total_held_then = Decimal(str(pos_at_div["quantity"]))
+            dps = amt / total_held_then
+            curr_held_then = sum(
+                (
+                    Decimal(str(lot["qty_remaining"]))
+                    for lot in open_lots
+                    if lot["open_date"] <= dt["trade_date"]
+                ),
+                ZERO,
+            )
+            holding_divs += curr_held_then * dps
+
+        price_ret = (price_gain / base) if base > ZERO else None
+        div_ret = (holding_divs / base) if base > ZERO else None
+        total_gain = price_gain + holding_divs
+        total_ret = (
+            (price_ret + div_ret)
+            if (price_ret is not None and div_ret is not None)
+            else (price_ret or div_ret)
+        )
 
         out.append(
             {
@@ -201,17 +295,133 @@ def _holdings(conn: sqlite3.Connection, person_id: int, window: Window) -> list[
                 "name": r["name"],
                 "currency": r["currency"],
                 "value_eur": _num(now_value),
-                "value_change_eur": _num(change_eur),
-                # What this holding did, on its own money.
-                "own_return": _num(own),
-                # When the measurement actually starts. Later than the window
-                # for anything bought inside it.
+                "value_change_eur": _num(total_gain),
+                "cost_basis_eur": _num(cost_basis),
+                "own_return": _num(total_ret),
                 "held_from": r["held_from"],
                 "unrealized_eur": _num(r["unrealized_eur"]),
+                "price_gain_eur": _num(price_gain),
+                "price_return": _num(price_ret),
+                "dividends_eur": _num(holding_divs),
+                "dividend_return": _num(div_ret),
+                "total_gain_eur": _num(total_gain),
+                "total_return": _num(total_ret),
                 "valuation_status": r["valuation_status"],
             }
         )
     return out
+
+
+def _cumulative_dividends(conn: sqlite3.Connection, person_id: int) -> dict[str, Any]:
+    """All dividends received so far across the portfolio, including closed positions."""
+    rows = conn.execute(
+        """
+        SELECT i.id, i.import_key, i.name, i.currency,
+               COUNT(t.id) AS payout_count,
+               SUM(t.gross_amount_eur) AS total_amount_eur,
+               MIN(t.trade_date) AS first_payout,
+               MAX(t.trade_date) AS last_payout,
+               COALESCE((
+                   SELECT p.quantity FROM position_daily p
+                   WHERE p.instrument_id = i.id AND p.date = (SELECT MAX(date) FROM position_daily)
+               ), 0) AS current_quantity
+        FROM transaction_ t
+        JOIN instrument i ON i.id = t.instrument_id
+        JOIN account a ON a.id = t.account_id
+        WHERE a.person_id = ? AND t.type = 'DIVIDEND'
+        GROUP BY i.id
+        ORDER BY last_payout DESC, total_amount_eur DESC
+        """,
+        (person_id,),
+    ).fetchall()
+
+    items = []
+    total_eur = Decimal(0)
+    for r in rows:
+        amt = Decimal(str(r["total_amount_eur"])) if r["total_amount_eur"] else Decimal(0)
+        total_eur += amt
+        curr_qty = Decimal(str(r["current_quantity"])) if r["current_quantity"] else Decimal(0)
+        items.append(
+            {
+                "instrument": r["import_key"],
+                "name": r["name"],
+                "currency": r["currency"],
+                "is_open": curr_qty > ZERO,
+                "current_quantity": _num(curr_qty),
+                "payout_count": r["payout_count"],
+                "total_amount_eur": _num(amt),
+                "first_payout": r["first_payout"],
+                "last_payout": r["last_payout"],
+            }
+        )
+
+    return {
+        "total_dividends_eur": _num(total_eur),
+        "items": items,
+    }
+
+
+def _closed_trades(conn: sqlite3.Connection, person_id: int) -> dict[str, Any]:
+    """Closed trades (realized disposals) with exact profit/loss from FIFO lot accounting."""
+    rows = conn.execute(
+        """
+        SELECT t.trade_date,
+               i.id AS instrument_id, i.import_key, i.name, i.currency,
+               SUM(ld.qty) AS qty_sold,
+               SUM(ld.proceeds_eur) AS proceeds_eur,
+               SUM(ld.cost_basis_eur) AS cost_basis_eur,
+               SUM(ld.gross_gain_eur) AS gross_gain_eur,
+               MIN(ld.holding_days) AS min_holding_days,
+               MAX(ld.holding_days) AS max_holding_days,
+               COUNT(ld.id) AS lot_count,
+               COALESCE((
+                   SELECT p.quantity FROM position_daily p
+                   WHERE p.instrument_id = i.id AND p.date = (SELECT MAX(date) FROM position_daily)
+               ), 0) AS current_quantity
+        FROM lot_disposal ld
+        JOIN transaction_ t ON t.id = ld.sell_txn_id
+        JOIN instrument i ON i.id = t.instrument_id
+        JOIN account a ON a.id = t.account_id
+        WHERE a.person_id = ?
+        GROUP BY t.trade_date, i.id
+        ORDER BY t.trade_date DESC, t.id DESC
+        """,
+        (person_id,),
+    ).fetchall()
+
+    trades = []
+    total_realized_eur = Decimal(0)
+    for r in rows:
+        proceeds = Decimal(str(r["proceeds_eur"])) if r["proceeds_eur"] else Decimal(0)
+        cost = Decimal(str(r["cost_basis_eur"])) if r["cost_basis_eur"] else Decimal(0)
+        gain = Decimal(str(r["gross_gain_eur"])) if r["gross_gain_eur"] else Decimal(0)
+        total_realized_eur += gain
+        ret_pct = (gain / cost) if cost > ZERO else None
+        curr_qty = Decimal(str(r["current_quantity"])) if r["current_quantity"] else Decimal(0)
+
+        trades.append(
+            {
+                "trade_date": r["trade_date"],
+                "instrument": r["import_key"],
+                "name": r["name"],
+                "currency": r["currency"],
+                "is_closed_position": curr_qty <= ZERO,
+                "current_quantity": _num(curr_qty),
+                "qty_sold": _num(Decimal(str(r["qty_sold"]))),
+                "proceeds_eur": _num(proceeds),
+                "cost_basis_eur": _num(cost),
+                "realized_gain_eur": _num(gain),
+                "realized_return": _num(ret_pct),
+                "min_holding_days": r["min_holding_days"],
+                "max_holding_days": r["max_holding_days"],
+                "lot_count": r["lot_count"],
+            }
+        )
+
+    return {
+        "total_realized_gain_eur": _num(total_realized_eur),
+        "trades": trades,
+    }
 
 
 def _multi_window_returns(conn: sqlite3.Connection, person_id: int) -> list[dict[str, Any]]:
@@ -356,6 +566,8 @@ def overview(
             else None
         ),
         "holdings": holdings,
+        "cumulative_dividends": _cumulative_dividends(conn, person_id),
+        "closed_trades": _closed_trades(conn, person_id),
     }
 
     try:
@@ -370,3 +582,143 @@ def overview(
         body["goal"] = None
 
     return body
+
+
+@router.get("/api/returns/aggregated")
+def aggregated_returns(
+    conn: sqlite3.Connection = Depends(get_db),
+    person_id: int = Query(1, alias="person"),
+    range_key: str = Query("6M", alias="range"),
+) -> dict[str, Any]:
+    """Monthly and weekly aggregated returns over a chosen window (strictly >= 6 months).
+
+    Each month and week computes:
+    - Time-weighted return (TWR) per unit, neutralising external flows.
+    - True EUR value gain: ending valuation basis - starting valuation basis - net external flows.
+    """
+    key = range_key.upper()
+    if key not in ("6M", "1Y", "ALL"):
+        key = "6M"
+
+    row = conn.execute(
+        "SELECT max(date) AS d, min(date) AS f FROM portfolio_daily WHERE person_id = ?",
+        (person_id,),
+    ).fetchone()
+    if row is None or row["d"] is None:
+        raise HTTPException(404, "no portfolio history")
+
+    end_date = date.fromisoformat(str(row["d"]))
+    first_date = date.fromisoformat(str(row["f"]))
+
+    if key == "ALL":
+        filter_start = first_date
+    elif key == "1Y":
+        filter_start = max(first_date, end_date - timedelta(days=366))
+    else:  # 6M
+        filter_start = max(first_date, end_date - timedelta(days=183))
+
+    rows = conn.execute(
+        """
+        SELECT date, valuation_basis_eur, unit_price, net_external_flow_eur
+        FROM portfolio_daily
+        WHERE person_id = ?
+        ORDER BY date
+        """,
+        (person_id,),
+    ).fetchall()
+
+    if not rows:
+        return {
+            "range": key,
+            "from": filter_start.isoformat(),
+            "to": end_date.isoformat(),
+            "monthly": [],
+            "weekly": [],
+        }
+
+    # Group by month (YYYY-MM)
+    by_month: dict[str, list[Any]] = {}
+    for r in rows:
+        by_month.setdefault(str(r["date"])[:7], []).append(r)
+
+    months = sorted(by_month.keys())
+    monthly_out: list[dict[str, Any]] = []
+    for idx, m in enumerate(months):
+        m_rows = by_month[m]
+        d_end = date.fromisoformat(str(m_rows[-1]["date"]))
+        if d_end < filter_start:
+            continue
+        prev_row = by_month[months[idx - 1]][-1] if idx > 0 else m_rows[0]
+        last_row = m_rows[-1]
+
+        u_start = Decimal(str(prev_row["unit_price"]))
+        u_end = Decimal(str(last_row["unit_price"]))
+        twr_val = (u_end / u_start - 1) if u_start > ZERO else ZERO
+
+        v_start = Decimal(str(prev_row["valuation_basis_eur"]))
+        v_end = Decimal(str(last_row["valuation_basis_eur"]))
+        flows = sum((Decimal(str(x["net_external_flow_eur"] or 0)) for x in m_rows), ZERO)
+        val_gain = v_end - v_start - flows
+
+        d_first = date.fromisoformat(str(m_rows[0]["date"]))
+        monthly_out.append(
+            {
+                "key": m,
+                "label": d_first.strftime("%B %Y"),
+                "short_label": d_first.strftime("%b '%y"),
+                "start_date": m_rows[0]["date"],
+                "end_date": m_rows[-1]["date"],
+                "twr": _num(twr_val),
+                "value_eur": _num(val_gain),
+            }
+        )
+
+    # Group by ISO week (YYYY-Www)
+    by_week: dict[str, list[Any]] = {}
+    for r in rows:
+        d = date.fromisoformat(str(r["date"]))
+        iso = d.isocalendar()
+        k = f"{iso.year}-W{iso.week:02d}"
+        by_week.setdefault(k, []).append(r)
+
+    weeks = sorted(by_week.keys())
+    weekly_out: list[dict[str, Any]] = []
+    for idx, w in enumerate(weeks):
+        w_rows = by_week[w]
+        d_end = date.fromisoformat(str(w_rows[-1]["date"]))
+        if d_end < filter_start:
+            continue
+        prev_row = by_week[weeks[idx - 1]][-1] if idx > 0 else w_rows[0]
+        last_row = w_rows[-1]
+
+        u_start = Decimal(str(prev_row["unit_price"]))
+        u_end = Decimal(str(last_row["unit_price"]))
+        twr_val = (u_end / u_start - 1) if u_start > ZERO else ZERO
+
+        v_start = Decimal(str(prev_row["valuation_basis_eur"]))
+        v_end = Decimal(str(last_row["valuation_basis_eur"]))
+        flows = sum((Decimal(str(x["net_external_flow_eur"] or 0)) for x in w_rows), ZERO)
+        val_gain = v_end - v_start - flows
+
+        d_first = date.fromisoformat(str(w_rows[0]["date"]))
+        iso_week = int(w.split("-W")[1])
+        date_range_str = f"{d_first.strftime('%d %b')} - {d_end.strftime('%d %b %Y')}"
+        weekly_out.append(
+            {
+                "key": w,
+                "label": f"Week {iso_week} ({date_range_str})",
+                "short_label": f"W{iso_week:02d}",
+                "start_date": w_rows[0]["date"],
+                "end_date": w_rows[-1]["date"],
+                "twr": _num(twr_val),
+                "value_eur": _num(val_gain),
+            }
+        )
+
+    return {
+        "range": key,
+        "from": filter_start.isoformat(),
+        "to": end_date.isoformat(),
+        "monthly": monthly_out,
+        "weekly": weekly_out,
+    }

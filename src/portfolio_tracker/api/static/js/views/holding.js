@@ -121,6 +121,11 @@ function header(h) {
       ? f.num(h.unrealized_eur ?? h.return_decomposition?.true_eur_gain) / f.num(h.cost_basis_eur)
       : null;
 
+  const divPct =
+    f.has(h.cost_basis_eur) && f.num(h.cost_basis_eur) !== 0
+      ? f.num(h.income_eur) / f.num(h.cost_basis_eur)
+      : null;
+
   const cards = h.closed
     ? el(
         "div.cards",
@@ -128,7 +133,10 @@ function header(h) {
           cls: "total",
           valueCls: f.tone(h.realised_gain_eur),
         }),
-        card("Income received", f.eur(h.income_eur)),
+        card("Income received", f.eur(h.income_eur), {
+          sub: divPct === null || divPct === 0 ? null : f.pct(divPct),
+          subCls: divPct > 0 ? "gain" : "",
+        }),
         card("Held from", f.date(h.first_held)),
         card("Held until", f.date(h.last_held)),
       )
@@ -144,7 +152,10 @@ function header(h) {
         card("Realised so far", f.eur(h.realised_gain_eur, { sign: true }), {
           valueCls: f.tone(h.realised_gain_eur),
         }),
-        card("Income received", f.eur(h.income_eur)),
+        card("Income received", f.eur(h.income_eur), {
+          sub: divPct === null || divPct === 0 ? null : f.pct(divPct),
+          subCls: divPct > 0 ? "gain" : "",
+        }),
       );
 
   box.append(cards);

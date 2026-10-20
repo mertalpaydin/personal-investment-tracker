@@ -26,6 +26,15 @@ import { timeChart, toTs, palette } from "../charts.js";
 import { bars, divergingBars } from "../bars.js";
 import { explainPanel } from "../narrative.js";
 import * as router from "../router.js";
+import { columnChart } from "../columnCharts.js";
+
+const AGG_RANGES = [
+  ["6M", "6 months"],
+  ["1Y", "1 year"],
+  ["ALL", "All"],
+];
+
+let aggRange = "6M";
 
 const RANGES = [
   ["1D", "1 day"],
@@ -63,6 +72,7 @@ export async function render({ query }) {
   view.append(headline(o, isError(data.portfolio) ? null : data.portfolio));
   view.append(explainPanel("/api/brief", {}, "Summarise this in words"));
   if (series) view.append(valueChart(o, series));
+  view.append(aggregatedReturnsSection());
   view.append(mainHoldingsLayout(o, isError(data.allocation) ? null : data.allocation));
   if (o.goal) view.append(goalSection(o.goal));
   return view;
@@ -304,6 +314,88 @@ function valueChart(o, series) {
       ),
     ),
   );
+}
+
+/* -------------------------------------------------- aggregated returns */
+
+function aggregatedReturnsSection() {
+  const section = el("section");
+  const monthlyBox = el("div.agg-chart-container");
+  const weeklyBox = el("div.agg-chart-container");
+
+  const rangeButtons = el("div.agg-returns-ranges.ranges");
+
+  async function loadData() {
+    monthlyBox.replaceChildren(el("p.nodata", { text: "Loading monthly returns…" }));
+    weeklyBox.replaceChildren(el("p.nodata", { text: "Loading weekly returns…" }));
+
+    try {
+      const data = await get("/api/returns/aggregated", { range: aggRange });
+      if (isError(data)) {
+        monthlyBox.replaceChildren(el("p.nodata", { text: "Could not load returns." }));
+        weeklyBox.replaceChildren(el("p.nodata", { text: "Could not load returns." }));
+        return;
+      }
+      columnChart(monthlyBox, data.monthly, { height: 260, emptyText: "No monthly data in this window" });
+      columnChart(weeklyBox, data.weekly, { height: 260, emptyText: "No weekly data in this window" });
+    } catch {
+      monthlyBox.replaceChildren(el("p.nodata", { text: "Could not load returns." }));
+      weeklyBox.replaceChildren(el("p.nodata", { text: "Could not load returns." }));
+    }
+  }
+
+  function renderButtons() {
+    rangeButtons.replaceChildren();
+    for (const [key, label] of AGG_RANGES) {
+      rangeButtons.append(
+        el("button", {
+          text: label,
+          "aria-pressed": String(key === aggRange),
+          onclick: () => {
+            if (aggRange === key) return;
+            aggRange = key;
+            renderButtons();
+            loadData();
+          },
+        }),
+      );
+    }
+  }
+
+  renderButtons();
+
+  section.append(
+    el(
+      "div.agg-returns-header",
+      heading("Aggregated returns"),
+      rangeButtons,
+    ),
+    el(
+      "div.chart-pair",
+      el(
+        "div",
+        el("h3", { text: "Monthly aggregated return" }),
+        monthlyBox,
+        el("p.chart-note", {
+          text: "Gain and percentage return for each specific month. Solid line marks 0.0% baseline.",
+        }),
+      ),
+      el(
+        "div",
+        el("h3", { text: "Weekly aggregated return" }),
+        weeklyBox,
+        el("p.chart-note", {
+          text: "Gain and percentage return for each specific week. Solid line marks 0.0% baseline.",
+        }),
+      ),
+    ),
+  );
+
+  queueMicrotask(() => {
+    loadData();
+  });
+
+  return section;
 }
 
 /* ------------------------------------------------------------- columns */

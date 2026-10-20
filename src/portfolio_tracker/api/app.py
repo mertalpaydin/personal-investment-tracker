@@ -367,7 +367,15 @@ def positions(
     for r in conn.execute(
         """
         SELECT i.import_key, i.name, i.currency, i.asset_class, i.tax_regime,
-               i.tax_scope_note, p.*
+               i.tax_scope_note, p.*,
+               COALESCE((
+                   SELECT SUM(t.gross_amount_eur)
+                   FROM transaction_ t
+                   JOIN account atxn ON atxn.id = t.account_id
+                   WHERE t.instrument_id = p.instrument_id
+                     AND atxn.person_id = a.person_id
+                     AND t.type IN ('DIVIDEND', 'INTEREST')
+               ), 0) AS dividends_eur
         FROM position_daily p
         JOIN instrument i ON i.id = p.instrument_id
         JOIN account a ON a.id = p.account_id
@@ -376,6 +384,14 @@ def positions(
         """,
         (row["date"], person_id),
     ):
+        cost = Decimal(str(r["cost_basis_eur"])) if r["cost_basis_eur"] else ZERO
+        unrealized = Decimal(str(r["unrealized_eur"])) if r["unrealized_eur"] else ZERO
+        divs = Decimal(str(r["dividends_eur"])) if r["dividends_eur"] else ZERO
+        price_ret = (unrealized / cost) if cost > ZERO else None
+        div_ret = (divs / cost) if cost > ZERO else None
+        total_gain = unrealized + divs
+        total_ret = (total_gain / cost) if cost > ZERO else None
+
         items.append(
             {
                 "instrument": r["import_key"],
@@ -397,6 +413,11 @@ def positions(
                 "unrealized_eur": _decimal(r["unrealized_eur"]),
                 "unrealized_local_eur": _decimal(r["unrealized_local_eur"]),
                 "unrealized_fx_eur": _decimal(r["unrealized_fx_eur"]),
+                "price_return": _decimal(price_ret),
+                "dividends_eur": _decimal(divs),
+                "dividend_return": _decimal(div_ret),
+                "total_gain_eur": _decimal(total_gain),
+                "total_return": _decimal(total_ret),
                 "valuation_status": r["valuation_status"],
                 "tax_regime": r["tax_regime"],
                 "tax_scope_note": r["tax_scope_note"],

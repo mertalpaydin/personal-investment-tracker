@@ -52,10 +52,13 @@ export async function render({ query }) {
       ? []
       : (data.positions.positions || []).map((p) => [p.instrument, p]),
   );
-  const rows = (o.holdings || []).map((h) => ({ ...detail.get(h.instrument), ...h }));
+  const rows = (o.holdings || []).map((h) => {
+    const p = detail.get(h.instrument) || {};
+    return { ...p, ...h };
+  });
 
   const view = el(
-    "div",
+    "div.holdings-view",
     el("h1", { text: "Holdings" }),
     el("p.sub", {
       text: `${rows.length} open ${rows.length === 1 ? "position" : "positions"}, valued to ${f.date(o.window.to)}.`,
@@ -117,7 +120,7 @@ function table(rows, o) {
                 })
               : null,
           ),
-          cls: "name",
+          cls: "ticker",
         };
       },
     },
@@ -125,7 +128,7 @@ function table(rows, o) {
       label: "Name",
       key: "name",
       type: "str",
-      render: (r) => ({ text: r.name, cls: "name muted" }),
+      render: (r) => ({ text: r.name, cls: "name muted", title: r.name }),
     },
     {
       label: "Units",
@@ -148,7 +151,8 @@ function table(rows, o) {
       render: (r) => ({ text: f.eur(r.value_eur) }),
     },
     {
-      label: "% of portfolio",
+      label: "% Port",
+      tooltip: "Percentage of portfolio value",
       key: (r) => {
         const portTotal = f.num(o.value?.now_eur) || total;
         return portTotal ? (f.num(r.value_eur) ?? 0) / portTotal : null;
@@ -161,45 +165,63 @@ function table(rows, o) {
       },
     },
     {
-      label: "Change",
-      key: (r) => f.num(r.value_change_eur),
+      label: "Price Gain",
+      tooltip: `Capital gain in selected ${range} window`,
+      key: (r) => f.num(r.price_gain_eur),
       type: "num",
       render: (r) => ({
-        text: f.eur(r.value_change_eur, { sign: true }),
-        cls: f.tone(r.value_change_eur),
+        text: f.eur(r.price_gain_eur, { sign: true }),
+        cls: f.tone(r.price_gain_eur),
       }),
     },
     {
-      label: "Its own return",
-      key: (r) => f.num(r.own_return),
+      label: "Price Ret",
+      tooltip: `Price return in selected ${range} window`,
+      key: (r) => f.num(r.price_return),
       type: "pct",
       render: (r) => ({
-        text: f.pct(r.own_return, { sign: true }),
-        cls: f.tone(r.own_return),
-        title: r.held_from ? `measured from ${f.date(r.held_from)}` : undefined,
+        text: f.has(r.price_return) ? f.pct(r.price_return, { sign: true }) : "—",
+        cls: f.tone(r.price_return),
       }),
     },
     {
-      label: "Share of the total",
-      key: (r) => f.num(r.contribution),
-      type: "pct",
-      render: (r) => ({
-        text: f.pp(r.contribution),
-        cls: f.tone(r.contribution),
-      }),
-    },
-    {
-      label: "Gain so far",
-      key: (r) => f.num(r.unrealized_eur),
+      label: "Dividends",
+      tooltip: `Dividends received by currently held units in selected ${range} window`,
+      key: (r) => f.num(r.dividends_eur),
       type: "num",
       render: (r) => ({
-        text: f.eur(r.unrealized_eur, { sign: true }),
-        cls: f.tone(r.unrealized_eur),
-        title:
-          r.currency === "EUR" || r.unrealized_fx_eur === undefined
-            ? undefined
-            : `${f.eur(r.unrealized_local_eur, { sign: true })} from the price, ` +
-              `${f.eur(r.unrealized_fx_eur, { sign: true })} from ${r.currency}`,
+        text: f.num(r.dividends_eur) > 0 ? f.eur(r.dividends_eur) : "—",
+        cls: f.num(r.dividends_eur) > 0 ? "gain" : "muted",
+      }),
+    },
+    {
+      label: "Div Ret",
+      tooltip: `Dividend yield on currently held units in selected ${range} window`,
+      key: (r) => f.num(r.dividend_return),
+      type: "pct",
+      render: (r) => ({
+        text: f.num(r.dividend_return) > 0 ? f.pct(r.dividend_return) : "—",
+        cls: f.num(r.dividend_return) > 0 ? "gain" : "muted",
+      }),
+    },
+    {
+      label: "Total Gain",
+      tooltip: `Total gain (Price Gain + Dividends) in selected ${range} window`,
+      key: (r) => f.num(r.total_gain_eur),
+      type: "num",
+      render: (r) => ({
+        text: f.eur(r.total_gain_eur, { sign: true }),
+        cls: f.tone(r.total_gain_eur),
+      }),
+    },
+    {
+      label: "Total Ret",
+      tooltip: `Total return (Price Return + Dividend Return) in selected ${range} window`,
+      key: (r) => f.num(r.total_return),
+      type: "pct",
+      render: (r) => ({
+        text: f.has(r.total_return) ? f.pct(r.total_return, { sign: true }) : "—",
+        cls: f.tone(r.total_return),
       }),
     },
   ];
@@ -209,13 +231,177 @@ function table(rows, o) {
     searchKeys: ["instrument", "name", "currency"],
   });
 
-  return el(
+  const section = el(
     "section",
     tableNode,
     el("p.note", {
-      text: "Change and its own return follow the window above. Gain so far is life-to-date.",
+      text: `All gain and return figures in the table reflect your currently open holdings over the selected ${range} window (${f.date(o.window.from)} to ${f.date(o.window.to)}). Total Gain = Price Gain + Dividends. Total Return = Price Return + Dividend Return. Realized gains from closed trades and cumulative portfolio dividends received so far are shown below.`,
     }),
   );
+
+  const divSection = cumulativeDividendsSection(o.cumulative_dividends);
+  if (divSection) {
+    section.append(divSection);
+  }
+
+  const closedSection = closedTradesSection(o.closed_trades);
+  if (closedSection) {
+    section.append(closedSection);
+  }
+
+  return section;
+}
+
+function cumulativeDividendsSection(data) {
+  if (!data || !data.items || !data.items.length) return null;
+
+  const panel = el("div.dividends-panel");
+  const header = el(
+    "div.panel-header",
+    el(
+      "div.panel-header-left",
+      el("h3", { text: "Dividends Received So Far" }),
+      el("p.sub", {
+        text: "Cumulative dividends received across all holdings to date, including closed positions (sorted by latest payout date).",
+      }),
+    ),
+    el(
+      "div.panel-header-badge",
+      el("span.badge-label", { text: "Total Dividends" }),
+      el("strong.badge-value.gain", { text: f.eur(data.total_dividends_eur) }),
+    ),
+  );
+  panel.append(header);
+
+  const tableWrap = el("div.wrap");
+  const tableEl = el("table.data-table");
+  const thead = el(
+    "thead",
+    el(
+      "tr",
+      el("th", { text: "Holding" }),
+      el("th", { text: "Name" }),
+      el("th", { text: "Status" }),
+      el("th.num", { text: "Payouts" }),
+      el("th", { text: "First Received" }),
+      el("th", { text: "Latest Payout" }),
+      el("th.num", { text: "Total Received" }),
+    ),
+  );
+  tableEl.append(thead);
+
+  const tbody = el("tbody");
+  for (const item of data.items) {
+    const statusTag = item.is_open
+      ? el("span.tag.ok", { text: "Open" })
+      : el("span.tag.warn", { text: "Closed" });
+
+    const tr = el(
+      "tr",
+      el(
+        "td.ticker",
+        el("a", {
+          href: `#/holdings/${encodeURIComponent(item.instrument)}`,
+          text: item.instrument,
+        }),
+      ),
+      el("td.name.muted", { text: item.name || "—" }),
+      el("td", statusTag),
+      el("td.num", { text: `${item.payout_count} ${item.payout_count === 1 ? "payout" : "payouts"}` }),
+      el("td.muted", { text: f.date(item.first_payout) }),
+      el("td.muted", { text: f.date(item.last_payout) }),
+      el("td.gain.num", { text: f.eur(item.total_amount_eur) }),
+    );
+    tbody.append(tr);
+  }
+  tableEl.append(tbody);
+  tableWrap.append(tableEl);
+  panel.append(tableWrap);
+
+  return panel;
+}
+
+function closedTradesSection(data) {
+  if (!data || !data.trades || !data.trades.length) return null;
+
+  const panel = el("div.realized-trades-panel");
+  const header = el(
+    "div.panel-header",
+    el(
+      "div.panel-header-left",
+      el("h3", { text: "Closed Trades (Realized Profit & Loss)" }),
+      el("p.sub", {
+        text: "Sales and disposals calculated via FIFO lot accounting (sorted by date). Shows actual profit/loss realized from selling shares.",
+      }),
+    ),
+    el(
+      "div.panel-header-badge",
+      el("span.badge-label", { text: "Total Realized P&L" }),
+      el("strong.badge-value", {
+        class: f.tone(data.total_realized_gain_eur),
+        text: f.eur(data.total_realized_gain_eur, { sign: true }),
+      }),
+    ),
+  );
+  panel.append(header);
+
+  const tableWrap = el("div.wrap");
+  const tableEl = el("table.data-table");
+  const thead = el(
+    "thead",
+    el(
+      "tr",
+      el("th", { text: "Date" }),
+      el("th", { text: "Holding" }),
+      el("th.num", { text: "Units Sold" }),
+      el("th.num", { text: "Proceeds" }),
+      el("th.num", { text: "Cost Basis" }),
+      el("th.num", { text: "Realized P&L" }),
+      el("th.num", { text: "Return" }),
+      el("th", { text: "Position Status" }),
+    ),
+  );
+  tableEl.append(thead);
+
+  const tbody = el("tbody");
+  for (const t of data.trades) {
+    const gainTone = f.tone(t.realized_gain_eur);
+    const statusTag = t.is_closed_position
+      ? el("span.tag.bad", { text: "Fully Closed" })
+      : el("span.tag.ok", { text: "Remaining Held" });
+
+    const holdingCell = el(
+      "td.ticker",
+      el("a", {
+        href: `#/holdings/${encodeURIComponent(t.instrument)}`,
+        text: t.instrument,
+      }),
+      t.name ? el("span.name.muted", { text: ` · ${t.name}` }) : null,
+    );
+
+    const tr = el(
+      "tr",
+      el("td.muted", { text: f.date(t.trade_date) }),
+      holdingCell,
+      el("td.num", {
+        text: `${f.qty(t.qty_sold)} units${t.lot_count > 1 ? ` (${t.lot_count} lots)` : ""}`,
+      }),
+      el("td.num", { text: f.eur(t.proceeds_eur) }),
+      el("td.muted.num", { text: f.eur(t.cost_basis_eur) }),
+      el("td.num", { class: gainTone, text: f.eur(t.realized_gain_eur, { sign: true }) }),
+      el("td.num", {
+        class: gainTone,
+        text: f.has(t.realized_return) ? f.pct(t.realized_return, { sign: true }) : "—",
+      }),
+      el("td", statusTag),
+    );
+    tbody.append(tr);
+  }
+  tableEl.append(tbody);
+  tableWrap.append(tableEl);
+  panel.append(tableWrap);
+
+  return panel;
 }
 
 export { heading };

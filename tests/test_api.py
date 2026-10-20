@@ -636,3 +636,52 @@ def test_rebuild_reports_a_reconciliation_break_rather_than_hiding_it(
     body = client.post("/api/admin/rebuild", json={"end": "2026-06-01"}).json()
     assert "breaks" in body
     assert isinstance(body["breaks"], list)
+
+
+def test_positions_carry_dividends_and_price_return_without_double_count(
+    client: TestClient,
+) -> None:
+    res = client.get("/api/positions")
+    assert res.status_code == 200
+    positions = res.json()["positions"]
+    assert len(positions) > 0
+    for p in positions:
+        assert "dividends_eur" in p
+        assert "dividend_return" in p
+        assert "price_return" in p
+        cost = p["cost_basis_eur"]
+        if cost and cost > 0:
+            assert p["price_return"] == pytest.approx(p["unrealized_eur"] / cost)
+            assert p["dividend_return"] == pytest.approx(p["dividends_eur"] / cost)
+
+
+def test_aggregated_returns_endpoint(client: TestClient) -> None:
+    # 6M default
+    res = client.get("/api/returns/aggregated?range=6M")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["range"] == "6M"
+    assert "monthly" in data and "weekly" in data
+    assert len(data["monthly"]) > 0
+    assert len(data["weekly"]) > 0
+
+    m0 = data["monthly"][0]
+    assert "key" in m0
+    assert "label" in m0
+    assert "twr" in m0
+    assert "value_eur" in m0
+
+    # Shorter ranges must be clamped to 6M (minimum 6 months)
+    res_clamped = client.get("/api/returns/aggregated?range=1M")
+    assert res_clamped.status_code == 200
+    assert res_clamped.json()["range"] == "6M"
+
+    # 1Y and ALL
+    res_1y = client.get("/api/returns/aggregated?range=1Y")
+    assert res_1y.status_code == 200
+    assert res_1y.json()["range"] == "1Y"
+
+    res_all = client.get("/api/returns/aggregated?range=ALL")
+    assert res_all.status_code == 200
+    assert res_all.json()["range"] == "ALL"
+    assert len(res_all.json()["monthly"]) >= len(data["monthly"])

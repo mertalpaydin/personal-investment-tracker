@@ -7,6 +7,7 @@ stability guarantee -- see :class:`TefasProvider`.
 
 from __future__ import annotations
 
+import http.client
 import json
 import urllib.error
 import urllib.parse
@@ -356,9 +357,10 @@ class TefasProvider:
                 f"{instrument.import_key}: TEFAS returned HTTP {exc.code}. "
                 f"Use data/prices_manual/{instrument.import_key}.csv instead."
             ) from exc
-        except urllib.error.URLError as exc:
+        except (urllib.error.URLError, http.client.HTTPException, OSError) as exc:
+            reason = getattr(exc, "reason", str(exc))
             raise ProviderUnavailable(
-                f"{instrument.import_key}: could not reach TEFAS ({exc.reason}). "
+                f"{instrument.import_key}: could not reach TEFAS ({reason}). "
                 f"Use data/prices_manual/{instrument.import_key}.csv instead."
             ) from exc
         observations = [o for o in self.parse(text, instrument.import_key) if start <= o.on <= end]
