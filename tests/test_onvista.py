@@ -609,3 +609,87 @@ def test_history_is_paged_forward_from_start_until_end_is_covered() -> None:
     assert "startDate=2026-01-01" in seen[1] or "startDate=2025-12-31" in seen[1]
     assert rows[0].on >= date(2021, 1, 1) and rows[-1].on <= date(2026, 6, 30)
     assert len({r.on for r in rows}) == len(rows)
+
+
+def test_snapshot_extracts_resolved_symbol() -> None:
+    payload = json.dumps(
+        {
+            "instrument": {"symbol": "XDWY", "name": "Xtrackers MSCI World ESG Screened"},
+            "quoteList": {
+                "list": [
+                    {
+                        "isoCurrency": "EUR",
+                        "market": {"codeExchange": "GER", "name": "Xetra", "idNotation": "42"},
+                    }
+                ]
+            },
+        }
+    )
+    notation = OnvistaProvider.parse_snapshot(payload, "XDWY.DE", "EUR")
+    assert notation.resolved_symbol == "XDWY"
+    assert notation.id_notation == "42"
+
+
+def test_resolve_logs_warning_on_ticker_mismatch(caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+
+    from portfolio_tracker.ingest.providers.base import InstrumentRef
+
+    class Cache:
+        def __init__(self) -> None:
+            self.saved: OnvistaNotation | None = None
+
+        def get(self, instrument_id: int) -> OnvistaNotation | None:
+            return self.saved
+
+        def put(self, instrument_id: int, notation: OnvistaNotation) -> None:
+            self.saved = notation
+
+    search_payload = json.dumps(
+        {"list": [{"entityType": "FUND", "entityValue": "74918117", "isin": "IE00BM67HM91"}]}
+    )
+    snapshot_payload = json.dumps(
+        {
+            "instrument": {"symbol": "XDW0", "name": "Xtrackers MSCI World Energy"},
+            "quoteList": {
+                "list": [
+                    {
+                        "isoCurrency": "EUR",
+                        "market": {"codeExchange": "GER", "name": "Xetra", "idNotation": "100"},
+                    }
+                ]
+            },
+        }
+    )
+
+    def fetcher(url: str) -> str:
+        if "snapshot" in url:
+            return snapshot_payload
+        return search_payload
+
+    provider = OnvistaProvider(fetcher=fetcher, notation_cache=Cache())
+    ref = InstrumentRef(1, "XDWY.DE", "EUR", "onvista", "XDWY.DE", "XETRA", isin="IE00BM67HM91")
+
+    with caplog.at_level(logging.WARNING):
+        notation = provider._resolve(ref)
+
+    assert notation.resolved_symbol == "XDW0"
+    assert "Onvista ticker mismatch for XDWY.DE" in caplog.text
+    assert "XDW0" in caplog.text
+
+
+def test_notation_cache_persists_resolved_symbol(db: sqlite3.Connection) -> None:
+    from portfolio_tracker.ingest.onvista_cache import NotationCache, OnvistaNotation
+
+    db.execute(
+        "INSERT INTO instrument (id, import_key, name, asset_class, currency) "
+        "VALUES (101, 'TEST.DE', 'Test Fund', 'ETF', 'EUR')"
+    )
+    cache = NotationCache(db)
+    notation = OnvistaNotation("fund", "123", "456", "Xetra", "EUR", resolved_symbol="TEST")
+    cache.put(101, notation)
+
+    retrieved = cache.get(101)
+    assert retrieved is not None
+    assert retrieved.resolved_symbol == "TEST"
+    assert retrieved.id_notation == "456"

@@ -20,42 +20,83 @@ DB_PATH = BASE_DIR / "data" / "portfolio.db"
 UNIVERSE_YAML = BASE_DIR / "src" / "portfolio_tracker" / "data" / "universe.yaml"
 
 LEGACY_NAME_FIXES = {
-    "EXV6.DE": ("iShares STOXX Europe 600 Basic Resources UCITS ETF (DE)", "EQ_SECTOR", 6),
+    "EXV6.DE": (
+        "iShares STOXX Europe 600 Basic Resources UCITS ETF (DE)",
+        "EQ_SECTOR",
+        6,
+        "DE000A0F5UK5",
+    ),
     "EXH7.DE": (
         "iShares STOXX Europe 600 Personal & Household Goods UCITS ETF (DE)",
         "EQ_SECTOR",
         6,
+        "DE000A0H08N1",
     ),
-    "EXSB.DE": ("iShares DivDAX UCITS ETF (DE)", "EQ_EUROPE", 4),
-    "EXSI.DE": ("iShares EURO STOXX UCITS ETF (DE)", "EQ_EUROPE", 4),
-    "EXX5.DE": ("iShares Dow Jones U.S. Select Dividend UCITS ETF (DE)", "EQ_US_LARGE", 4),
-    "AYEM.DE": ("iShares MSCI EM IMI Screened UCITS ETF USD (Acc)", "EQ_EM", 5),
-    "BNXG.DE": ("Invesco CoinShares Global Blockchain UCITS ETF", "EQ_SECTOR", 6),
-    "DBXP.DE": ("Xtrackers II Eurozone Government Bond 1-3 UCITS ETF 1C", "BOND", 2),
-    "2B7K.DE": ("iShares MSCI World SRI UCITS ETF EUR (Acc)", "EQ_GLOBAL_BROAD", 4),
-    "IQQQ.DE": ("iShares Global Water UCITS ETF USD (Dist)", "EQ_SECTOR", 6),
-    "QDVC.DE": ("iShares MSCI USA Mid-Cap Equal Weight UCITS ETF", "EQ_US_LARGE", 4),
-    "QDVF.DE": ("iShares S&P 500 Energy Sector UCITS ETF USD (Acc)", "EQ_SECTOR", 6),
-    "WNRG.DE": ("WisdomTree Energy Enhanced - EUR Daily Hedged ETC", "COMMODITY", 5),
-    "EUN5.DE": ("iShares Core € Corp Bond UCITS ETF EUR (Dist)", "BOND", 3),
-    "EUNH.DE": ("iShares Core € Govt Bond UCITS ETF EUR (Dist)", "BOND", 3),
-    "EUNW.DE": ("iShares € High Yield Corp Bond UCITS ETF EUR (Dist)", "BOND", 3),
-    "IS3K.DE": ("iShares $ Short Duration High Yield Corp Bond UCITS ETF USD (Dist)", "BOND", 2),
-    "IS3S.DE": ("iShares Edge MSCI World Value Factor UCITS ETF USD (Acc)", "EQ_GLOBAL_BROAD", 4),
-    "XDWY.DE": ("Xtrackers MSCI World Screened UCITS ETF 1D", "EQ_GLOBAL_BROAD", 4),
+    "EXSB.DE": ("iShares DivDAX UCITS ETF (DE)", "EQ_EUROPE", 4, "DE0002635273"),
+    "EXSI.DE": ("iShares EURO STOXX UCITS ETF (DE)", "EQ_EUROPE", 4, "DE000A0D8Q07"),
+    "EXX5.DE": (
+        "iShares Dow Jones U.S. Select Dividend UCITS ETF (DE)",
+        "EQ_US_LARGE",
+        4,
+        "DE000A0D8Q49",
+    ),
+    "AYEM.DE": ("iShares MSCI EM IMI Screened UCITS ETF USD (Acc)", "EQ_EM", 5, "IE00BFNM3P36"),
+    "BNXG.DE": ("Invesco CoinShares Global Blockchain UCITS ETF", "EQ_SECTOR", 6, "IE00BGBN6P67"),
+    "DBXP.DE": (
+        "Xtrackers II Eurozone Government Bond 1-3 UCITS ETF 1C",
+        "BOND",
+        2,
+        "LU0290356871",
+    ),
+    "2B7K.DE": ("iShares MSCI World SRI UCITS ETF EUR (Acc)", "EQ_GLOBAL_BROAD", 4, "IE00BYX2JD69"),
+    "IQQQ.DE": ("iShares Global Water UCITS ETF USD (Dist)", "EQ_SECTOR", 6, "IE00B1TXK627"),
+    "QDVC.DE": (
+        "iShares MSCI USA Mid-Cap Equal Weight UCITS ETF",
+        "EQ_US_LARGE",
+        4,
+        "IE00BD1F4K20",
+    ),
+    "QDVF.DE": (
+        "iShares S&P 500 Energy Sector UCITS ETF USD (Acc)",
+        "EQ_SECTOR",
+        6,
+        "IE00B42NKQ00",
+    ),
+    "WNRG.DE": (
+        "WisdomTree Energy Enhanced - EUR Daily Hedged ETC",
+        "COMMODITY",
+        5,
+        "XS2284324667",
+    ),
+    "EUN5.DE": ("iShares Core € Corp Bond UCITS ETF EUR (Dist)", "BOND", 3, "IE00B3F81R35"),
+    "EUNH.DE": ("iShares Core € Govt Bond UCITS ETF EUR (Dist)", "BOND", 3, "IE00B4WXJJ64"),
+    "EUNW.DE": ("iShares € High Yield Corp Bond UCITS ETF EUR (Dist)", "BOND", 3, "IE00B66F4759"),
+    "IS3K.DE": (
+        "iShares $ Short Duration High Yield Corp Bond UCITS ETF USD (Dist)",
+        "BOND",
+        2,
+        "IE00BCRY6003",
+    ),
+    "IS3S.DE": (
+        "iShares Edge MSCI World Value Factor UCITS ETF USD (Acc)",
+        "EQ_GLOBAL_BROAD",
+        4,
+        "IE00BP3QZB59",
+    ),
+    "XDWY.DE": ("Xtrackers MSCI World Screened UCITS ETF 1D", "EQ_GLOBAL_BROAD", 4, "IE00BCHWNQ94"),
 }
 
 
 def fix_legacy_names(conn: sqlite3.Connection) -> None:
     print("Fixing 19 legacy mismatched ETF names...")
-    for ticker, (name, bucket, lvl) in LEGACY_NAME_FIXES.items():
+    for ticker, (name, bucket, lvl, isin) in LEGACY_NAME_FIXES.items():
         conn.execute(
             """
             UPDATE instrument
-            SET name = ?, risk_bucket = ?, risk_level = ?
+            SET name = ?, risk_bucket = ?, risk_level = ?, isin = ?
             WHERE import_key = ? OR price_symbol = ?
             """,
-            (name, bucket, lvl, ticker, ticker),
+            (name, bucket, lvl, isin, ticker, ticker),
         )
     conn.commit()
     print("Legacy names updated in database.")

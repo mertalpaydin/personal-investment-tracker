@@ -1934,16 +1934,6 @@ instruments:
     ter_bps: 38
     risk_bucket: EQ_GLOBAL_BROAD
     risk_level: 4
-  AYEM-3P36.DE:
-    name: iShares MSCI EM IMI Screened UCITS ETF USD (Acc)
-    asset_class: ETF
-    currency: EUR
-    price_symbol: AYEM.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 18
-    risk_bucket: EQ_EM
-    risk_level: 5
   AYEM.DE:
     name: iShares MSCI EM IMI Screened UCITS ETF USD (Acc)
     asset_class: ETF
@@ -2025,16 +2015,6 @@ instruments:
     ter_bps: 15
     risk_bucket: BOND
     risk_level: 2
-  BNXG-6P67.DE:
-    name: Invesco CoinShares Global Blockchain UCITS ETF Acc
-    asset_class: ETF
-    currency: EUR
-    price_symbol: BNXG.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 65
-    risk_bucket: EQ_GLOBAL_BROAD
-    risk_level: 4
   BNXG.DE:
     name: Invesco CoinShares Global Blockchain UCITS ETF
     asset_class: ETF
@@ -2455,16 +2435,6 @@ instruments:
     ter_bps: 9
     risk_bucket: EQ_EUROPE
     risk_level: 4
-  DBXP-6871.DE:
-    name: Xtrackers Eurozone Government Bond 1-3 UCITS ETF 1C
-    asset_class: ETF
-    currency: EUR
-    price_symbol: DBXP.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 10
-    risk_bucket: BOND
-    risk_level: 2
   DBXP.DE:
     name: Xtrackers II Eurozone Government Bond 1-3 UCITS ETF 1C
     asset_class: ETF
@@ -2485,16 +2455,6 @@ instruments:
     ter_bps: 25
     risk_bucket: BOND
     risk_level: 3
-  DDAXKEX.DE:
-    name: iShares DivDAX UCITS ETF (DE)
-    asset_class: ETF
-    currency: EUR
-    price_symbol: EXSB.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 31
-    risk_bucket: EQ_EUROPE
-    risk_level: 4
   DEAM.DE:
     name: Invesco MDAX UCITS ETF
     asset_class: ETF
@@ -3146,16 +3106,6 @@ instruments:
     ter_bps: 16
     risk_bucket: BOND
     risk_level: 3
-  EUN5-1R35.DE:
-    name: iShares Core EUR Corporate Bond UCITS ETF (Dist)
-    asset_class: ETF
-    currency: EUR
-    price_symbol: EUN5.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 9
-    risk_bucket: BOND
-    risk_level: 3
   EUN5.DE:
     name: iShares Core € Corp Bond UCITS ETF EUR (Dist)
     asset_class: ETF
@@ -3294,16 +3244,6 @@ instruments:
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 10
-    risk_bucket: BOND
-    risk_level: 3
-  EUNW-4759.DE:
-    name: iShares EUR High Yield Corporate Bond UCITS ETF EUR (Dist)
-    asset_class: ETF
-    currency: EUR
-    price_symbol: EUNW.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 50
     risk_bucket: BOND
     risk_level: 3
   EUNW.DE:
@@ -4585,16 +4525,6 @@ instruments:
     trading_calendar: XETRA
     is_fund: true
     ter_bps: 20
-    risk_bucket: BOND
-    risk_level: 2
-  IS3K-6003.DE:
-    name: iShares USD Short Duration High Yield Corporate Bond UCITS ETF
-    asset_class: ETF
-    currency: EUR
-    price_symbol: IS3K.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 45
     risk_bucket: BOND
     risk_level: 2
   IS3K.DE:
@@ -5960,16 +5890,6 @@ instruments:
     ter_bps: 35
     risk_bucket: EQ_GLOBAL_BROAD
     risk_level: 4
-  QDVF-KQ00.DE:
-    name: iShares S&P 500 Energy Sector UCITS ETF (Acc)
-    asset_class: ETF
-    currency: EUR
-    price_symbol: QDVF.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 15
-    risk_bucket: EQ_SECTOR
-    risk_level: 6
   QDVF.DE:
     name: iShares S&P 500 Energy Sector UCITS ETF USD (Acc)
     asset_class: ETF
@@ -6623,16 +6543,6 @@ instruments:
     ter_bps: 46
     risk_bucket: EQ_EUROPE
     risk_level: 4
-  SXPPEX.DE:
-    name: iShares STOXX Europe 600 Basic Resources UCITS ETF (DE)
-    asset_class: ETF
-    currency: EUR
-    price_symbol: SXPPEX.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 46
-    risk_bucket: EQ_EUROPE
-    risk_level: 4
   SXR1.DE:
     name: iShares Core MSCI Pacific ex Japan UCITS ETF (Acc)
     asset_class: ETF
@@ -6832,16 +6742,6 @@ instruments:
     is_fund: true
     ter_bps: 48
     risk_bucket: EQ_GLOBAL_BROAD
-    risk_level: 4
-  SXXEEX.DE:
-    name: iShares EURO STOXX UCITS ETF (DE)
-    asset_class: ETF
-    currency: EUR
-    price_symbol: EXSI.DE
-    trading_calendar: XETRA
-    is_fund: true
-    ter_bps: 20
-    risk_bucket: EQ_EUROPE
     risk_level: 4
   SXXPIEX.DE:
     name: iShares STOXX Europe 600 UCITS ETF (DE)
@@ -9088,4 +8988,14 @@ instruments:
     is_fund: true
     ter_bps: 30
     risk_bucket: EQ_GLOBAL_BROAD
+    risk_level: 4
+  EXV6.DE:
+    name: iShares STOXX Europe 600 Basic Resources UCITS ETF (DE)
+    asset_class: ETF
+    currency: EUR
+    price_symbol: EXV6.DE
+    trading_calendar: XETRA
+    is_fund: true
+    ter_bps: 46
+    risk_bucket: EQ_EUROPE
     risk_level: 4

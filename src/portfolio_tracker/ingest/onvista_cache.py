@@ -23,6 +23,7 @@ class OnvistaNotation:
     id_notation: str
     market: str
     currency: str
+    resolved_symbol: str | None = None
 
 
 class NotationCache:
@@ -32,44 +33,84 @@ class NotationCache:
         self._conn = conn
 
     def get(self, instrument_id: int) -> OnvistaNotation | None:
-        row = self._conn.execute(
-            "SELECT entity_type, entity_id, id_notation, market, currency "
-            "FROM onvista_notation WHERE instrument_id = ?",
-            (instrument_id,),
-        ).fetchone()
+        try:
+            row = self._conn.execute(
+                "SELECT entity_type, entity_id, id_notation, market, currency, resolved_symbol "
+                "FROM onvista_notation WHERE instrument_id = ?",
+                (instrument_id,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            row = self._conn.execute(
+                "SELECT entity_type, entity_id, id_notation, market, currency "
+                "FROM onvista_notation WHERE instrument_id = ?",
+                (instrument_id,),
+            ).fetchone()
         if row is None:
             return None
+        resolved_symbol = (
+            row["resolved_symbol"] if "resolved_symbol" in row.keys() else None  # noqa: SIM118
+        )
         return OnvistaNotation(
             entity_type=row["entity_type"],
             entity_id=row["entity_id"],
             id_notation=row["id_notation"],
             market=row["market"],
             currency=row["currency"],
+            resolved_symbol=resolved_symbol,
         )
 
     def put(self, instrument_id: int, notation: OnvistaNotation) -> None:
         now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-        self._conn.execute(
-            """
-            INSERT INTO onvista_notation
-                (instrument_id, entity_type, entity_id, id_notation, market, currency, resolved_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (instrument_id) DO UPDATE SET
-                entity_type = excluded.entity_type,
-                entity_id   = excluded.entity_id,
-                id_notation = excluded.id_notation,
-                market      = excluded.market,
-                currency    = excluded.currency,
-                resolved_at = excluded.resolved_at
-            """,
-            (
-                instrument_id,
-                notation.entity_type,
-                notation.entity_id,
-                notation.id_notation,
-                notation.market,
-                notation.currency,
-                now,
-            ),
-        )
+        try:
+            self._conn.execute(
+                """
+                INSERT INTO onvista_notation
+                    (instrument_id, entity_type, entity_id, id_notation, market,
+                     currency, resolved_symbol, resolved_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (instrument_id) DO UPDATE SET
+                    entity_type     = excluded.entity_type,
+                    entity_id       = excluded.entity_id,
+                    id_notation     = excluded.id_notation,
+                    market          = excluded.market,
+                    currency        = excluded.currency,
+                    resolved_symbol = excluded.resolved_symbol,
+                    resolved_at     = excluded.resolved_at
+                """,
+                (
+                    instrument_id,
+                    notation.entity_type,
+                    notation.entity_id,
+                    notation.id_notation,
+                    notation.market,
+                    notation.currency,
+                    notation.resolved_symbol,
+                    now,
+                ),
+            )
+        except sqlite3.OperationalError:
+            self._conn.execute(
+                """
+                INSERT INTO onvista_notation
+                    (instrument_id, entity_type, entity_id, id_notation,
+                     market, currency, resolved_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (instrument_id) DO UPDATE SET
+                    entity_type = excluded.entity_type,
+                    entity_id   = excluded.entity_id,
+                    id_notation = excluded.id_notation,
+                    market      = excluded.market,
+                    currency    = excluded.currency,
+                    resolved_at = excluded.resolved_at
+                """,
+                (
+                    instrument_id,
+                    notation.entity_type,
+                    notation.entity_id,
+                    notation.id_notation,
+                    notation.market,
+                    notation.currency,
+                    now,
+                ),
+            )
         self._conn.commit()

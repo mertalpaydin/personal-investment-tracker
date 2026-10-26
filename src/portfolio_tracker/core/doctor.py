@@ -675,6 +675,38 @@ def check_look_through(conn: sqlite3.Connection, report: DoctorReport) -> None:
                 )
 
 
+def check_provider_ticker_alignment(conn: sqlite3.Connection, report: DoctorReport) -> None:
+    """Flag instruments where a provider resolved a ticker that disagrees with the ledger.
+
+    A mismatch typically means an instrument was seeded with an ISIN belonging
+    to a different share class or a different fund entirely.
+    """
+    try:
+        rows = conn.execute(
+            """
+            SELECT i.import_key, i.price_symbol, o.resolved_symbol
+            FROM onvista_notation o
+            JOIN instrument i ON i.id = o.instrument_id
+            WHERE o.resolved_symbol IS NOT NULL
+              AND (i.price_symbol IS NOT NULL OR i.import_key IS NOT NULL)
+            """
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return
+
+    for row in rows:
+        expected = (row["price_symbol"] or row["import_key"]).removesuffix(".DE").strip().upper()
+        resolved = row["resolved_symbol"].strip().upper()
+        if expected and resolved != expected:
+            report.add(
+                "PROVIDER_TICKER_MISMATCH",
+                Severity.WARNING,
+                f"{row['import_key']}: Onvista resolved ticker {row['resolved_symbol']!r} "
+                f"does not match expected ticker {expected!r}. "
+                "Check whether the instrument's ISIN points to the intended asset.",
+            )
+
+
 CHECKS = (
     check_lots,
     check_position_identities,
@@ -685,6 +717,7 @@ CHECKS = (
     check_look_through,
     check_vorabpauschale,
     check_teilfreistellung_against_holdings,
+    check_provider_ticker_alignment,
 )
 
 

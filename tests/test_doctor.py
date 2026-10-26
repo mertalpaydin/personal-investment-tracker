@@ -318,3 +318,21 @@ def test_checks_are_independent_so_one_failure_does_not_hide_another(
     db.execute("UPDATE portfolio_daily SET net_external_flow_eur = '0'")
     codes = doctor.run(db).codes
     assert {"MV_NOT_QTY_TIMES_PRICE", "FLOWS_DO_NOT_RECONCILE"} <= codes
+
+
+def test_provider_ticker_mismatch_flags_warning(db: sqlite3.Connection) -> None:
+    db.execute(
+        "INSERT INTO instrument (id, import_key, price_symbol, name, asset_class, currency) "
+        "VALUES (273, 'XDWY.DE', 'XDWY.DE', 'Xtrackers MSCI World Screened', 'ETF', 'EUR')"
+    )
+    db.execute(
+        "INSERT INTO onvista_notation "
+        "(instrument_id, entity_type, entity_id, id_notation, market, currency, resolved_symbol, resolved_at) "
+        "VALUES (273, 'fund', '74918117', '157212902', 'Xetra', 'EUR', 'XDW0', '2026-10-26T00:00:00Z')"
+    )
+    report = doctor.run(db)
+    finding = next((f for f in report.findings if f.code == "PROVIDER_TICKER_MISMATCH"), None)
+    assert finding is not None
+    assert finding.severity is Severity.WARNING
+    assert "XDW0" in finding.message
+    assert "XDWY" in finding.message

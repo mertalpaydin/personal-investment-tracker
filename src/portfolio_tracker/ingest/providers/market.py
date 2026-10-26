@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import logging
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -25,6 +26,8 @@ from portfolio_tracker.ingest.providers.base import (
     ProviderUnavailable,
     RateLimited,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class _NotationCache(Protocol):
@@ -636,6 +639,8 @@ class OnvistaProvider:
                 f"{import_key}: onvista notation currency {currency!r} does not match "
                 f"instrument currency {want_currency!r}"
             )
+        inst = payload.get("instrument") or {}
+        resolved_symbol = str(inst["symbol"]) if inst.get("symbol") else None
         market_label = str(market.get("name") or market.get("codeExchange") or "unknown")
         return OnvistaNotation(
             entity_type="",  # filled in by the caller, which already knows it
@@ -643,38 +648,57 @@ class OnvistaProvider:
             id_notation=str(id_notation),
             market=market_label,
             currency=str(currency),
+            resolved_symbol=resolved_symbol,
         )
 
     def _resolve(self, instrument: InstrumentRef) -> OnvistaNotation:
+        notation: OnvistaNotation | None = None
         if self._cache is not None:
-            cached = self._cache.get(instrument.instrument_id)
-            if cached is not None:
-                return cached
+            notation = self._cache.get(instrument.instrument_id)
 
-        entity_type, entity_id = self._search(instrument)
-        url = self._SNAPSHOT_URL.format(kind=entity_type, entity_id=entity_id)
-        try:
-            text = self._fetch(url)
-        except urllib.error.HTTPError as exc:
-            raise ProviderUnavailable(
-                f"{instrument.import_key}: onvista snapshot returned HTTP {exc.code}. "
-                f"Use data/prices_manual/{instrument.import_key}.csv instead."
-            ) from exc
-        except urllib.error.URLError as exc:
-            raise ProviderUnavailable(
-                f"{instrument.import_key}: could not reach onvista ({exc.reason}). "
-                f"Use data/prices_manual/{instrument.import_key}.csv instead."
-            ) from exc
-        partial = self.parse_snapshot(text, instrument.import_key, instrument.currency)
-        notation = OnvistaNotation(
-            entity_type=entity_type,
-            entity_id=entity_id,
-            id_notation=partial.id_notation,
-            market=partial.market,
-            currency=partial.currency,
-        )
-        if self._cache is not None:
-            self._cache.put(instrument.instrument_id, notation)
+        if notation is None:
+            entity_type, entity_id = self._search(instrument)
+            url = self._SNAPSHOT_URL.format(kind=entity_type, entity_id=entity_id)
+            try:
+                text = self._fetch(url)
+            except urllib.error.HTTPError as exc:
+                raise ProviderUnavailable(
+                    f"{instrument.import_key}: onvista snapshot returned HTTP {exc.code}. "
+                    f"Use data/prices_manual/{instrument.import_key}.csv instead."
+                ) from exc
+            except urllib.error.URLError as exc:
+                raise ProviderUnavailable(
+                    f"{instrument.import_key}: could not reach onvista ({exc.reason}). "
+                    f"Use data/prices_manual/{instrument.import_key}.csv instead."
+                ) from exc
+            partial = self.parse_snapshot(text, instrument.import_key, instrument.currency)
+            notation = OnvistaNotation(
+                entity_type=entity_type,
+                entity_id=entity_id,
+                id_notation=partial.id_notation,
+                market=partial.market,
+                currency=partial.currency,
+                resolved_symbol=partial.resolved_symbol,
+            )
+            if self._cache is not None:
+                self._cache.put(instrument.instrument_id, notation)
+
+        if notation.resolved_symbol:
+            expected = (
+                (instrument.price_symbol or instrument.import_key)
+                .removesuffix(".DE")
+                .strip()
+                .upper()
+            )
+            resolved = notation.resolved_symbol.strip().upper()
+            if expected and resolved != expected:
+                logger.warning(
+                    "Onvista ticker mismatch for %s: resolved symbol %r "
+                    "does not match expected ticker %r",
+                    instrument.import_key,
+                    notation.resolved_symbol,
+                    expected,
+                )
         return notation
 
     # -- history ------------------------------------------------------------
