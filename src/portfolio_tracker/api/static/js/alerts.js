@@ -39,6 +39,27 @@ export async function refreshAlerts() {
 
   const items = [];
 
+  if (localStorage.getItem("pt_dismiss_lybk_split_reminder") !== "true") {
+    const splitAlert = el(
+      "div.alert.warn.alert-lybk-split",
+      el("span.what", {
+        text: "LYBK Stock Split (1:80): Holding adjusted to 1,944.88 shares. Remember to double-check against your bank depot when your bank completes processing.",
+      }),
+      el("a", {
+        href: "#",
+        text: "Dismiss",
+        onclick: (e) => {
+          e.preventDefault();
+          localStorage.setItem("pt_dismiss_lybk_split_reminder", "true");
+          splitAlert.remove();
+          if (box.children.length === 0) box.hidden = true;
+          document.getElementById("lybk-split-banner")?.remove();
+        },
+      }),
+    );
+    items.push(splitAlert);
+  }
+
   if (!isError(data.health)) {
     const h = data.health;
 

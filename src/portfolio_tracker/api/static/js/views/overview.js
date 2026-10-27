@@ -67,6 +67,8 @@ export async function render({ query }) {
   const series = await get("/api/returns/series", { from: o.window.from }).catch(() => null);
 
   const view = el("div", el("h1", { text: "Overview" }));
+  const reminder = splitReminderCard();
+  if (reminder) view.append(reminder);
   view.append(topReturnBoxes(o));
   view.append(rangePicker(o));
   view.append(headline(o, isError(data.portfolio) ? null : data.portfolio));
@@ -76,6 +78,45 @@ export async function render({ query }) {
   view.append(mainHoldingsLayout(o, isError(data.allocation) ? null : data.allocation));
   if (o.goal) view.append(goalSection(o.goal));
   return view;
+}
+
+/* -------------------------------------------------- split reminder card */
+
+function splitReminderCard() {
+  if (localStorage.getItem("pt_dismiss_lybk_split_reminder") === "true") return null;
+  const cardEl = el(
+    "div#lybk-split-banner.card",
+    {
+      style:
+        "border-left: 4px solid var(--warn); background: var(--bg-sunken); margin-bottom: 1.25rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; padding: 0.85rem 1.1rem;",
+    },
+    el(
+      "div",
+      { style: "display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap;" },
+      el("strong", { text: "LYBK Stock Split (1:80) Reminder:" }),
+      el("span", {
+        text:
+          "Holdings adjusted to 1,944.88 shares (Lots: 1,520 & 424.88). Remember to double-check against your bank depot when your bank completes processing.",
+      }),
+    ),
+    el("button", {
+      type: "button",
+      text: "Dismiss",
+      style:
+        "cursor: pointer; padding: 0.3rem 0.75rem; border-radius: var(--radius); border: 1px solid var(--line-strong); background: var(--bg); font-size: 0.85rem;",
+      onclick: () => {
+        localStorage.setItem("pt_dismiss_lybk_split_reminder", "true");
+        cardEl.remove();
+        const box = document.getElementById("alerts");
+        const alertEl = box?.querySelector(".alert-lybk-split");
+        if (alertEl) {
+          alertEl.remove();
+          if (box.children.length === 0) box.hidden = true;
+        }
+      },
+    }),
+  );
+  return cardEl;
 }
 
 /* --------------------------------------------------------- top returns */
