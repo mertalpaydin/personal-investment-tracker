@@ -1,0 +1,1777 @@
+/*
+ * One stylesheet, hand-written, no framework.
+ *
+ * The palette is defined once as custom properties and read from JavaScript
+ * by charts.js, so a chart line and the number beside it are the same green
+ * by construction rather than by coincidence.
+ *
+ * Dark mode is `prefers-color-scheme` only. There is no theme toggle: this
+ * page is opened by one person on one machine, and a toggle would be a
+ * setting to maintain in exchange for nothing.
+ */
+
+:root {
+  --bg: #ffffff;
+  --bg-sunken: #f6f7f9;
+  --fg: #16181d;
+  --muted: #6b7280;
+  --line: #e3e6ea;
+  --line-strong: #c9ced6;
+
+  --gain: #0a7d3c;
+  --loss: #b3261e;
+  --accent: #2563eb;
+  --warn: #b45309;
+
+  /* Categorical series, in application order. Chosen to stay distinguishable
+     for the common forms of colour blindness and to survive greyscale
+     printing, which the tax page is likely to meet. */
+  --c1: #2563eb;
+  --c2: #0a7d3c;
+  --c3: #b45309;
+  --c4: #7c3aed;
+  --c5: #0e7490;
+  --c6: #be185d;
+
+  --radius: .55rem;
+  --gap: 1rem;
+  /* Wide, because this is a data tool opened on a desktop: a 76rem column on
+     a 1440px screen wasted a third of the width on margins. Tables and charts
+     are the content here, and both want room. */
+  --maxw: 108rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14161a;
+    --bg-sunken: #1b1e24;
+    --fg: #e7e9ee;
+    --muted: #9aa1ad;
+    --line: #2b2f37;
+    --line-strong: #3d434d;
+
+    --gain: #34c77b;
+    --loss: #f4796d;
+    --accent: #6ea8fe;
+    --warn: #e0a458;
+
+    --c1: #6ea8fe;
+    --c2: #34c77b;
+    --c3: #e0a458;
+    --c4: #b192f5;
+    --c5: #4dd0e1;
+    --c6: #f472b6;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #14161a;
+  --bg-sunken: #1b1e24;
+  --fg: #e7e9ee;
+  --muted: #9aa1ad;
+  --line: #2b2f37;
+  --line-strong: #3d434d;
+
+  --gain: #34c77b;
+  --loss: #f4796d;
+  --accent: #6ea8fe;
+  --warn: #e0a458;
+
+  --c1: #6ea8fe;
+  --c2: #34c77b;
+  --c3: #e0a458;
+  --c4: #b192f5;
+  --c5: #4dd0e1;
+  --c6: #f472b6;
+}
+
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --bg-sunken: #f6f7f9;
+  --fg: #16181d;
+  --muted: #6b7280;
+  --line: #e3e6ea;
+  --line-strong: #c9ced6;
+
+  --gain: #0a7d3c;
+  --loss: #b3261e;
+  --accent: #2563eb;
+  --warn: #b45309;
+
+  --c1: #2563eb;
+  --c2: #0a7d3c;
+  --c3: #b45309;
+  --c4: #7c3aed;
+  --c5: #0e7490;
+  --c6: #be185d;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+a { color: var(--accent); }
+a:hover { text-decoration: underline; }
+
+/* ---------------------------------------------------------------- chrome */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  padding: .7rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-sunken);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.brand {
+  font-weight: 650;
+  font-size: 1.05rem;
+  letter-spacing: -.01em;
+  color: var(--fg);
+  text-decoration: none;
+}
+.brand:hover { text-decoration: none; }
+
+.topbar nav { display: flex; gap: .15rem; flex-wrap: wrap; }
+
+.topbar nav a {
+  padding: .3rem .65rem;
+  border-radius: var(--radius);
+  color: var(--muted);
+  text-decoration: none;
+  font-size: .92rem;
+  white-space: nowrap;
+}
+.topbar nav a:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); text-decoration: none; }
+.topbar nav a[aria-current="page"] { color: var(--fg); font-weight: 600; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); }
+
+.topbar-right { margin-left: auto; }
+.asof { color: var(--muted); font-size: .85rem; }
+
+.view {
+  max-width: var(--maxw);
+  margin-inline: auto;
+  padding: 1.75rem 1.25rem 4rem;
+}
+
+.footer {
+  max-width: var(--maxw);
+  margin-inline: auto;
+  padding: 1.5rem 1.25rem 3rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: .84rem;
+}
+.footer p { margin: .3rem 0; }
+
+.loading { color: var(--muted); }
+
+.noscript {
+  max-width: var(--maxw);
+  margin: 2rem auto;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+}
+
+/* --------------------------------------------------------------- alerts */
+
+.alerts {
+  max-width: var(--maxw);
+  margin: 1rem auto -.5rem;
+  padding-inline: 1.25rem;
+  display: grid;
+  gap: .4rem;
+}
+
+.alert {
+  display: flex;
+  align-items: baseline;
+  gap: .6rem;
+  flex-wrap: wrap;
+  padding: .55rem .8rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--bg-sunken);
+  font-size: .9rem;
+}
+.alert.warn { border-color: color-mix(in srgb, var(--warn) 55%, var(--line)); }
+.alert.bad  { border-color: color-mix(in srgb, var(--loss) 55%, var(--line)); }
+.alert .what { flex: 1; }
+
+/* ------------------------------------------------------------- headings */
+
+h1 { font-size: 1.7rem; margin: 0 0 .2rem; letter-spacing: -.015em; }
+h2 {
+  font-size: .84rem;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--muted);
+  font-weight: 650;
+  margin: 2.5rem 0 .8rem;
+}
+h3 { font-size: 1.08rem; margin: 1.5rem 0 .5rem; }
+
+.sub { color: var(--muted); margin: 0 0 1.75rem; font-size: .96rem; }
+
+section { margin-bottom: 2rem; }
+
+/* ---------------------------------------------------------------- cards */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
+  gap: var(--gap);
+  margin-bottom: 1.25rem;
+}
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: .85rem 1rem;
+  background: var(--bg);
+  min-width: 0;
+}
+.card .k {
+  color: var(--muted);
+  font-size: .8rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  display: block;
+}
+.card .v { font-size: 1.6rem; margin-top: .15rem; letter-spacing: -.02em; }
+.card .sub2 { color: var(--muted); font-size: .85rem; margin-top: .1rem; }
+.card.total { border-width: 2px; border-color: var(--line-strong); }
+.card.aside { border-style: dashed; opacity: .8; }
+
+/* --------------------------------------------------------------- tables */
+
+.wrap { overflow-x: auto; }
+
+table { width: 100%; border-collapse: collapse; }
+th, td {
+  text-align: right;
+  padding: .45rem .6rem;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+th:first-child, td:first-child { text-align: left; }
+th {
+  color: var(--muted);
+  font-weight: 650;
+  font-size: .78rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+tbody tr:hover { background: var(--bg-sunken); }
+td.name { max-width: 22rem; overflow: hidden; text-overflow: ellipsis; }
+
+/*
+ * A cell whose content is a sentence rather than a figure.
+ *
+ * Tables here are `white-space: nowrap` so a column of numbers stays a column.
+ * Applied to prose that turns an explanation into an ellipsis with nothing
+ * behind it -- and a sentence somebody is being asked to act on is the last
+ * thing that should be unreadable.
+ */
+td.prose {
+  /* Left, like every other sentence. Table cells default to right-aligned
+     here because most of them are figures, and a right-ragged paragraph is
+     hard to read for no benefit. */
+  text-align: left;
+  white-space: normal;
+  max-width: none;
+  min-width: 24rem;
+  overflow: visible;
+  line-height: 1.45;
+  padding-block: .6rem;
+}
+
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--fg); }
+
+.gain, .card .sub2.gain, .return-box .v.gain, .return-box .sub2.gain { color: var(--gain); }
+.loss, .card .sub2.loss, .return-box .v.loss, .return-box .sub2.loss { color: var(--loss); }
+.muted { color: var(--muted); }
+.nodata { color: var(--muted); font-style: italic; }
+
+/* ----------------------------------------------------------- bar charts */
+/*
+ * Deliberately not a donut. At twenty rows a labelled bar is readable and a
+ * pie is a colour-matching exercise, and this is the only form that also
+ * prints and reads aloud.
+ */
+
+.barrow {
+  display: grid;
+  grid-template-columns: minmax(7rem, 14rem) 1fr auto;
+  gap: .75rem;
+  align-items: center;
+  padding: .2rem 0;
+  font-size: .9rem;
+}
+.barrow .lab { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.barrow .track {
+  height: .65rem;
+  border-radius: .35rem;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  overflow: hidden;
+  position: relative;
+}
+.barrow .fill { display: block; height: 100%; background: var(--c1); }
+.barrow .val { min-width: 5rem; text-align: right; }
+
+/* Diverging: zero in the middle, negatives left. */
+.barrow.diverge .track { background: none; }
+.barrow.diverge .track::before {
+  content: ""; position: absolute; left: 50%; top: 0; bottom: 0;
+  border-left: 1px solid var(--line-strong);
+}
+.barrow.diverge .fill { position: absolute; top: 0; bottom: 0; height: auto; border-radius: .2rem; }
+
+.progress {
+  height: .7rem;
+  border-radius: .35rem;
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
+  overflow: hidden;
+  margin: .9rem 0 .5rem;
+}
+.progress span { display: block; height: 100%; background: var(--gain); }
+
+/* --------------------------------------------------------------- charts */
+
+.chart {
+  margin: .5rem 0 1rem;
+  min-height: 1px;
+}
+.chart-head {
+  display: flex;
+  align-items: baseline;
+  gap: .75rem;
+  flex-wrap: wrap;
+  margin: 2rem 0 .2rem;
+}
+.chart-head h3 { margin: 0; font-size: .95rem; }
+.chart-note { color: var(--muted); font-size: .86rem; }
+
+.legend { display: flex; gap: 1rem; flex-wrap: wrap; font-size: .85rem; margin: .1rem 0 .4rem; }
+.legend .item { display: inline-flex; align-items: center; gap: .35rem; color: var(--muted); }
+.legend .swatch { width: .8rem; height: .18rem; border-radius: .1rem; display: inline-block; }
+
+.rangepick { display: flex; gap: .2rem; margin-left: auto; }
+.rangepick button {
+  font: inherit; font-size: .8rem;
+  padding: .12rem .5rem;
+  border-radius: .3rem;
+  border: 1px solid var(--line);
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.rangepick button[aria-pressed="true"] { color: var(--fg); border-color: var(--line-strong); background: var(--bg-sunken); }
+
+/*
+ * uPlot's legend doubles as the hover readout: the values fill in as the
+ * cursor moves and read "--" otherwise. Left unstyled it looks like a bug, so
+ * it is presented as what it is -- a value strip belonging to the chart.
+ */
+.u-legend {
+  font-size: .82rem;
+  color: var(--muted);
+  margin-top: .35rem;
+  padding-top: .35rem;
+  border-top: 1px solid var(--line);
+}
+.u-legend .u-marker { border-radius: .1rem; }
+.u-legend th { border: none; padding: 0 .35rem 0 0; text-transform: none; letter-spacing: 0; }
+.u-legend td { border: none; padding: 0 1rem 0 0; color: var(--fg); }
+.u-legend .u-series > * { padding: .1rem .2rem; }
+/* uPlot hides the x-axis series behind a label of "Time", which is noise on a
+   chart whose x-axis is already dates. */
+.u-legend .u-series:first-child { color: var(--muted); }
+
+/* --------------------------------------------------------------- forms */
+
+form.row { display: flex; gap: .5rem; align-items: end; flex-wrap: wrap; margin: .75rem 0; }
+
+label.field { display: grid; gap: .2rem; font-size: .8rem; color: var(--muted); min-width: 0; }
+label.field > span { text-transform: uppercase; letter-spacing: .05em; font-size: .72rem; }
+label.field > span.note { text-transform: none; letter-spacing: 0; font-size: .74rem; }
+label.field[hidden] { display: none; }
+
+/*
+ * The trade form. A grid rather than a wrapping flex row, because a field that
+ * appears and disappears with the transaction type reflows a flex row into a
+ * different shape every time -- the fields you were reading move under the
+ * cursor. Fixed tracks keep them where they were.
+ */
+.entry {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: .75rem 1rem;
+  align-items: end;
+}
+.entry .wide { grid-column: 1 / -1; }
+
+/* A checkbox is one line, not a stacked label-over-control like the rest. */
+label.check {
+  display: flex;
+  align-items: baseline;
+  gap: .45rem;
+  font-size: .84rem;
+  color: var(--muted);
+}
+label.check input { width: auto; }
+
+.entry-layout {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .entry-layout { grid-template-columns: 1fr; }
+}
+
+input, select, textarea {
+  font: inherit;
+  padding: .35rem .55rem;
+  border-radius: .35rem;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--line-strong);
+  min-width: 0;
+}
+input[type="number"] { text-align: right; }
+input:focus-visible, select:focus-visible, textarea:focus-visible,
+button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+button {
+  font: inherit;
+  padding: .35rem .85rem;
+  border-radius: .35rem;
+  border: 1px solid var(--line-strong);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+}
+button:hover:not([disabled]) { background: var(--bg-sunken); }
+button[disabled] { opacity: .45; cursor: not-allowed; }
+button.primary { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+button.danger { border-color: color-mix(in srgb, var(--loss) 60%, var(--line)); color: var(--loss); }
+
+/* Sits inside a table row, so it must not make the row taller than its text. */
+button.small { padding: .12rem .5rem; font-size: .8rem; }
+
+/* A link that navigates but reads as an action. Used where the row's other
+   controls are buttons and one odd underlined word would look like a mistake. */
+a.button {
+  font: inherit;
+  padding: .35rem .85rem;
+  border-radius: .35rem;
+  border: 1px solid var(--line-strong);
+  background: var(--bg);
+  color: var(--fg);
+  text-decoration: none;
+  display: inline-block;
+}
+a.button:hover { background: var(--bg-sunken); }
+a.button.small { padding: .12rem .5rem; font-size: .8rem; }
+
+.actions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-top: .6rem; }
+
+/* Inside a table cell there is no margin to add and the buttons are a pair,
+   so they sit on one line and stop the row growing a third taller. */
+td .actions { margin-top: 0; flex-wrap: nowrap; justify-content: flex-end; }
+td .actions button { white-space: nowrap; }
+
+/* --------------------------------------------------------------- notes */
+
+.note { color: var(--muted); font-size: .9rem; }
+.note.warn { color: var(--warn); }
+.note.bad { color: var(--loss); }
+
+ul.caveats { padding-left: 1.05rem; color: var(--muted); font-size: .88rem; margin: .5rem 0; }
+ul.caveats li { margin-bottom: .3rem; }
+
+.tag {
+  font-size: .68rem;
+  padding: .08rem .4rem;
+  border-radius: .25rem;
+  border: 1px solid currentColor;
+  color: var(--muted);
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+.tag.warn { color: var(--warn); }
+.tag.bad { color: var(--loss); }
+.tag.ok { color: var(--gain); }
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: .9rem 1.05rem;
+  margin: .6rem 0;
+  background: var(--bg);
+}
+.panel.bad { border-color: color-mix(in srgb, var(--loss) 50%, var(--line)); }
+.panel.warn { border-color: color-mix(in srgb, var(--warn) 50%, var(--line)); }
+
+/* The assumptions behind a projected date, printed with it.
+
+   Open by default and collapsible rather than hidden behind a click: a date
+   whose assumptions have to be hunted for is a date that gets quoted without
+   them. Muted, because it is the fine print of an answer and not the answer. */
+details.assumptions {
+  border-top: 1px solid var(--line);
+  margin-top: .9rem;
+  padding-top: .6rem;
+}
+details.assumptions > summary {
+  cursor: pointer;
+  font-size: .8rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+  margin-bottom: .4rem;
+}
+details.assumptions td.muted { color: var(--muted); }
+
+/* A figure that is technically correct but likely to mislead -- a median far
+   below its own average, say. Coloured, not hidden: the reader still needs
+   the number, they just need to notice it. */
+td.warn { color: var(--warn); }
+
+/* The assumptions every figure on the plan page rests on, stated above the
+   figures rather than in the form below them. Quiet by design: it frames the
+   answer, it is not the answer. */
+section.standing {
+  border-left: 3px solid var(--line-strong);
+  padding-left: .9rem;
+  margin-bottom: 1.2rem;
+}
+section.standing .card { background: none; border: none; padding-left: 0; }
+section.standing .v.warn { color: var(--warn); }
+section.standing .v.inline { display: flex; align-items: baseline; gap: .3rem; }
+section.standing .v.inline input { font: inherit; width: 5.5rem; }
+
+/* Charts side by side wherever there is room for two. A single column of
+   full-width charts wastes half a widescreen and makes every one of them a
+   flat line stretched to 1400 pixels. */
+/* A button that reads as a link. Used where a table cell needs an action but
+   an underlined word among buttons would look like a mistake. */
+button.linklike {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
+
+/* The instruments currently on the comparison chart. */
+.chips { display: flex; flex-wrap: wrap; gap: .4rem; margin: .5rem 0; }
+.chips .chip {
+  display: inline-flex;
+  gap: .35rem;
+  align-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 1rem;
+  padding: .1rem .55rem;
+  font-size: .82rem;
+}
+
+.chart-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr));
+  gap: 1.5rem;
+  align-items: start;
+  margin-bottom: 1.5rem;
+}
+.chart-pair > * { min-width: 0; }
+
+.holding-chart-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 1.5rem;
+  align-items: start;
+  margin-bottom: 1.5rem;
+}
+.holding-chart-layout > * { min-width: 0; }
+
+.holding-stats-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  padding: 0.6rem 0.9rem;
+  width: 100%;
+  max-width: 380px;
+  min-height: 270px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.holding-stats-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.holding-stats-table tr {
+  border-bottom: 1px solid var(--line);
+}
+
+.holding-stats-table tr:last-child {
+  border-bottom: none;
+}
+
+.holding-stats-table td {
+  padding: 0.62rem 0.4rem;
+  font-size: 0.9rem;
+  vertical-align: middle;
+}
+
+.holding-stats-table td.metric-label {
+  color: var(--muted);
+  text-align: left;
+  font-weight: 450;
+  width: 44%;
+  white-space: normal;
+}
+
+.holding-stats-table td.metric-val {
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  width: 56%;
+}
+
+@media (max-width: 1024px) {
+  .holding-chart-layout {
+    grid-template-columns: 1fr;
+  }
+  .holding-stats-card {
+    max-width: none;
+  }
+}
+
+/* A German statutory term shown beside its plain-English name. Never bold,
+   never alone -- it is there so a figure can be matched against a bank
+   document, not because the reader is expected to know it. */
+.de { color: var(--muted); font-weight: 400; }
+abbr[title] { text-decoration: underline dotted; cursor: help; }
+
+.empty {
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--muted);
+}
+
+@media (max-width: 640px) {
+  .view { padding: 1.25rem .85rem 3rem; }
+  .barrow { grid-template-columns: minmax(5rem, 9rem) 1fr auto; }
+}
+
+@media print {
+  .topbar, .footer, .alerts, .rangepick, button { display: none; }
+  .view { max-width: none; padding: 0; }
+  .card, .panel { break-inside: avoid; }
+}
+
+/* ------------------------------------------------------- time ranges */
+
+/*
+ * The window every figure on a page is measured over. One control, at the
+ * top, driving every card, chart and table below it -- a page where the
+ * headline says "today" and the chart says "everything" is a page that
+ * invites the two to be read together.
+ */
+.ranges {
+  display: flex;
+  gap: .35rem .5rem;
+  flex-wrap: wrap;
+  margin: 1.25rem 0 1.5rem;
+  align-items: center;
+}
+.ranges button {
+  font: inherit;
+  font-size: .88rem;
+  padding: .25rem .7rem;
+  border-radius: 2rem;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  box-sizing: border-box;
+}
+.ranges button:hover { border-color: var(--line-strong); color: var(--fg); }
+.ranges button[aria-pressed="true"] {
+  background: var(--fg);
+  border-color: var(--fg);
+  color: var(--bg);
+  font-weight: 600;
+}
+.ranges .over { color: var(--muted); font-size: .85rem; margin-left: .85rem; white-space: nowrap; }
+
+/* --------------------------------------------------------- layout */
+
+/*
+ * Two or three columns on a wide screen. A single 108rem-wide bar chart of
+ * six rows is mostly whitespace with a label at each end; side by side they
+ * read as one comparison.
+ */
+.cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(26rem, 1fr));
+  gap: 1.5rem 2.5rem;
+  align-items: start;
+}
+.cols > section { margin-bottom: 0; }
+
+/* -------------------------------------------------- top return boxes */
+
+.top-returns {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--gap);
+  margin-bottom: 1.25rem;
+}
+
+.return-box {
+  cursor: pointer;
+  border-radius: var(--radius);
+  transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.1s ease;
+  user-select: none;
+}
+.return-box:hover {
+  border-color: var(--line-strong);
+  background: var(--bg-sunken);
+}
+.return-box[aria-pressed="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  background: var(--bg-sunken);
+}
+.return-box .k {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.return-box .v {
+  font-size: 1.45rem;
+  font-weight: 650;
+  margin-top: 0.1rem;
+}
+.return-box .sub2 {
+  font-size: 0.85rem;
+  font-weight: 500;
+  margin-top: 0.15rem;
+}
+
+@media (max-width: 900px) {
+  .top-returns {
+    grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  }
+}
+
+/* -------------------------------------------------- overview layout */
+
+.overview-split {
+  display: grid;
+  grid-template-columns: minmax(20rem, 26rem) minmax(0, 1fr);
+  gap: 2rem;
+  align-items: start;
+  margin-bottom: 2rem;
+}
+
+.overview-split .breakdown-col {
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+}
+
+.overview-split .breakdown-col section {
+  margin-bottom: 0;
+}
+
+.overview-split .holdings-col {
+  min-width: 0;
+}
+
+.overview-split .holdings-col section {
+  margin-bottom: 0;
+}
+
+@media (max-width: 1060px) {
+  .overview-split {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+}
+
+/* -------------------------------------------------- plan savings layout */
+
+.savings-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+  margin-top: 0.5rem;
+}
+
+.savings-stats-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.25rem;
+  background: var(--bg);
+}
+
+.savings-stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.92rem;
+}
+.savings-stat-row:last-child {
+  border-bottom: none;
+}
+.savings-stat-row .label {
+  color: var(--muted);
+}
+.savings-stat-row .val {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 960px) {
+  .savings-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* For prose and bar lists, which get unreadable past about 90 characters. */
+.narrow { max-width: 46rem; }
+
+/* ------------------------------------------------------- tooltips */
+
+/*
+ * A short label with the explanation on hover, so a card can say what it
+ * means without a paragraph under it. `title` alone is invisible on touch,
+ * hence the dotted underline telling the reader there is something there.
+ */
+.hint {
+  border-bottom: 1px dotted currentColor;
+  cursor: help;
+}
+.card .k .hint { border-bottom-color: color-mix(in srgb, currentColor 45%, transparent); }
+
+/* Two lines under a figure, when one would run past the card. */
+.card .sub2.stack { display: grid; gap: .05rem; }
+
+/* --------------------------------------------------------- forms */
+
+.entry {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13.5rem, 1fr));
+  gap: 1rem 1.25rem;
+  align-items: start;
+  margin-bottom: 1.25rem;
+}
+.entry .wide { grid-column: 1 / -1; }
+
+label.field {
+  display: flex;
+  flex-direction: column;
+  gap: .35rem;
+  min-width: 0;
+}
+label.field > span:first-child {
+  font-size: .8rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+}
+label.field input,
+label.field select,
+label.field textarea {
+  width: 100%;
+  padding: .45rem .65rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: .92rem;
+  height: 2.35rem;
+  box-sizing: border-box;
+}
+label.field textarea {
+  height: auto;
+  min-height: 4rem;
+}
+label.field input:focus,
+label.field select:focus,
+label.field textarea:focus {
+  outline: 2px solid var(--accent);
+  border-color: transparent;
+}
+label.field .note {
+  font-size: .8rem;
+  color: var(--muted);
+  margin-top: .15rem;
+  line-height: 1.35;
+}
+
+label.check { display: flex; gap: .45rem; align-items: center; font-size: .92rem; }
+label.check input { width: auto; height: auto; margin: 0; }
+label.check.wide { grid-column: 1 / -1; padding-top: .25rem; }
+
+/* ------------------------------------------- what else was going on */
+
+/*
+ * Sales and income near a purchase, listed under the explanation so a
+ * two-year-old question ("did money arrive?") becomes an answerable one
+ * ("did this sale pay for it?").
+ */
+.nearby { margin-top: .4rem; }
+.nearby .near {
+  display: flex;
+  gap: .5rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+  font-size: .88rem;
+  padding: .12rem 0 .12rem .8rem;
+  border-left: 2px solid color-mix(in srgb, var(--warn) 45%, transparent);
+}
+.nearby .near .when {
+  color: var(--muted);
+  min-width: 6.5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* -------------------------------------------------- sortable table */
+
+.sortable-table-container {
+  margin-bottom: 1.5rem;
+}
+
+.table-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.table-toolbar .search-box {
+  flex: 1;
+  max-width: 24rem;
+}
+
+.table-search-input {
+  width: 100%;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 0.9rem;
+}
+.table-search-input:focus {
+  outline: 2px solid var(--accent);
+  border-color: transparent;
+}
+
+.table-count-badge {
+  font-size: 0.85rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+th.sortable {
+  user-select: none;
+  transition: background-color 0.15s ease;
+}
+th.sortable:hover {
+  background-color: color-mix(in srgb, var(--accent) 8%, var(--bg-sunken));
+}
+
+.th-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.sort-icon {
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+td.empty-msg {
+  text-align: center;
+  padding: 2rem 1rem;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* -------------------------------------------------- skeleton loaders */
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--line) 25%,
+    color-mix(in srgb, var(--line) 60%, var(--bg)) 50%,
+    var(--line) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+  user-select: none;
+}
+.theme-toggle:hover {
+  border-color: var(--line-strong);
+  background: var(--bg-sunken);
+}
+.theme-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+/* -------------------------------------------------- table pagination & slider filters */
+
+.table-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.75rem 0.25rem;
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+}
+
+.table-pagination-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.table-pagination-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.table-pagination-btn:hover:not(:disabled) {
+  background: var(--bg-sunken);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.table-pagination-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.slider-filter-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.25rem;
+  padding: 1rem 1.25rem;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-bottom: 1rem;
+}
+
+.slider-filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.slider-filter-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.slider-filter-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.slider-range-input {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.slider-range-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+/* Stock valuation indicators & badges */
+.badge-bargain {
+  background: rgba(22, 163, 74, 0.15);
+  color: #15803d;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  display: inline-block;
+  white-space: nowrap;
+}
+.badge-dip {
+  background: rgba(2, 132, 199, 0.15);
+  color: #0369a1;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  display: inline-block;
+  white-space: nowrap;
+}
+.badge-fair {
+  background: rgba(217, 119, 6, 0.15);
+  color: #b45309;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  display: inline-block;
+  white-space: nowrap;
+}
+.badge-premium {
+  background: rgba(124, 58, 237, 0.15);
+  color: #7c3aed;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  display: inline-block;
+  white-space: nowrap;
+}
+.badge-trap {
+  background: rgba(220, 38, 38, 0.15);
+  color: #b91c1c;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  display: inline-block;
+  white-space: nowrap;
+}
+.badge-contrarian {
+  background: rgba(202, 138, 4, 0.15);
+  color: #a16207;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  display: inline-block;
+  white-space: nowrap;
+}
+.badge-nodata {
+  background: rgba(120, 120, 120, 0.15);
+  color: var(--muted);
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  display: inline-block;
+  white-space: nowrap;
+}
+
+/* A table that fits the page width: columns size to their content, long text
+   wraps instead of the page scrolling sideways. Overflow is left visible so
+   the hover bubbles are not clipped. */
+.fit-table .wrap,
+.fit-table .sortable-table-container { overflow: visible; }
+.fit-table table { width: 100%; table-layout: auto; }
+.fit-table th,
+.fit-table td { padding: 0.45rem 0.5rem; vertical-align: middle; }
+.fit-table th { white-space: normal; }
+.fit-table td.name,
+.fit-table td.prose { white-space: normal; overflow-wrap: anywhere; }
+.fit-table td.name { max-width: 16rem; overflow: visible; text-overflow: clip; }
+.fit-table td.num { white-space: nowrap; }
+/* Score chips: readable, on one line. */
+.fit-table .tag[class*="badge-"],
+.fit-table .tag[class*="quality-"] {
+  font-size: 0.85rem;
+  padding: 0.15rem 0.55rem;
+  white-space: nowrap;
+}
+/* Action buttons: keep together, wrap onto a second line rather than squeeze. */
+.row-actions {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.row-actions button,
+.row-actions a.button { white-space: nowrap; }
+
+/* Watched stocks: fixed column widths so no column can grab the room, and one
+   font size for every cell including the score chips.
+   Columns: Ticker, Name, Sector, 3M, 6M, 1Y, Volatility, Fwd P/E, Dividend,
+   Analysts, Value, Quality, actions. */
+.watched-stocks table { table-layout: fixed; }
+.watched-stocks th, .watched-stocks td { font-size: 0.9rem; }
+.watched-stocks th { font-size: 0.72rem; }
+.watched-stocks .tag[class*="badge-"],
+.watched-stocks .tag[class*="quality-"] { font-size: 0.9rem; padding: 0.15rem 0.5rem; white-space: normal; }
+.watched-stocks td.sector { white-space: normal; }
+.watched-stocks th:nth-child(1), .watched-stocks td:nth-child(1) { width: 6%; }
+.watched-stocks th:nth-child(2), .watched-stocks td:nth-child(2) { width: 15%; }
+.watched-stocks th:nth-child(3), .watched-stocks td:nth-child(3) { width: 7%; }
+.watched-stocks th:nth-child(4), .watched-stocks td:nth-child(4) { width: 6%; }
+.watched-stocks th:nth-child(5), .watched-stocks td:nth-child(5) { width: 6%; }
+.watched-stocks th:nth-child(6), .watched-stocks td:nth-child(6) { width: 6%; }
+.watched-stocks th:nth-child(7), .watched-stocks td:nth-child(7) { width: 6%; }
+.watched-stocks th:nth-child(8), .watched-stocks td:nth-child(8) { width: 6%; }
+.watched-stocks th:nth-child(9), .watched-stocks td:nth-child(9) { width: 6%; }
+.watched-stocks th:nth-child(10), .watched-stocks td:nth-child(10) { width: 9%; }
+.watched-stocks th:nth-child(11), .watched-stocks td:nth-child(11) { width: 12%; }
+.watched-stocks th:nth-child(12), .watched-stocks td:nth-child(12) { width: 6%; }
+.watched-stocks th:nth-child(13), .watched-stocks td:nth-child(13) { width: 9%; }
+
+/* Hover bubble: the reasoning behind a score, readable, not a browser title. */
+.tip { position: relative; display: inline-block; cursor: help; }
+.tip .tip-bubble {
+  display: none;
+  position: absolute;
+  z-index: 30;
+  left: 0;
+  top: 100%;
+  margin-top: 0.35rem;
+  width: 24rem;
+  max-width: 70vw;
+  padding: 0.65rem 0.8rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: pre-line;
+  text-align: left;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: 0.45rem;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+.tip:hover .tip-bubble { display: block; }
+td:last-child .tip .tip-bubble,
+td:nth-last-child(2) .tip .tip-bubble,
+td:nth-last-child(3) .tip .tip-bubble { left: auto; right: 0; }
+
+/* Quality chips */
+.quality-high { background: rgba(22, 163, 74, 0.15); color: #15803d; border-color: transparent; font-weight: 600; }
+.quality-mid { background: rgba(217, 119, 6, 0.15); color: #b45309; border-color: transparent; font-weight: 600; }
+.quality-low { background: rgba(120, 120, 120, 0.15); color: var(--muted); border-color: transparent; font-weight: 600; }
+
+.stock-toggle-group {
+  display: inline-flex;
+  gap: 0.35rem;
+  background: var(--bg-sunken);
+  padding: 3px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+}
+.stock-toggle-btn {
+  padding: 3px 10px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  border-radius: 4px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--muted);
+}
+.stock-toggle-btn.active {
+  background: var(--surface);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+}
+
+/* -------------------------------------------------- aggregated return charts */
+
+.agg-returns-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.agg-returns-ranges {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.agg-chart-wrapper {
+  position: relative;
+  width: 100%;
+  min-height: 250px;
+}
+
+.agg-chart-tooltip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 20;
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.8rem;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  min-width: 140px;
+  backdrop-filter: blur(8px);
+}
+
+.agg-tip-header {
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 0.4rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.agg-tip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1.2rem;
+  margin-bottom: 0.2rem;
+  color: var(--muted);
+}
+
+.agg-tip-row:last-child {
+  margin-bottom: 0;
+}
+
+.agg-tip-lbl {
+  color: var(--muted);
+}
+
+.agg-tip-val {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* -------------------------------------------------- holdings page table */
+
+.holdings-view {
+  width: 100%;
+}
+
+.view:has(.holdings-view) {
+  max-width: min(99vw, 132rem);
+  padding-inline: 0.85rem;
+}
+
+.holdings-view table.data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.holdings-view table.data-table th,
+.holdings-view table.data-table td {
+  padding: 0.4rem 0.52rem;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.holdings-view table.data-table th {
+  font-size: 0.72rem;
+  padding-block: 0.45rem;
+  letter-spacing: 0.03em;
+}
+
+.holdings-view table.data-table td.name {
+  max-width: 13rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.holdings-view table.data-table td.ticker {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------- cumulative dividends & closed trades */
+
+.dividends-panel,
+.realized-trades-panel {
+  margin-top: 2rem;
+  padding: 1.35rem 1.6rem;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.panel-header-left h3 {
+  margin: 0 0 0.25rem 0;
+  font-size: 1.15rem;
+  font-weight: 650;
+  color: var(--fg);
+}
+
+.panel-header-left p.sub {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.panel-header-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0.45rem 0.9rem;
+}
+
+.panel-header-badge .badge-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.panel-header-badge .badge-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin-top: 0.1rem;
+}
+
+.dividends-panel table.data-table,
+.realized-trades-panel table.data-table {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) - 2px);
+  width: 100%;
+}
+
+.holdings-view .dividends-panel table.data-table th,
+.holdings-view .dividends-panel table.data-table td,
+.holdings-view .realized-trades-panel table.data-table th,
+.holdings-view .realized-trades-panel table.data-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+
+.holdings-view .dividends-panel table.data-table th,
+.holdings-view .realized-trades-panel table.data-table th {
+  background: var(--bg-sunken);
+  font-weight: 600;
+}
+
+.holdings-view .dividends-panel table.data-table th.num,
+.holdings-view .dividends-panel table.data-table td.num,
+.holdings-view .realized-trades-panel table.data-table th.num,
+.holdings-view .realized-trades-panel table.data-table td.num {
+  text-align: right;
+}
+
+.holdings-view .dividends-panel table.data-table td.ticker,
+.holdings-view .realized-trades-panel table.data-table td.ticker {
+  font-weight: 600;
+  text-align: left;
+}
+
+.holdings-view .dividends-panel table.data-table td.name,
+.holdings-view .realized-trades-panel table.data-table td.name {
+  text-align: left;
+}
+
+/* ------------------------------------------- static unlock screen */
+
+.unlock-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 68vh;
+  padding: 1.5rem 0.5rem;
+}
+
+.unlock-card {
+  width: 100%;
+  max-width: 28rem;
+  padding: 2rem 1.75rem;
+  border: 1px solid var(--line-strong);
+  border-radius: calc(var(--radius) + 0.15rem);
+  background: var(--bg);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+}
+
+.unlock-icon {
+  font-size: 2rem;
+  line-height: 1;
+  margin-bottom: 0.75rem;
+}
+
+.unlock-card h1 {
+  font-size: 1.45rem;
+  margin: 0 0 0.4rem;
+}
+
+.unlock-card .sub {
+  margin-bottom: 1.25rem;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.unlock-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.95rem;
+}
+
+.unlock-submit {
+  width: 100%;
+  padding: 0.6rem 1rem;
+  font-size: 0.96rem;
+  margin-top: 0.25rem;
+}
+
+.unlock-hint {
+  margin: 1.25rem 0 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.topbar-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* ------------------------------------------- mobile responsive layout */
+
+@media (max-width: 1024px) {
+  .watched-stocks .wrap,
+  .watched-stocks .sortable-table-container {
+    overflow-x: auto;
+  }
+  .watched-stocks table {
+    table-layout: auto;
+    min-width: 58rem;
+  }
+  .watched-stocks th:nth-child(n),
+  .watched-stocks td:nth-child(n) {
+    width: auto;
+  }
+}
+
+@media (max-width: 768px) {
+  .topbar {
+    padding: 0.55rem 0.85rem;
+    gap: 0.45rem 0.75rem;
+  }
+
+  .topbar nav {
+    order: 3;
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 0.15rem;
+    gap: 0.25rem;
+  }
+  .topbar nav::-webkit-scrollbar {
+    display: none;
+  }
+  .topbar nav a {
+    padding: 0.38rem 0.75rem;
+    font-size: 0.88rem;
+    flex-shrink: 0;
+  }
+
+  .cols {
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+  }
+
+  .chart-pair {
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+  }
+
+  .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.65rem;
+  }
+
+  .card {
+    padding: 0.75rem 0.85rem;
+  }
+  .card .v {
+    font-size: 1.3rem;
+  }
+
+  .top-returns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.65rem;
+  }
+  .return-box .v {
+    font-size: 1.2rem;
+  }
+
+  .ranges {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 0.25rem;
+    margin: 1rem 0 1.15rem;
+  }
+  .ranges::-webkit-scrollbar {
+    display: none;
+  }
+  .ranges button {
+    flex-shrink: 0;
+    padding: 0.38rem 0.8rem;
+    font-size: 0.85rem;
+  }
+  .ranges .over {
+    display: none;
+  }
+
+  td.prose {
+    min-width: 14rem;
+  }
+
+  .sortable-table-container {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Pin the first column (Ticker / Holding) when scrolling wide tables on mobile */
+  .holdings-view table.data-table th:first-child,
+  .holdings-view table.data-table td:first-child,
+  .watched-stocks table th:first-child,
+  .watched-stocks table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--bg);
+    box-shadow: 2px 0 5px rgba(0, 0, 0, 0.06);
+  }
+
+  .dividends-panel,
+  .realized-trades-panel {
+    padding: 1rem;
+  }
+
+  .tip .tip-bubble {
+    position: fixed;
+    left: 1rem;
+    right: 1rem;
+    top: auto;
+    bottom: 1.5rem;
+    width: auto;
+    max-width: none;
+    z-index: 50;
+  }
+}
+
+@media (max-width: 420px) {
+  .cards {
+    grid-template-columns: 1fr;
+  }
+  .card.total {
+    grid-column: 1 / -1;
+  }
+  .asof {
+    display: none;
+  }
+}
