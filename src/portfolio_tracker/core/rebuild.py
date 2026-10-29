@@ -46,6 +46,37 @@ class RebuildResult:
         return not self.breaks and not self.oversold
 
 
+def default_end(conn: sqlite3.Connection, *, today: date | None = None) -> date:
+    """Latest date with actual market prices or non-future transactions.
+
+    Rebuilding before today's market close should value the portfolio up to the
+    most recent priced day (or a trade entered today), rather than appending a
+    synthetic flat valuation row for today using yesterday's carried-forward
+    prices.
+    """
+    ref = today or date.today()
+    price_row = conn.execute(
+        """
+        SELECT max(p.date) AS d
+        FROM price p
+        JOIN instrument i ON i.id = p.instrument_id
+        WHERE i.is_cash_proxy = 0 AND i.price_source <> 'synthetic'
+        """
+    ).fetchone()
+    txn_row = conn.execute(
+        "SELECT max(trade_date) AS d FROM transaction_ WHERE trade_date <= ?",
+        (ref.isoformat(),),
+    ).fetchone()
+
+    candidates: list[date] = []
+    if price_row and price_row["d"]:
+        candidates.append(min(date.fromisoformat(price_row["d"]), ref))
+    if txn_row and txn_row["d"]:
+        candidates.append(date.fromisoformat(txn_row["d"]))
+
+    return max(candidates) if candidates else ref
+
+
 def run(
     conn: sqlite3.Connection,
     *,

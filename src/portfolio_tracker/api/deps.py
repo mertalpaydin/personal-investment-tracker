@@ -65,16 +65,15 @@ def get_writable_db() -> Iterator[Any]:
     not something it inherits.
     """
     conn = connect(DB_PATH, same_thread=False)
+    changes_before = conn.total_changes
     try:
         yield conn
     finally:
-        # Anything that asked for a writable connection may have changed an
-        # answer, so cached ones are dropped here rather than at each call
-        # site. The alternative -- remembering to invalidate in every write
-        # endpoint -- is a rule that holds until the day somebody adds one,
-        # and a plan page showing figures from before the trade you just
-        # entered is worse than a slow one. An in-place edit is also
-        # invisible to the content fingerprint, which makes this the only
-        # place that reliably notices.
-        cache.clear()
+        # Anything that asked for a writable connection and actually modified a
+        # row may have changed an answer, so cached ones are dropped here rather
+        # than at each call site. Pure read paths (such as narrate=False on
+        # /api/brief or /api/peers) leave total_changes untouched and keep the
+        # cache warm.
+        if conn.total_changes != changes_before:
+            cache.clear()
         conn.close()

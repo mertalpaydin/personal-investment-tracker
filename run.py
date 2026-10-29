@@ -96,8 +96,6 @@ def _prepare() -> str | None:
     automatically. The distinction that matters: a migration failing is a
     genuine problem worth stopping for, while *needing* one is not.
     """
-    from datetime import date
-
     from portfolio_tracker.core import inbox, rebuild
     from portfolio_tracker.db import migrate as migrations
     from portfolio_tracker.db.backup import restore_latest_healthy_backup
@@ -140,7 +138,7 @@ def _prepare() -> str | None:
             )
             repaired = False
             try:
-                rebuild.run(conn, end=date.today())
+                rebuild.run(conn, end=rebuild.default_end(conn))
                 recheck = conn.execute("PRAGMA quick_check(1);").fetchall()
                 if len(recheck) == 1 and recheck[0][0] == "ok":
                     print("self-healing rebuild succeeded: derived layer restored.", flush=True)
@@ -164,7 +162,7 @@ def _prepare() -> str | None:
                         flush=True,
                     )
                     conn = connect(DB_PATH)
-                    rebuild.run(conn, end=date.today())
+                    rebuild.run(conn, end=rebuild.default_end(conn))
                     wal_checkpoint(conn, "TRUNCATE")
                 else:
                     backups_dir = DB_PATH.parent / "backups"
@@ -192,7 +190,7 @@ def _prepare() -> str | None:
         needs = bool(applied) or inbox.stale_after_decision(conn)
         if needs and conn.execute("SELECT count(*) FROM transaction_").fetchone()[0]:
             print("recomputing the derived figures...", flush=True)
-            result = rebuild.run(conn, end=date.today())
+            result = rebuild.run(conn, end=rebuild.default_end(conn))
             for problem in result.breaks:
                 print(f"  {problem}", file=sys.stderr)
 
@@ -226,6 +224,7 @@ def main() -> int:
         return 1
 
     api.configure(db_path=DB_PATH, incoming_dir=INCOMING_DIR)
+    api.warm_metrics_cache()
     port = _free_port(PREFERRED_PORT)
     url = f"http://{HOST}:{port}/"
     if port != PREFERRED_PORT:

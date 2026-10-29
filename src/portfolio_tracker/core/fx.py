@@ -151,7 +151,7 @@ def get_rate_series(
                 f"(earliest available {first.isoformat()})"
             )
         asof, rate, source = current
-        stale = business_days_between(asof, day, calendar)
+        stale = 0 if asof == day else business_days_between(asof, day, calendar)
         if stale > max_stale_days and strict:
             raise FxUnavailable(
                 f"{BASE}/{quote} rate for {day.isoformat()} is {stale} business days stale"

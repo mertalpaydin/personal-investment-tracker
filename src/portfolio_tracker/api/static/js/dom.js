@@ -19,14 +19,16 @@
  * @param {...(Node|string|null|undefined|false|Array)} children
  */
 export function el(tag, attrs, ...children) {
-  const [name, ...classes] = String(tag).split(".");
+  const [head, ...classes] = String(tag).split(".");
+  const [name, id] = head.split("#");
   const node = document.createElement(name || "div");
+  if (id) node.id = id;
   if (classes.length) node.classList.add(...classes);
 
   if (attrs && typeof attrs === "object" && !(attrs instanceof Node) && !Array.isArray(attrs)) {
     for (const [key, value] of Object.entries(attrs)) {
       if (value === null || value === undefined || value === false) continue;
-      if (key === "class") {
+      if (key === "class" || key === "cls") {
         node.classList.add(...String(value).split(/\s+/).filter(Boolean));
       } else if (key === "text") {
         node.textContent = String(value);
@@ -97,12 +99,12 @@ export function table(head, rows, { empty = "Nothing to show." } = {}) {
 }
 
 /** A labelled statistic card. */
-export function card(label, value, { sub = null, cls = "", valueCls = "" } = {}) {
+export function card(label, value, { sub = null, cls = "", valueCls = "", subCls = "" } = {}) {
   return el(
     `div.card${cls ? "." + cls.split(/\s+/).join(".") : ""}`,
     el("span.k", { text: label }),
     el("div.v", { class: valueCls, text: value }),
-    sub ? el("div.sub2", { text: sub }) : null,
+    sub ? el("div.sub2", { class: subCls, text: sub }) : null,
   );
 }
 

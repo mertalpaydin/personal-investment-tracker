@@ -610,7 +610,7 @@ def _rebuild_after(conn: sqlite3.Connection) -> dict[str, Any]:
     terminal; a saved trade that does not show up in the totals is not a saved
     trade as far as anyone using it is concerned.
     """
-    result = rebuild.run(conn, end=date.today(), strict=False, commit=False)
+    result = rebuild.run(conn, end=rebuild.default_end(conn), strict=False, commit=False)
     return {
         "lots_created": result.lots_created,
         "disposals_created": result.disposals_created,

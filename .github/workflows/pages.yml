@@ -1,0 +1,65 @@
+name: Refresh Encrypted GitHub Pages Snapshot
+
+on:
+  schedule:
+    # Every weekday at 20:30 UTC (after European and US market closes)
+    - cron: "30 20 * * 1-5"
+  workflow_dispatch:
+
+concurrency:
+  group: pages-snapshot
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  UV_FROZEN: "1"
+
+jobs:
+  refresh-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Fetch encrypted database vault from gh-pages
+        id: vault
+        run: |
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            git fetch origin gh-pages:refs/remotes/origin/gh-pages
+            if git cat-file -e origin/gh-pages:vault.enc 2>/dev/null; then
+              git show origin/gh-pages:vault.enc > vault.enc
+              echo "found=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "No vault.enc found on gh-pages. Run 'uv run python publish.py' locally first."
+              echo "found=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "Branch gh-pages does not exist yet. Run 'uv run python publish.py' locally first."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Decrypt vault, refresh FX & market prices, and publish encrypted snapshot
+        if: steps.vault.outputs.found == 'true'
+        env:
+          PT_ACCESS_TOKEN: ${{ secrets.PT_ACCESS_TOKEN }}
+        run: |
+          if [ -z "$PT_ACCESS_TOKEN" ]; then
+            echo "::error::Repository secret PT_ACCESS_TOKEN is not configured."
+            exit 1
+          fi
+          uv run python publish.py --decrypt-vault vault.enc --db data/portfolio.db
+          rm -f vault.enc
+          uv run pt fetch-fx || echo "::warning::FX fetch encountered a transient issue; continuing with stored rates."
+          uv run pt fetch-prices || echo "::warning::Price fetch encountered a transient issue; continuing with stored prices."
+          uv run pt rebuild
+          uv run python publish.py

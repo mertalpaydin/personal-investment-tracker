@@ -71,6 +71,7 @@ token*.json
 *.db-shm
 *.sqlite
 *.sqlite3
+*.enc
 
 # ---------------------------------------------------------------
 # GENERATED REPORTS

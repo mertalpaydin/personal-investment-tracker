@@ -274,12 +274,13 @@ def _data_stamp(conn: sqlite3.Connection, instrument_id: int) -> tuple[object, .
     files = [row[2] for row in conn.execute("PRAGMA database_list") if row[1] == "main"]
     if not files or not files[0]:
         return None
-    price = conn.execute(
-        "SELECT max(date), max(rowid), count(*) FROM price WHERE instrument_id = ?",
+    price_max_date = conn.execute(
+        "SELECT max(date) FROM price WHERE instrument_id = ?",
         (instrument_id,),
-    ).fetchone()
-    fx_row = conn.execute("SELECT max(date), max(rowid) FROM fx_rate").fetchone()
-    return (files[0], price[0], price[1], price[2], fx_row[0], fx_row[1])
+    ).fetchone()[0]
+    price_max_rowid = conn.execute("SELECT max(rowid) FROM price").fetchone()[0]
+    fx_max_rowid = conn.execute("SELECT max(rowid) FROM fx_rate").fetchone()[0]
+    return (files[0], price_max_date, price_max_rowid, fx_max_rowid)
 
 
 def clear_metrics_cache() -> None:
