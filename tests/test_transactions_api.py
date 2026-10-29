@@ -184,6 +184,20 @@ def test_saving_records_the_trade_and_recomputes(
     assert _count(db, "lot") == 1
 
 
+def test_buying_a_watched_instrument_sets_status_to_owned(
+    client: TestClient, db: sqlite3.Connection
+) -> None:
+    db.execute(
+        "INSERT INTO instrument (id, import_key, name, asset_class, currency, status, price_source) "
+        "VALUES (3, 'WATCHME', 'Watched ETF', 'ETF', 'EUR', 'WATCH', 'manual')"
+    )
+    db.commit()
+    response = client.post("/api/transactions", json=buy(instrument="WATCHME"))
+    assert response.status_code == 201
+    status = db.execute("SELECT status FROM instrument WHERE id = 3").fetchone()["status"]
+    assert status == "OWNED"
+
+
 def test_a_purchase_is_investment_not_a_contribution(
     client: TestClient, db: sqlite3.Connection
 ) -> None:

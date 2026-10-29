@@ -636,6 +636,11 @@ def create(
 
     with transaction(conn):
         txn_id = _insert(conn, body, checked)
+        if body.type in ("BUY", "TRANSFER_IN") and checked.instrument is not None:
+            conn.execute(
+                "UPDATE instrument SET status = 'OWNED' WHERE id = ? AND status <> 'OWNED'",
+                (checked.instrument["id"],),
+            )
         _log(conn, "CREATE", txn_id, _normalised(conn, body, checked))
         _record_new_money(conn, body, checked)
         rebuilt = _rebuild_after(conn)
