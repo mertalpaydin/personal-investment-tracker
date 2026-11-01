@@ -12,6 +12,8 @@ concurrency:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 env:
   UV_FROZEN: "1"
@@ -52,6 +54,7 @@ jobs:
         if: steps.vault.outputs.found == 'true'
         env:
           PT_ACCESS_TOKEN: ${{ secrets.PT_ACCESS_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ -z "$PT_ACCESS_TOKEN" ]; then
             echo "::error::Repository secret PT_ACCESS_TOKEN is not configured."
@@ -63,3 +66,16 @@ jobs:
           uv run pt fetch-prices || echo "::warning::Price fetch encountered a transient issue; continuing with stored prices."
           uv run pt rebuild
           uv run python publish.py
+
+      - name: Deploy to GitHub Pages
+        if: steps.vault.outputs.found == 'true'
+        continue-on-error: true
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Publish GitHub Pages deployment
+        if: steps.vault.outputs.found == 'true'
+        continue-on-error: true
+        id: deployment
+        uses: actions/deploy-pages@v4

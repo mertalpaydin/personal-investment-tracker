@@ -133,7 +133,18 @@ def _push_gh_pages(dist_dir: Path, branch: str = "gh-pages") -> None:
         git("config", "user.email", user_email)
         git("add", "-A")
         git("commit", "-m", f"Update encrypted portfolio snapshot ({stamp})")
-        git("push", "--force", remote, f"HEAD:refs/heads/{branch}")
+        push_args = ["push", "--force", remote, f"HEAD:refs/heads/{branch}"]
+        ci_token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        if ci_token and remote.startswith("https://github.com/"):
+            import base64
+
+            basic = base64.b64encode(f"x-access-token:{ci_token.strip()}".encode()).decode("ascii")
+            push_args = [
+                "-c",
+                f"http.https://github.com/.extraheader=AUTHORIZATION: basic {basic}",
+                *push_args,
+            ]
+        git(*push_args)
 
     _trigger_pages_build(remote, branch=branch)
 
