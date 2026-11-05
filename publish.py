@@ -84,14 +84,7 @@ def _remote_url() -> str:
         text=True,
         check=True,
     )
-    url = out.stdout.strip()
-    # GitHub Pages ignores pushes authenticated with a repository SSH Deploy Key.
-    # Converting SSH github.com:owner/repo.git to https://github.com/owner/repo.git
-    # uses Git Credential Manager's personal user token so GitHub triggers a Pages build.
-    if url.startswith(_SSH_GITHUB_PREFIX) and not os.environ.get("GITHUB_ACTIONS"):
-        path = url.removeprefix(_SSH_GITHUB_PREFIX)
-        return f"https://github.com/{path}"
-    return url
+    return out.stdout.strip()
 
 
 def _git_config_value(key: str, default: str) -> str:
@@ -126,7 +119,7 @@ def _push_gh_pages(dist_dir: Path, branch: str = "gh-pages") -> None:
         shutil.copytree(dist_dir, stage_dir)
 
         def git(*args: str) -> None:
-            subprocess.run(["git", *args], cwd=stage_dir, check=True)
+            subprocess.run(["git", *args], cwd=stage_dir, check=True, timeout=60)
 
         git("init", "-b", branch)
         git("config", "user.name", user_name)
@@ -163,14 +156,22 @@ def _github_https_token() -> str | None:
     env_tok = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     if env_tok:
         return env_tok.strip()
-    out = subprocess.run(
-        ["git", "credential", "fill"],
-        input="protocol=https\nhost=github.com\n\n",
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "never"
+    try:
+        out = subprocess.run(
+            ["git", "credential", "fill"],
+            input="protocol=https\nhost=github.com\n\n",
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=3,
+            env=env,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
     if out.returncode != 0:
         return None
     for line in out.stdout.splitlines():
