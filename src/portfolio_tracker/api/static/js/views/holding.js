@@ -74,6 +74,8 @@ export async function render({ params }) {
   );
   view.append(chartPair1);
 
+  view.append(priceInEurWithTrades(h, window));
+
   if (h.currency !== "EUR") {
     const chartPair2 = el(
       "div.chart-pair",
@@ -217,23 +219,19 @@ function returnVsPortfolio(h, pts, portfolio) {
   const box = el("div.chart");
   const marks = markers(h, pts);
 
-  // The holding's own euro unit price: local price converted at that day's rate.
-  const euroPrices = pts.map((p) => {
-    const price = f.num(p.price_local);
-    const rate = f.num(p.fx_rate);
-    if (price === null || !rate) return null;
-    return price / rate;
+  // Actual Position Return: (market_value_eur - cost_basis_eur) / cost_basis_eur on each day.
+  // This calculates your actual money-weighted profit/loss % on your invested capital in EUR.
+  const posReturnPct = pts.map((p) => {
+    const cost = f.num(p.cost_basis_eur);
+    const unrealized = f.num(p.unrealized_eur);
+    if (cost === null || cost <= 0 || unrealized === null) return null;
+    return unrealized / cost;
   });
-
-  const firstPrice = euroPrices.find((v) => v !== null);
-  const returnPct = euroPrices.map((v) =>
-    v !== null && firstPrice ? v / firstPrice - 1 : null,
-  );
 
   const series = [
     {
-      label: h.instrument,
-      data: returnPct,
+      label: `${h.instrument} (Position Return)`,
+      data: posReturnPct,
       colour: pal.series[0],
       width: 2.2,
       fill: 0.12,
@@ -269,15 +267,219 @@ function returnVsPortfolio(h, pts, portfolio) {
 
   return el(
     "div",
-    el("h3", { text: "Return vs whole portfolio" }),
+    el("h3", { text: "Actual position return vs portfolio" }),
     box,
     el("p.chart-note", {
       text:
-        `${h.instrument} return compared with the whole portfolio over this window. ` +
-        "Red dashed line marks 0% return.",
+        `Your actual cumulative return on invested capital for ${h.instrument} compared with the whole portfolio. ` +
+        "Red dashed line marks breakeven (0% return).",
     }),
     marks,
   );
+}
+
+/** Historical price in EUR with buy/sell trade markers (dots). */
+function priceInEurWithTrades(h, pts) {
+  const pal = palette();
+  const box = el("div.chart.chart-with-trades");
+  const overlay = el("div.chart-trades-overlay", {
+    style: "position: absolute; inset: 0; pointer-events: none;",
+  });
+  const tooltip = el("div.trade-chart-tooltip");
+  tooltip.style.display = "none";
+
+  const euroPrices = pts.map((p) => {
+    const price = f.num(p.price_local);
+    const rate = f.num(p.fx_rate);
+    if (price === null) return null;
+    return rate && rate > 0 ? price / rate : price;
+  });
+
+  queueMicrotask(() => {
+    timeChart(box, {
+      x: pts.map((p) => toTs(p.date)),
+      height: 270,
+      kind: "price_eur",
+      sync: `holding-${h.instrument}`,
+      hooks: {
+        draw: [
+          (u) => {
+            renderTradeDots(u, h, pts, overlay, tooltip);
+          },
+        ],
+      },
+      series: [
+        {
+          label: `${h.instrument} Price (EUR)`,
+          data: euroPrices,
+          colour: pal.series[0],
+          width: 2.2,
+          fill: 0.08,
+        },
+      ],
+    });
+
+    box.append(overlay, tooltip);
+  });
+
+  return el(
+    "section",
+    heading("Price in EUR & Trades"),
+    box,
+    el("p.chart-note", {
+      text:
+        `Historical price of ${h.instrument} converted to EUR, with your purchases and sales marked. ` +
+        "Green dots show trades currently in profit; red dots show trades currently at a loss. Hover over any dot to inspect trade details.",
+    }),
+  );
+}
+
+function renderTradeDots(u, h, pts, overlay, tooltip) {
+  overlay.replaceChildren();
+  if (!h.transactions || !h.transactions.length) return;
+
+  const minTs = u.scales.x.min;
+  const maxTs = u.scales.x.max;
+  const latestPrice =
+    f.num(h.market_value_eur) && f.num(h.quantity)
+      ? f.num(h.market_value_eur) / f.num(h.quantity)
+      : pts.length && f.num(pts[pts.length - 1].price_local) && f.num(pts[pts.length - 1].fx_rate)
+        ? f.num(pts[pts.length - 1].price_local) / f.num(pts[pts.length - 1].fx_rate)
+        : null;
+
+  const openTxnLotMap = new Map((h.lots || []).map((l) => [l.open_txn_id, l]));
+  const dispMap = new Map((h.disposals || []).map((d) => [d.sell_txn_id, d]));
+
+  const relevantTrades = h.transactions.filter((t) => {
+    if (t.type !== "BUY" && t.type !== "SELL") return false;
+    const ts = toTs(t.trade_date);
+    return ts >= minTs && ts <= maxTs;
+  });
+
+  relevantTrades.forEach((t) => {
+    const ts = toTs(t.trade_date);
+    const relX = u.valToPos(ts, "x");
+
+    let tradePriceEur = null;
+    let isGain = true;
+    let retPct = null;
+    let gainEur = null;
+
+    if (t.type === "BUY") {
+      const lot = openTxnLotMap.get(t.id);
+      if (lot && f.num(lot.cost_per_unit_eur)) {
+        tradePriceEur = f.num(lot.cost_per_unit_eur);
+      } else if (f.num(t.gross_amount_eur) && f.num(t.quantity)) {
+        tradePriceEur = f.num(t.gross_amount_eur) / f.num(t.quantity);
+      } else if (f.num(t.price_per_unit_local) && f.num(t.fx_rate)) {
+        tradePriceEur = f.num(t.price_per_unit_local) / f.num(t.fx_rate);
+      }
+
+      if (tradePriceEur !== null && latestPrice !== null) {
+        retPct = (latestPrice / tradePriceEur - 1) * 100;
+        gainEur = (latestPrice - tradePriceEur) * f.num(t.quantity);
+        isGain = retPct >= 0;
+      }
+    } else if (t.type === "SELL") {
+      const disp = dispMap.get(t.id);
+      if (f.num(t.gross_amount_eur) && f.num(t.quantity)) {
+        tradePriceEur = f.num(t.gross_amount_eur) / f.num(t.quantity);
+      }
+      if (disp && f.num(disp.gross_gain_eur) !== null) {
+        gainEur = f.num(disp.gross_gain_eur);
+        isGain = gainEur >= 0;
+        if (f.num(disp.cost_basis_eur)) {
+          retPct = (gainEur / f.num(disp.cost_basis_eur)) * 100;
+        }
+      }
+    }
+
+    if (tradePriceEur === null) return;
+    const relY = u.valToPos(tradePriceEur, "y");
+
+    // Bounds check within uPlot bounding box
+    if (relX < 0 || relX > u.bbox.width || relY < 0 || relY > u.bbox.height) {
+      return;
+    }
+
+    const xPos = u.bbox.left + relX;
+    const yPos = u.bbox.top + relY;
+
+    const isSell = t.type === "SELL";
+    const dot = el(`div.trade-marker-dot${isSell ? ".sell" : ""}`, {
+      title: `${t.type} ${f.qty(t.quantity)} on ${f.date(t.trade_date)}`,
+    });
+    dot.classList.add(isGain ? "gain" : "loss");
+    dot.style.left = `${xPos}px`;
+    dot.style.top = `${yPos}px`;
+
+    dot.addEventListener("mouseenter", () => {
+      const tagCls = t.type.toLowerCase();
+      const toneCls = isGain ? "gain" : "loss";
+      tooltip.replaceChildren(
+        el(
+          "div.trade-tip-header",
+          el("span", { text: f.date(t.trade_date) }),
+          el(`span.trade-tip-tag.${tagCls}`, { text: t.type }),
+        ),
+        el(
+          "div.trade-tip-row",
+          el("span", { text: "Quantity:" }),
+          el("strong", { text: `${f.qty(t.quantity)} units` }),
+        ),
+        el(
+          "div.trade-tip-row",
+          el("span", { text: "Trade price:" }),
+          el("strong", {
+            text:
+              h.currency !== "EUR"
+                ? `${f.qty(t.price_per_unit_local)} ${t.currency} (€${tradePriceEur < 1 ? tradePriceEur.toFixed(4) : tradePriceEur.toFixed(2)})`
+                : `€${tradePriceEur < 1 ? tradePriceEur.toFixed(4) : tradePriceEur.toFixed(2)}`,
+          }),
+        ),
+        latestPrice !== null
+          ? el(
+              "div.trade-tip-row",
+              el("span", { text: "Current price:" }),
+              el("strong", {
+                text: `€${latestPrice < 1 ? latestPrice.toFixed(4) : latestPrice.toFixed(2)}`,
+              }),
+            )
+          : null,
+        retPct !== null
+          ? el(
+              "div.trade-tip-row",
+              el("span", { text: t.type === "BUY" ? "Lot return:" : "Realised gain:" }),
+              el(`strong.${toneCls}`, {
+                text: `${retPct >= 0 ? "+" : ""}${retPct.toFixed(2)}% (${gainEur >= 0 ? "+" : ""}${f.eur(gainEur)})`,
+              }),
+            )
+          : null,
+      );
+
+      tooltip.style.display = "block";
+      const tipWidth = tooltip.offsetWidth || 180;
+      const tipHeight = tooltip.offsetHeight || 80;
+
+      let tipX = xPos - tipWidth / 2;
+      let tipY = yPos - tipHeight - 12;
+
+      if (tipX < u.bbox.left) tipX = u.bbox.left;
+      if (tipX + tipWidth > u.bbox.left + u.bbox.width) {
+        tipX = u.bbox.left + u.bbox.width - tipWidth;
+      }
+      if (tipY < u.bbox.top) tipY = yPos + 14;
+
+      tooltip.style.left = `${tipX}px`;
+      tooltip.style.top = `${tipY}px`;
+    });
+
+    dot.addEventListener("mouseleave", () => {
+      tooltip.style.display = "none";
+    });
+
+    overlay.append(dot);
+  });
 }
 
 /** Buys and sells, listed under the chart rather than drawn on it. */
@@ -369,6 +571,12 @@ function statsVsPortfolio(h, pts, portfolio) {
   const spread = hReturn !== null && pReturn !== null ? hReturn - pReturn : null;
   const volRatio = hVol && pVol ? hVol / pVol : null;
 
+  const lastWindowPt = pts[pts.length - 1];
+  const lastCost = f.num(lastWindowPt?.cost_basis_eur);
+  const lastUnrealized = f.num(lastWindowPt?.unrealized_eur);
+  const posReturn =
+    lastCost && lastCost > 0 && lastUnrealized !== null ? lastUnrealized / lastCost : null;
+
   const lastPt =
     portfolio?.points?.length ? portfolio.points[portfolio.points.length - 1] : null;
   const lastPortVal =
@@ -386,7 +594,15 @@ function statsVsPortfolio(h, pts, portfolio) {
         "tbody",
         el(
           "tr",
-          el("td.metric-label", { text: "Return in window" }),
+          el("td.metric-label", { text: "Position return (now)" }),
+          el("td.metric-val", {
+            text: posReturn !== null ? f.pct(posReturn, { sign: true }) : "—",
+            cls: f.tone(posReturn),
+          }),
+        ),
+        el(
+          "tr",
+          el("td.metric-label", { text: "Unit price in window" }),
           el("td.metric-val", {
             text: `${f.pct(hReturn, { sign: true })} vs ${f.pct(pReturn, { sign: true })} port`,
             cls: f.tone(hReturn),
@@ -497,27 +713,41 @@ function currencySplit(h, pts) {
   const pal = palette();
   const box = el("div.chart");
 
+  // 1. Price gain in EUR (local unrealized gain at spot exchange rate)
+  const priceGainData = pts.map((p) => f.num(p.unrealized_local_eur));
+
+  // 2. Currency loss in EUR (positive magnitude when currency depreciates)
+  // When unrealized_fx_eur is -1182.84 EUR, currency loss is +1182.84 EUR.
+  const currencyLossData = pts.map((p) => {
+    const fx = f.num(p.unrealized_fx_eur);
+    return fx !== null ? -fx : null;
+  });
+
   queueMicrotask(() =>
     timeChart(box, {
       x: pts.map((p) => toTs(p.date)),
       height: 270,
       kind: "eur",
+      zero: true,
+      baseline: 0,
       sync: `holding-${h.instrument}`,
+      bands: [
+        // Green fill when Price Gain >= Currency Loss (Net Gain > 0)
+        { series: [1, 2], fill: "rgba(22, 163, 74, 0.22)", dir: 1 },
+        // Red fill when Currency Loss > Price Gain (Net Loss < 0)
+        { series: [1, 2], fill: "rgba(220, 38, 38, 0.22)", dir: -1 },
+      ],
       series: [
         {
-          label: "From the price",
-          data: pts.map((p) => f.num(p.unrealized_local_eur)),
-          colour: pal.series[1],
+          label: "From price (gain)",
+          data: priceGainData,
+          colour: pal.gain || "#16a34a",
+          width: 2,
         },
         {
-          label: `From ${h.currency}`,
-          data: pts.map((p) => f.num(p.unrealized_fx_eur)),
-          colour: pal.series[2],
-        },
-        {
-          label: "Total gain",
-          data: pts.map((p) => f.num(p.unrealized_eur)),
-          colour: pal.fg,
+          label: `From ${h.currency} (currency loss)`,
+          data: currencyLossData,
+          colour: "#f97316",
           width: 2,
         },
       ],
@@ -536,7 +766,11 @@ function currencySplit(h, pts) {
       },
       { label: `From ${h.currency}`, value: fraction(d.currency_effect, h.cost_basis_eur) },
     ]),
-    el("p.chart-note", { text: d.identity || "" }),
+    el("p.chart-note", {
+      text:
+        `Green line is your gain from asset prices in EUR; orange line is your capital lost to ${h.currency} depreciation. ` +
+        "The shaded area between them is your net outcome: green when in profit, red when currency loss wipes out the gain. Red dashed line marks 0 EUR.",
+    }),
   );
 }
 

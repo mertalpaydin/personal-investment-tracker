@@ -1430,6 +1430,133 @@ td:nth-last-child(3) .tip .tip-bubble { left: auto; right: 0; }
   font-variant-numeric: tabular-nums;
 }
 
+/* -------------------------------------------------- trade markers on chart */
+
+.chart-with-trades {
+  position: relative;
+}
+
+.trade-marker-dot {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  cursor: pointer;
+  z-index: 10;
+  transform: translate(-50%, -50%);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.trade-marker-dot.gain {
+  background-color: var(--gain);
+  box-shadow: 0 0 0 1.5px rgba(22, 163, 74, 0.4), 0 2px 5px rgba(0, 0, 0, 0.25);
+}
+
+.trade-marker-dot.loss {
+  background-color: var(--loss);
+  box-shadow: 0 0 0 1.5px rgba(220, 38, 38, 0.4), 0 2px 5px rgba(0, 0, 0, 0.25);
+}
+
+.trade-marker-dot.sell {
+  border-radius: 2px;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.trade-marker-dot:hover {
+  transform: translate(-50%, -50%) scale(1.45);
+  z-index: 25;
+}
+
+.trade-marker-dot.sell:hover {
+  transform: translate(-50%, -50%) rotate(45deg) scale(1.45);
+  z-index: 25;
+}
+
+.trade-marker-dot.gain:hover {
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.6), 0 4px 10px rgba(0, 0, 0, 0.35);
+}
+
+.trade-marker-dot.loss:hover {
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.6), 0 4px 10px rgba(0, 0, 0, 0.35);
+}
+
+.trade-chart-tooltip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 30;
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  border-radius: var(--radius);
+  padding: 0.65rem 0.85rem;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  backdrop-filter: blur(8px);
+  min-width: 170px;
+  transition: opacity 0.1s ease;
+}
+
+.trade-tip-header {
+  font-weight: 700;
+  color: var(--fg);
+  margin-bottom: 0.4rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.trade-tip-tag {
+  font-size: 0.72rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.trade-tip-tag.buy {
+  background: var(--bg-sunken);
+  color: var(--fg);
+  border: 1px solid var(--line);
+}
+
+.trade-tip-tag.sell {
+  background: var(--bg-sunken);
+  color: var(--fg);
+  border: 1px solid var(--line);
+}
+
+.trade-tip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1.2rem;
+  margin-bottom: 0.25rem;
+  color: var(--muted);
+}
+
+.trade-tip-row:last-child {
+  margin-bottom: 0;
+  padding-top: 0.25rem;
+  border-top: 1px dashed var(--line);
+}
+
+.trade-tip-row strong {
+  font-weight: 600;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.trade-tip-row strong.gain {
+  color: var(--gain);
+}
+
+.trade-tip-row strong.loss {
+  color: var(--loss);
+}
+
 /* -------------------------------------------------- holdings page table */
 
 .holdings-view {

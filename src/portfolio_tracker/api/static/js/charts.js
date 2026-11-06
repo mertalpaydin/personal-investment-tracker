@@ -73,6 +73,12 @@ function formatTimeAxis(self, splits) {
 /** Value formatters by axis kind. */
 const AXIS_VALUES = {
   eur: (_u, splits) => splits.map((v) => (v === null ? "" : `€${money.format(v)}`)),
+  price_eur: (_u, splits) =>
+    splits.map((v) => {
+      if (v === null) return "";
+      if (Math.abs(v) < 1 && v !== 0) return `€${v.toFixed(4)}`;
+      return `€${plain.format(v)}`;
+    }),
   pct: (_u, splits) => splits.map((v) => (v === null ? "" : `${(v * 100).toFixed(0)}%`)),
   index: (_u, splits) => splits.map((v) => (v === null ? "" : plain.format(v))),
   plain: (_u, splits) => splits.map((v) => (v === null ? "" : plain.format(v))),
@@ -80,6 +86,11 @@ const AXIS_VALUES = {
 
 const LEGEND_VALUES = {
   eur: (_u, v) => (v === null ? "—" : `€${plain.format(v)}`),
+  price_eur: (_u, v) => {
+    if (v === null) return "—";
+    if (Math.abs(v) < 1 && v !== 0) return `€${v.toFixed(4)}`;
+    return `€${plain.format(v)}`;
+  },
   pct: (_u, v) => (v === null ? "—" : `${(v * 100).toFixed(2)}%`),
   index: (_u, v) => (v === null ? "—" : plain.format(v)),
   plain: (_u, v) => (v === null ? "—" : plain.format(v)),
@@ -230,10 +241,15 @@ export function timeChart(container, opts) {
 
     // A shaded band between two series -- the shape a range of outcomes
     // wants, as opposed to five lines the reader has to mentally fill in.
-    const bands = (opts.fillBetween || []).map(([hi, lo], i) => ({
-      series: [hi + 1, lo + 1],
-      fill: fade(series[hi].colour || p.series[hi % p.series.length], i === 0 ? 0.1 : 0.16),
-    }));
+    const bands =
+      opts.bands ||
+      (opts.fillBetween || []).map(([hi, lo], i) => ({
+        series: [hi + 1, lo + 1],
+        fill: fade(series[hi].colour || p.series[hi % p.series.length], i === 0 ? 0.1 : 0.16),
+      }));
+
+    const hooks = { ...(opts.hooks || {}) };
+    hooks.draw = [drawBaseline, ...(opts.hooks?.draw || [])];
 
     return {
       width: Math.max(container.clientWidth || 640, 240),
@@ -242,7 +258,7 @@ export function timeChart(container, opts) {
       series: uSeries,
       axes,
       bands,
-      hooks: { draw: [drawBaseline] },
+      hooks,
       legend: { show: legend },
       cursor: sync ? { sync: { key: sync } } : {},
     };
