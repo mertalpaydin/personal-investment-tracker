@@ -1145,6 +1145,7 @@ def position_detail(
     lots = [
         {
             "lot_id": r["id"],
+            "open_txn_id": r["open_txn_id"],
             "open_date": r["open_date"],
             "qty_opened": _decimal(r["qty_opened"]),
             "qty_remaining": _decimal(r["qty_remaining"]),
@@ -1206,8 +1207,27 @@ def position_detail(
             "trade_date": r["trade_date"],
             "quantity": _decimal(r["quantity"]),
             "price_per_unit_local": _decimal(r["price_per_unit_local"]),
-            "gross_amount_eur": _decimal(r["gross_amount_eur"]),
+            "gross_amount_local": _decimal(r["gross_amount_local"]),
+            "gross_amount_eur": _decimal(r["gross_amount_eur"])
+            or _decimal(r["lot_cost_total_eur"])
+            or _decimal(r["disp_proceeds_eur"]),
+            "cost_per_unit_eur": _decimal(r["lot_cost_per_unit_eur"])
+            or (
+                _decimal(
+                    (Decimal(str(r["gross_amount_eur"])) / Decimal(str(r["quantity"])))
+                    if r["gross_amount_eur"] and r["quantity"]
+                    else (
+                        (
+                            Decimal(str(r["price_per_unit_local"]))
+                            / Decimal(str(r["fx_rate"] or r["lot_fx_rate"]))
+                        )
+                        if r["price_per_unit_local"] and (r["fx_rate"] or r["lot_fx_rate"])
+                        else None
+                    )
+                )
+            ),
             "currency": r["currency"],
+            "fx_rate": _decimal(r["fx_rate"]) or _decimal(r["lot_fx_rate"]),
             "fees_local": _decimal(r["fees_local"]),
             "fees_known": bool(r["fees_known"]),
             "source": r["source"],
@@ -1216,9 +1236,19 @@ def position_detail(
             "note": r["note"],
         }
         for r in conn.execute(
-            "SELECT t.* FROM transaction_ t JOIN account a ON a.id = t.account_id "
-            "WHERE t.instrument_id = ? AND a.person_id = ? "
-            "ORDER BY t.trade_date, t.id",
+            """
+            SELECT t.*,
+                   l.cost_total_eur AS lot_cost_total_eur,
+                   l.cost_per_unit_eur AS lot_cost_per_unit_eur,
+                   l.fx_rate_at_open AS lot_fx_rate,
+                   d.proceeds_eur AS disp_proceeds_eur
+            FROM transaction_ t
+            JOIN account a ON a.id = t.account_id
+            LEFT JOIN lot l ON l.open_txn_id = t.id
+            LEFT JOIN lot_disposal d ON d.sell_txn_id = t.id
+            WHERE t.instrument_id = ? AND a.person_id = ?
+            ORDER BY t.trade_date, t.id
+            """,
             (instrument_id, person_id),
         )
     ]

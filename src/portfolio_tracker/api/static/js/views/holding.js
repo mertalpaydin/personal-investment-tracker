@@ -37,7 +37,7 @@ const RANGES = [
   { key: "ALL", label: "All", days: null },
 ];
 
-let range = "1M";
+let range = "ALL";
 
 export async function render({ params }) {
   const key = params.key;
@@ -68,13 +68,12 @@ export async function render({ params }) {
   view.append(rangePicker(window));
 
   const chartPair1 = el(
-    "div.holding-chart-layout",
+    "div.chart-pair",
     returnVsPortfolio(h, window, isError(data.portfolio) ? null : data.portfolio),
-    statsVsPortfolio(h, window, isError(data.portfolio) ? null : data.portfolio),
+    priceInEurWithTrades(h, window),
   );
   view.append(chartPair1);
-
-  view.append(priceInEurWithTrades(h, window));
+  view.append(statsVsPortfolio(h, window, isError(data.portfolio) ? null : data.portfolio));
 
   if (h.currency !== "EUR") {
     const chartPair2 = el(
@@ -266,8 +265,8 @@ function returnVsPortfolio(h, pts, portfolio) {
   );
 
   return el(
-    "div",
-    el("h3", { text: "Actual position return vs portfolio" }),
+    "section",
+    heading("Actual position return vs portfolio"),
     box,
     el("p.chart-note", {
       text:
@@ -282,9 +281,7 @@ function returnVsPortfolio(h, pts, portfolio) {
 function priceInEurWithTrades(h, pts) {
   const pal = palette();
   const box = el("div.chart.chart-with-trades");
-  const overlay = el("div.chart-trades-overlay", {
-    style: "position: absolute; inset: 0; pointer-events: none;",
-  });
+  const overlay = el("div.chart-trades-overlay");
   const tooltip = el("div.trade-chart-tooltip");
   tooltip.style.display = "none";
 
@@ -304,7 +301,7 @@ function priceInEurWithTrades(h, pts) {
       hooks: {
         draw: [
           (u) => {
-            renderTradeDots(u, h, pts, overlay, tooltip);
+            renderTradeDots(u, h, pts, overlay, tooltip, box);
           },
         ],
       },
@@ -334,9 +331,16 @@ function priceInEurWithTrades(h, pts) {
   );
 }
 
-function renderTradeDots(u, h, pts, overlay, tooltip) {
+function renderTradeDots(u, h, pts, overlay, tooltip, box) {
   overlay.replaceChildren();
   if (!h.transactions || !h.transactions.length) return;
+
+  if (u.over) {
+    overlay.style.left = `${u.over.offsetLeft}px`;
+    overlay.style.top = `${u.over.offsetTop}px`;
+    overlay.style.width = `${u.over.offsetWidth}px`;
+    overlay.style.height = `${u.over.offsetHeight}px`;
+  }
 
   const minTs = u.scales.x.min;
   const maxTs = u.scales.x.max;
@@ -356,6 +360,9 @@ function renderTradeDots(u, h, pts, overlay, tooltip) {
     return ts >= minTs && ts <= maxTs;
   });
 
+  const plotWidth = u.over ? u.over.clientWidth : u.bbox.width;
+  const plotHeight = u.over ? u.over.clientHeight : u.bbox.height;
+
   relevantTrades.forEach((t) => {
     const ts = toTs(t.trade_date);
     const relX = u.valToPos(ts, "x");
@@ -367,25 +374,44 @@ function renderTradeDots(u, h, pts, overlay, tooltip) {
 
     if (t.type === "BUY") {
       const lot = openTxnLotMap.get(t.id);
-      if (lot && f.num(lot.cost_per_unit_eur)) {
+      if (lot && f.has(lot.cost_per_unit_eur)) {
         tradePriceEur = f.num(lot.cost_per_unit_eur);
+      } else if (f.has(t.cost_per_unit_eur)) {
+        tradePriceEur = f.num(t.cost_per_unit_eur);
       } else if (f.num(t.gross_amount_eur) && f.num(t.quantity)) {
         tradePriceEur = f.num(t.gross_amount_eur) / f.num(t.quantity);
       } else if (f.num(t.price_per_unit_local) && f.num(t.fx_rate)) {
         tradePriceEur = f.num(t.price_per_unit_local) / f.num(t.fx_rate);
       }
 
-      if (tradePriceEur !== null && latestPrice !== null) {
+      if (tradePriceEur === null) {
+        const pt = pts.find((p) => p.date === t.trade_date);
+        if (pt) {
+          const pr = f.num(pt.price_local);
+          const fx = f.num(pt.fx_rate);
+          if (pr !== null && fx) tradePriceEur = pr / fx;
+          else if (pr !== null) tradePriceEur = pr;
+        }
+      }
+
+      if (tradePriceEur !== null && latestPrice !== null && tradePriceEur > 0) {
         retPct = (latestPrice / tradePriceEur - 1) * 100;
-        gainEur = (latestPrice - tradePriceEur) * f.num(t.quantity);
+        gainEur = (latestPrice - tradePriceEur) * (f.num(t.quantity) || 1);
         isGain = retPct >= 0;
       }
     } else if (t.type === "SELL") {
       const disp = dispMap.get(t.id);
-      if (f.num(t.gross_amount_eur) && f.num(t.quantity)) {
+      if (disp && f.has(disp.cost_basis_eur) && f.num(disp.quantity)) {
+        tradePriceEur = (f.num(disp.proceeds_eur) || 0) / f.num(disp.quantity);
+      } else if (f.has(t.cost_per_unit_eur)) {
+        tradePriceEur = f.num(t.cost_per_unit_eur);
+      } else if (f.num(t.gross_amount_eur) && f.num(t.quantity)) {
         tradePriceEur = f.num(t.gross_amount_eur) / f.num(t.quantity);
+      } else if (f.num(t.price_per_unit_local) && f.num(t.fx_rate)) {
+        tradePriceEur = f.num(t.price_per_unit_local) / f.num(t.fx_rate);
       }
-      if (disp && f.num(disp.gross_gain_eur) !== null) {
+
+      if (disp && f.has(disp.gross_gain_eur)) {
         gainEur = f.num(disp.gross_gain_eur);
         isGain = gainEur >= 0;
         if (f.num(disp.cost_basis_eur)) {
@@ -397,23 +423,20 @@ function renderTradeDots(u, h, pts, overlay, tooltip) {
     if (tradePriceEur === null) return;
     const relY = u.valToPos(tradePriceEur, "y");
 
-    // Bounds check within uPlot bounding box
-    if (relX < 0 || relX > u.bbox.width || relY < 0 || relY > u.bbox.height) {
+    // Bounds check within uPlot bounding box with margin
+    if (relX < -15 || relX > plotWidth + 15 || relY < -20 || relY > plotHeight + 20) {
       return;
     }
-
-    const xPos = u.bbox.left + relX;
-    const yPos = u.bbox.top + relY;
 
     const isSell = t.type === "SELL";
     const dot = el(`div.trade-marker-dot${isSell ? ".sell" : ""}`, {
       title: `${t.type} ${f.qty(t.quantity)} on ${f.date(t.trade_date)}`,
     });
     dot.classList.add(isGain ? "gain" : "loss");
-    dot.style.left = `${xPos}px`;
-    dot.style.top = `${yPos}px`;
+    dot.style.left = `${relX}px`;
+    dot.style.top = `${relY}px`;
 
-    dot.addEventListener("mouseenter", () => {
+    const showTip = () => {
       const tagCls = t.type.toLowerCase();
       const toneCls = isGain ? "gain" : "loss";
       tooltip.replaceChildren(
@@ -432,7 +455,7 @@ function renderTradeDots(u, h, pts, overlay, tooltip) {
           el("span", { text: "Trade price:" }),
           el("strong", {
             text:
-              h.currency !== "EUR"
+              h.currency !== "EUR" && f.has(t.price_per_unit_local)
                 ? `${f.qty(t.price_per_unit_local)} ${t.currency} (€${tradePriceEur < 1 ? tradePriceEur.toFixed(4) : tradePriceEur.toFixed(2)})`
                 : `€${tradePriceEur < 1 ? tradePriceEur.toFixed(4) : tradePriceEur.toFixed(2)}`,
           }),
@@ -451,32 +474,46 @@ function renderTradeDots(u, h, pts, overlay, tooltip) {
               "div.trade-tip-row",
               el("span", { text: t.type === "BUY" ? "Lot return:" : "Realised gain:" }),
               el(`strong.${toneCls}`, {
-                text: `${retPct >= 0 ? "+" : ""}${retPct.toFixed(2)}% (${gainEur >= 0 ? "+" : ""}${f.eur(gainEur)})`,
+                text: `${retPct >= 0 ? "+" : ""}${retPct.toFixed(2)}% (${gainEur !== null && gainEur >= 0 ? "+" : ""}${f.eur(gainEur)})`,
               }),
             )
           : null,
       );
 
       tooltip.style.display = "block";
-      const tipWidth = tooltip.offsetWidth || 180;
-      const tipHeight = tooltip.offsetHeight || 80;
 
-      let tipX = xPos - tipWidth / 2;
-      let tipY = yPos - tipHeight - 12;
+      const dotRect = dot.getBoundingClientRect();
+      const boxRect = box.getBoundingClientRect();
+      const dotCenterX = dotRect.left + dotRect.width / 2 - boxRect.left;
+      const dotCenterY = dotRect.top - boxRect.top;
 
-      if (tipX < u.bbox.left) tipX = u.bbox.left;
-      if (tipX + tipWidth > u.bbox.left + u.bbox.width) {
-        tipX = u.bbox.left + u.bbox.width - tipWidth;
+      let tipX = dotCenterX - tooltip.offsetWidth / 2;
+      let tipY = dotCenterY - tooltip.offsetHeight - 10;
+
+      if (tipX < 10) tipX = 10;
+      if (tipX + tooltip.offsetWidth > boxRect.width - 10) {
+        tipX = boxRect.width - tooltip.offsetWidth - 10;
       }
-      if (tipY < u.bbox.top) tipY = yPos + 14;
+      if (tipY < 10) {
+        tipY = dotRect.bottom - boxRect.top + 10;
+      }
 
       tooltip.style.left = `${tipX}px`;
       tooltip.style.top = `${tipY}px`;
-    });
+    };
 
-    dot.addEventListener("mouseleave", () => {
+    const hideTip = () => {
       tooltip.style.display = "none";
-    });
+    };
+
+    dot.addEventListener("mouseenter", showTip);
+    dot.addEventListener("mouseleave", hideTip);
+    dot.addEventListener("pointerenter", showTip);
+    dot.addEventListener("pointerleave", hideTip);
+    dot.addEventListener("touchstart", (e) => {
+      e.stopPropagation();
+      showTip();
+    }, { passive: true });
 
     overlay.append(dot);
   });
@@ -659,8 +696,8 @@ function statsVsPortfolio(h, pts, portfolio) {
   );
 
   return el(
-    "div",
-    el("h3", { text: "Variability & return vs portfolio" }),
+    "section",
+    heading("Variability & return vs portfolio"),
     cardNode,
     el("p.chart-note", {
       text: "Variability is annualised standard deviation of daily price returns over this window.",
@@ -734,8 +771,8 @@ function currencySplit(h, pts) {
       bands: [
         // Green fill when Price Gain >= Currency Loss (Net Gain > 0)
         { series: [1, 2], fill: "rgba(22, 163, 74, 0.22)", dir: 1 },
-        // Red fill when Currency Loss > Price Gain (Net Loss < 0)
-        { series: [1, 2], fill: "rgba(220, 38, 38, 0.22)", dir: -1 },
+        // Red fill when Currency Loss >= Price Gain (Net Loss < 0)
+        { series: [2, 1], fill: "rgba(220, 38, 38, 0.22)", dir: 1 },
       ],
       series: [
         {
