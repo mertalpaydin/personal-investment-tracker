@@ -99,9 +99,10 @@ export function table(head, rows, { empty = "Nothing to show." } = {}) {
 }
 
 /** A labelled statistic card. */
-export function card(label, value, { sub = null, cls = "", valueCls = "", subCls = "" } = {}) {
+export function card(label, value, { sub = null, cls = "", valueCls = "", subCls = "", title = null } = {}) {
   return el(
     `div.card${cls ? "." + cls.split(/\s+/).join(".") : ""}`,
+    title ? { title } : null,
     el("span.k", { text: label }),
     el("div.v", { class: valueCls, text: value }),
     sub ? el("div.sub2", { class: subCls, text: sub }) : null,

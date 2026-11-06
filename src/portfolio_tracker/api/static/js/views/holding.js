@@ -65,15 +65,16 @@ export async function render({ params }) {
   }
 
   const window = sliceToRange(h.history);
+  const portData = isError(data.portfolio) ? null : data.portfolio;
+  view.append(header(h, window, portData));
   view.append(rangePicker(window));
 
   const chartPair1 = el(
     "div.chart-pair",
-    returnVsPortfolio(h, window, isError(data.portfolio) ? null : data.portfolio),
+    returnVsPortfolio(h, window, portData),
     priceInEurWithTrades(h, window),
   );
   view.append(chartPair1);
-  view.append(statsVsPortfolio(h, window, isError(data.portfolio) ? null : data.portfolio));
 
   if (h.currency !== "EUR") {
     const chartPair2 = el(
@@ -96,7 +97,7 @@ export async function render({ params }) {
 
 /* -------------------------------------------------------------- header */
 
-function header(h) {
+function header(h, window = null, portfolio = null) {
   const box = el("div");
   box.append(
     el("p.note", el("a", { href: "#/holdings", text: "← All holdings" })),
@@ -160,6 +161,9 @@ function header(h) {
       );
 
   box.append(cards);
+
+  const statsCards = portfolioStatsCards(h, window, portfolio);
+  if (statsCards) box.append(statsCards);
 
   const note = h.return_decomposition?.vs_broker_export;
   if (note) box.append(el("div.panel", el("p", { text: note })));
@@ -537,7 +541,9 @@ function markers(h, pts) {
   );
 }
 
-function statsVsPortfolio(h, pts, portfolio) {
+function portfolioStatsCards(h, pts, portfolio) {
+  if (!pts || !pts.length) return null;
+
   // 1. Holding return & daily returns
   const euroPrices = pts
     .map((p) => {
@@ -612,7 +618,11 @@ function statsVsPortfolio(h, pts, portfolio) {
   const lastCost = f.num(lastWindowPt?.cost_basis_eur);
   const lastUnrealized = f.num(lastWindowPt?.unrealized_eur);
   const posReturn =
-    lastCost && lastCost > 0 && lastUnrealized !== null ? lastUnrealized / lastCost : null;
+    lastCost && lastCost > 0 && lastUnrealized !== null
+      ? lastUnrealized / lastCost
+      : (h.cost_basis_eur && f.has(h.realised_gain_eur)
+          ? f.num(h.realised_gain_eur) / f.num(h.cost_basis_eur)
+          : null);
 
   const lastPt =
     portfolio?.points?.length ? portfolio.points[portfolio.points.length - 1] : null;
@@ -623,85 +633,46 @@ function statsVsPortfolio(h, pts, portfolio) {
       ? f.num(h.market_value_eur) / lastPortVal
       : null;
 
-  const cardNode = el(
-    "div.holding-stats-card",
-    el(
-      "table.holding-stats-table",
-      el(
-        "tbody",
-        el(
-          "tr",
-          el("td.metric-label", { text: "Position return (now)" }),
-          el("td.metric-val", {
-            text: posReturn !== null ? f.pct(posReturn, { sign: true }) : "—",
-            cls: f.tone(posReturn),
-          }),
-        ),
-        el(
-          "tr",
-          el("td.metric-label", { text: "Unit price in window" }),
-          el("td.metric-val", {
-            text: `${f.pct(hReturn, { sign: true })} vs ${f.pct(pReturn, { sign: true })} port`,
-            cls: f.tone(hReturn),
-          }),
-        ),
-        el(
-          "tr",
-          el("td.metric-label", { text: "Performance spread" }),
-          el("td.metric-val", {
-            text:
-              spread !== null
-                ? `${f.pct(spread, { sign: true })} ${spread >= 0 ? "ahead" : "behind"}`
-                : "—",
-            cls: f.tone(spread),
-          }),
-        ),
-        el(
-          "tr",
-          el("td.metric-label", { text: "Variability (ann. vol)" }),
-          el("td.metric-val", {
-            text:
-              hVol !== null && pVol !== null
-                ? `${f.pct(hVol, { digits: 1 })} vs ${f.pct(pVol, { digits: 1 })} port (${volRatio ? volRatio.toFixed(1) + "x" : ""})`
-                : hVol !== null
-                  ? f.pct(hVol, { digits: 1 })
-                  : "—",
-          }),
-        ),
-        el(
-          "tr",
-          el("td.metric-label", { text: "Worst drop from peak" }),
-          el("td.metric-val", {
-            text:
-              hMaxDd !== null && pMaxDd !== null
-                ? `${f.pct(hMaxDd, { sign: true })} vs ${f.pct(pMaxDd, { sign: true })} port`
-                : hMaxDd !== null
-                  ? f.pct(hMaxDd, { sign: true })
-                  : "—",
-            cls: "loss",
-          }),
-        ),
-        el(
-          "tr",
-          el("td.metric-label", { text: "Position value (% of port)" }),
-          el("td.metric-val", {
-            text:
-              weightPct !== null
-                ? `${f.eur(h.market_value_eur)} (${f.pct(weightPct, { digits: 1 })})`
-                : f.eur(h.market_value_eur),
-          }),
-        ),
-      ),
-    ),
-  );
-
   return el(
-    "section",
-    heading("Variability & return vs portfolio"),
-    cardNode,
-    el("p.chart-note", {
-      text: "Variability is annualised standard deviation of daily price returns over this window.",
+    "div.cards",
+    card("Position return", posReturn !== null ? f.pct(posReturn, { sign: true }) : "—", {
+      valueCls: f.tone(posReturn),
+      sub: h.closed ? "realised return" : "total holding return",
+      title: "Total return on this position based on total cost and current value",
     }),
+    card("Price return", hReturn !== null ? f.pct(hReturn, { sign: true }) : "—", {
+      valueCls: f.tone(hReturn),
+      sub: pReturn !== null ? `vs ${f.pct(pReturn, { sign: true })} port` : "in window",
+      title: "Holding unit price return in this window vs total portfolio return",
+    }),
+    card("Spread", spread !== null ? f.pct(spread, { sign: true }) : "—", {
+      valueCls: f.tone(spread),
+      sub:
+        spread !== null
+          ? `${spread >= 0 ? "ahead of" : "behind"} port`
+          : "vs portfolio",
+      title: "Excess performance over the total portfolio in this window",
+    }),
+    card("Variability", hVol !== null ? f.pct(hVol, { digits: 1 }) : "—", {
+      sub:
+        hVol !== null && pVol !== null
+          ? `vs ${f.pct(pVol, { digits: 1 })} port${volRatio ? ` (${volRatio.toFixed(1)}x)` : ""}`
+          : "annualised vol",
+      title: "Annualised standard deviation of daily price returns over this window",
+    }),
+    card("Worst drop", hMaxDd !== null ? f.pct(hMaxDd, { sign: true }) : "—", {
+      valueCls: "loss",
+      sub: pMaxDd !== null ? `vs ${f.pct(pMaxDd, { sign: true })} port` : "from peak",
+      title: "Maximum drop from peak to trough over this window",
+    }),
+    card(
+      "Portfolio weight",
+      weightPct !== null ? f.pct(weightPct, { digits: 1 }) : (h.closed ? "0.0%" : "—"),
+      {
+        sub: f.has(h.market_value_eur) && !h.closed ? `${f.eur(h.market_value_eur)} of port` : null,
+        title: "Current value as a percentage of the total portfolio",
+      },
+    ),
   );
 }
 
@@ -770,9 +741,9 @@ function currencySplit(h, pts) {
       sync: `holding-${h.instrument}`,
       bands: [
         // Green fill when Price Gain >= Currency Loss (Net Gain > 0)
-        { series: [1, 2], fill: "rgba(22, 163, 74, 0.22)", dir: 1 },
+        { series: [2, 1], fill: "rgba(22, 163, 74, 0.22)", dir: 1 },
         // Red fill when Currency Loss >= Price Gain (Net Loss < 0)
-        { series: [2, 1], fill: "rgba(220, 38, 38, 0.22)", dir: 1 },
+        { series: [1, 2], fill: "rgba(220, 38, 38, 0.22)", dir: 1 },
       ],
       series: [
         {
