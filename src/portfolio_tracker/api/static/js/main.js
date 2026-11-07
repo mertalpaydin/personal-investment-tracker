@@ -38,7 +38,7 @@ const NAV = [
 const VIEWS = {
   "/": () => import("./views/overview.js?v=8"),
   "/holdings": () => import("./views/holdings.js?v=8"),
-  "/holdings/:key": () => import("./views/holding.js?v=9"),
+  "/holdings/:key": () => import("./views/holding.js?v=10"),
   "/rebalance": () => import("./views/rebalance.js?v=8"),
   "/trades": () => import("./views/trades.js?v=8"),
   "/plan": () => import("./views/plan.js?v=8"),

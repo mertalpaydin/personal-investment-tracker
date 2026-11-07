@@ -50,9 +50,9 @@ export async function render({ params }) {
   const h = data.holding;
 
   const view = el("div");
-  view.append(header(h));
 
   if (!h.history.length) {
+    view.append(header(h));
     view.append(
       el(
         "div.empty",
