@@ -303,7 +303,7 @@ def send_email(s: DailySummary) -> None:
     host = os.environ.get("SMTP_HOST", "smtp.gmail.com").strip()
     port = int(os.environ.get("SMTP_PORT", "465").strip())
     user = os.environ.get("SMTP_USER", "").strip()
-    password = os.environ.get("SMTP_PASSWORD", "").strip()
+    password = os.environ.get("SMTP_PASSWORD", "").replace(" ", "").strip()
     to_addr = (os.environ.get("SMTP_TO") or user).strip()
 
     if not user or not password:
