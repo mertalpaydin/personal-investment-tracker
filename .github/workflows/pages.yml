@@ -67,6 +67,17 @@ jobs:
           uv run pt rebuild
           uv run python publish.py
 
+      - name: Send Daily Portfolio Summary Email
+        if: steps.vault.outputs.found == 'true'
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST || 'smtp.gmail.com' }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT || '465' }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_TO: ${{ secrets.SMTP_TO }}
+        run: |
+          uv run python scripts/send_daily_summary.py
+
       - name: Deploy to GitHub Pages
         if: steps.vault.outputs.found == 'true'
         continue-on-error: true

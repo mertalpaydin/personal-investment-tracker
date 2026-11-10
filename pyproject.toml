@@ -81,6 +81,8 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 # Plus E501: the LANDMINES table is a data structure of prose sentences, and
 # wrapping them across lines would hurt the thing it exists to communicate.
 "scripts/make_example_data.py" = ["RUF001", "RUF002", "RUF003", "E501"]
+# E501: HTML email templates contain inline CSS styles that exceed standard line lengths.
+"scripts/send_daily_summary.py" = ["E501"]
 # Matches Turkish fund names against their own spelling: altin with the
 # dotless i, gumus with the cedilla. Transliterating them would stop them
 # matching the names they exist to recognise.
