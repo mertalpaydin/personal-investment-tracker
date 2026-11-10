@@ -456,7 +456,18 @@ def _multi_window_returns(conn: sqlite3.Connection, person_id: int) -> list[dict
                 if r_start and r_start["valuation_basis_eur"] is not None
                 else ZERO
             )
-            gain_eur = v_end - v_start - s.external_flows_eur
+            # Only external flows strictly after w.start are subtracted, because
+            # v_start (the closing valuation of w.start) already accounts for any
+            # flows that occurred on w.start.
+            flow_row = conn.execute(
+                "SELECT sum(net_external_flow_eur) AS f FROM portfolio_daily "
+                "WHERE person_id = ? AND date > ? AND date <= ?",
+                (person_id, w.start.isoformat(), w.end.isoformat()),
+            ).fetchone()
+            subsequent_flows = (
+                Decimal(str(flow_row["f"])) if flow_row and flow_row["f"] is not None else ZERO
+            )
+            gain_eur = v_end - v_start - subsequent_flows
             out.append(
                 {
                     "key": label,

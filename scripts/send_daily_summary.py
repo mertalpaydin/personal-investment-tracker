@@ -83,7 +83,15 @@ def compute_summary(
         if r_start and r_start["valuation_basis_eur"]
         else ZERO
     )
-    gain_1d = v_end - v_start - s_1d.external_flows_eur
+    flow_1d = conn.execute(
+        "SELECT sum(net_external_flow_eur) AS f FROM portfolio_daily "
+        "WHERE person_id = ? AND date > ? AND date <= ?",
+        (person_id, w_1d.start.isoformat(), w_1d.end.isoformat()),
+    ).fetchone()
+    subsequent_flows_1d = (
+        Decimal(str(flow_1d["f"])) if flow_1d and flow_1d["f"] is not None else ZERO
+    )
+    gain_1d = v_end - v_start - subsequent_flows_1d
     one_day_twr = float(s_1d.twr * 100) if s_1d.twr is not None else None
 
     # Multi-window: 1W, 1M, 3M, 6M, 12M
@@ -125,7 +133,15 @@ def compute_summary(
         if r_start_all and r_start_all["valuation_basis_eur"]
         else ZERO
     )
-    gain_all = v_end - v_start_all - s_all.external_flows_eur
+    flow_all = conn.execute(
+        "SELECT sum(net_external_flow_eur) AS f FROM portfolio_daily "
+        "WHERE person_id = ? AND date > ? AND date <= ?",
+        (person_id, w_all.start.isoformat(), w_all.end.isoformat()),
+    ).fetchone()
+    subsequent_flows_all = (
+        Decimal(str(flow_all["f"])) if flow_all and flow_all["f"] is not None else ZERO
+    )
+    gain_all = v_end - v_start_all - subsequent_flows_all
 
     windows.append(
         WindowMetric(

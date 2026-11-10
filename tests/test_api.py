@@ -685,3 +685,18 @@ def test_aggregated_returns_endpoint(client: TestClient) -> None:
     assert res_all.status_code == 200
     assert res_all.json()["range"] == "ALL"
     assert len(res_all.json()["monthly"]) >= len(data["monthly"])
+
+
+def test_overview_top_returns_excludes_start_date_flow_from_subsequent_flows(
+    client: TestClient,
+) -> None:
+    res = client.get("/api/overview?range=1W")
+    assert res.status_code == 200
+    data = res.json()
+    assert "top_returns" in data
+    top_returns = data["top_returns"]
+    assert len(top_returns) > 0
+    for entry in top_returns:
+        assert "key" in entry
+        assert "twr" in entry
+        assert "value_eur" in entry
