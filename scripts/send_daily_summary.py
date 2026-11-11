@@ -73,9 +73,9 @@ KNOWN_HOLDING_NAMES: dict[str, str] = {
     "EGV2": "Lyxor Overnight Return",
     "UEF5.DE": "UBS MSCI EM SRI",
     "NQSE": "iShares Nasdaq 100",
-    "AFS": "Ak Portföy Sağlık",  # noqa: RUF001
+    "AFS": "Ak Portföy Sağlık",
     "AFT": "Ak Portföy Teknoloji",
-    "TTA": "İş Portföy Altın",  # noqa: RUF001
+    "TTA": "İş Portföy Altın",
     "2B70.DE": "iShares US Biotech",
     "SEC0": "iShares Semiconductors",
     "FLXD": "Franklin European Dividend",
@@ -95,7 +95,7 @@ def short_holding_name(raw_name: str, import_key: str = "") -> str:
     name = raw_name
     name = re.sub(r"^MULTI-UNITS LUXEMBOURG\s*-\s*", "", name, flags=re.I)
     name = re.sub(
-        r"\b(UCITS|ETF|Acc|Dist|dis|Inc\.?|Co\.?|PLC|EUR Hdg A|C-EUR|Fonu|Yabancı Hisse Senedi)\b",  # noqa: RUF001
+        r"\b(UCITS|ETF|Acc|Dist|dis|Inc\.?|Co\.?|PLC|EUR Hdg A|C-EUR|Fonu|Yabancı Hisse Senedi)\b",
         "",
         name,
         flags=re.I,
@@ -219,7 +219,7 @@ def compute_summary(
         else:
             losers.append(perf)
     winners.sort(key=lambda x: -(x.gain_eur or 0.0))
-    losers.sort(key=lambda x: (x.gain_eur or 0.0))
+    losers.sort(key=lambda x: x.gain_eur or 0.0)
 
     return DailySummary(
         as_of=w_1d.end,
