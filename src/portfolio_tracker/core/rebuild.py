@@ -93,6 +93,11 @@ def run(
     """
     result = RebuildResult(as_of=end)
 
+    # Guardrail: clean up any derived rows that may exist past `end`
+    conn.execute("DELETE FROM position_daily WHERE date > ?", (end.isoformat(),))
+    conn.execute("DELETE FROM portfolio_daily WHERE date > ?", (end.isoformat(),))
+    conn.execute("DELETE FROM cash_daily WHERE date > ?", (end.isoformat(),))
+
     lot_report = lots.rebuild_lots(conn)
     result.lots_created = lot_report.lots_created
     result.disposals_created = lot_report.disposals_created

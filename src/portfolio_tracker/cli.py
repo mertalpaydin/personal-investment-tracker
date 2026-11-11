@@ -458,8 +458,8 @@ def rebuild(
     recomputes rather than patching. An edit anywhere in the history changes
     which lots a later sale consumes, which is why nothing is updated in place.
     """
-    as_of = date.fromisoformat(end) if end else date.today()
     conn = connect(db)
+    as_of = date.fromisoformat(end) if end else rebuild_all.default_end(conn)
     try:
         try:
             result = rebuild_all.run(conn, end=as_of, strict=strict)

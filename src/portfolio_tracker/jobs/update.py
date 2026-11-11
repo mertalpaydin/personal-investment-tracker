@@ -349,7 +349,12 @@ def _run_locked(
         if rebuild_after and conn.execute("SELECT 1 FROM transaction_ LIMIT 1").fetchone():
             # One transaction, so readers never see a half-rebuilt derived layer.
             with transaction(conn):
-                result = rebuild.run(conn, end=end, strict=False, commit=False)
+                # Guardrail: Rebuild up to the latest priced market day, never carrying
+                # forward unpriced positions if running after midnight.
+                actual_end = end if end is not None else rebuild.default_end(conn)
+                if end == date.today():
+                    actual_end = min(end, rebuild.default_end(conn))
+                result = rebuild.run(conn, end=actual_end, strict=False, commit=False)
             outcome.rebuilt = True
             outcome.problems.extend(result.breaks)
             outcome.problems.extend(f"oversold: {o}" for o in result.oversold)

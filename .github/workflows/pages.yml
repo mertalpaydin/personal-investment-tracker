@@ -2,8 +2,8 @@ name: Refresh Encrypted GitHub Pages Snapshot
 
 on:
   schedule:
-    # Every weekday at 20:30 UTC (after European and US market closes)
-    - cron: "30 20 * * 1-5"
+    # Every weekday at 16:45 UTC (17:45 CET, 15 minutes after German market close)
+    - cron: "45 16 * * 1-5"
   workflow_dispatch:
 
 concurrency:

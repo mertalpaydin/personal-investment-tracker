@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import smtplib
 import sqlite3
 import sys
@@ -44,6 +45,14 @@ class WindowMetric:
 
 
 @dataclass(frozen=True)
+class HoldingMove:
+    name: str
+    return_pct: float | None
+    gain_eur: float | None
+    value_eur: float
+
+
+@dataclass(frozen=True)
 class DailySummary:
     as_of: date
     total_value_eur: float
@@ -51,6 +60,48 @@ class DailySummary:
     one_day_gain_eur: float
     windows: list[WindowMetric]
     dashboard_url: str
+    winners: list[HoldingMove]
+    losers: list[HoldingMove]
+
+
+KNOWN_HOLDING_NAMES: dict[str, str] = {
+    "ABECG": "Alphabet",
+    "AMZN": "Amazon",
+    "FTNT.DE": "Fortinet",
+    "VRT.DE": "Vertiv",
+    "LYBK": "Lyxor Stoxx Banks",
+    "EGV2": "Lyxor Overnight Return",
+    "UEF5.DE": "UBS MSCI EM SRI",
+    "NQSE": "iShares Nasdaq 100",
+    "AFS": "Ak Portföy Sağlık",  # noqa: RUF001
+    "AFT": "Ak Portföy Teknoloji",
+    "TTA": "İş Portföy Altın",  # noqa: RUF001
+    "2B70.DE": "iShares US Biotech",
+    "SEC0": "iShares Semiconductors",
+    "FLXD": "Franklin European Dividend",
+    "DRUP.DE": "Amundi Memory Chips",
+    "IS0E": "iShares Gold Producers",
+    "WMMS.DE": "Amundi MSCI World Value",
+    "ISPA.DE": "iShares Global Dividend",
+    "SELD.DE": "Amundi Europe Dividend",
+    "IS3S-ZB59.DE": "iShares World Value",
+}
+
+
+def short_holding_name(raw_name: str, import_key: str = "") -> str:
+    key = import_key.upper().strip()
+    if key in KNOWN_HOLDING_NAMES:
+        return KNOWN_HOLDING_NAMES[key]
+    name = raw_name
+    name = re.sub(r"^MULTI-UNITS LUXEMBOURG\s*-\s*", "", name, flags=re.I)
+    name = re.sub(
+        r"\b(UCITS|ETF|Acc|Dist|dis|Inc\.?|Co\.?|PLC|EUR Hdg A|C-EUR|Fonu|Yabancı Hisse Senedi)\b",  # noqa: RUF001
+        "",
+        name,
+        flags=re.I,
+    )
+    name = re.sub(r"\s+", " ", name).strip(" -")
+    return name or raw_name
 
 
 def compute_summary(
@@ -153,6 +204,23 @@ def compute_summary(
         )
     )
 
+    # Daily Movers: Winners & Losers for 1D
+    holdings_1d = overview._holdings(conn, person_id, w_1d)
+    winners: list[HoldingMove] = []
+    losers: list[HoldingMove] = []
+    for h in holdings_1d:
+        h_name = short_holding_name(h.get("name", ""), h.get("instrument", ""))
+        h_ret = float(h["total_return"] * 100) if h.get("total_return") is not None else 0.0
+        h_gain = float(h["total_gain_eur"]) if h.get("total_gain_eur") is not None else 0.0
+        h_val = float(h.get("value_eur", 0.0))
+        perf = HoldingMove(name=h_name, return_pct=h_ret, gain_eur=h_gain, value_eur=h_val)
+        if h_gain >= 0:
+            winners.append(perf)
+        else:
+            losers.append(perf)
+    winners.sort(key=lambda x: -(x.gain_eur or 0.0))
+    losers.sort(key=lambda x: (x.gain_eur or 0.0))
+
     return DailySummary(
         as_of=w_1d.end,
         total_value_eur=float(closing_val),
@@ -161,6 +229,8 @@ def compute_summary(
         windows=windows,
         dashboard_url=dashboard_url
         or "https://mertalpaydin.github.io/personal-investment-tracker/",
+        winners=winners,
+        losers=losers,
     )
 
 
@@ -203,14 +273,86 @@ def build_text_email(s: DailySummary) -> str:
         date_range = f"{w.from_date} - {w.to_date}" if w.label != "All Time" else "Since Inception"
         lines.append(f"{w.label:<12} | {twr:>8} | {gain:>16} | {date_range}")
 
+    if s.winners:
+        lines.extend(
+            [
+                "",
+                f"Daily Winners ({len(s.winners)}):",
+                "-" * 50,
+                f"{'Holding':<24} | {'Return':>8} | {'Gain / Loss':>14} | Current Value",
+                "-" * 50,
+            ]
+        )
+        for h in s.winners:
+            twr = _fmt_pct(h.return_pct)
+            gain = _fmt_money(h.gain_eur)
+            val = f"EUR {h.value_eur:,.2f}"
+            lines.append(f"{h.name:<24} | {twr:>8} | {gain:>14} | {val:>13}")
+
+    if s.losers:
+        lines.extend(
+            [
+                "",
+                f"Daily Losers ({len(s.losers)}):",
+                "-" * 50,
+                f"{'Holding':<24} | {'Return':>8} | {'Gain / Loss':>14} | Current Value",
+                "-" * 50,
+            ]
+        )
+        for h in s.losers:
+            twr = _fmt_pct(h.return_pct)
+            gain = _fmt_money(h.gain_eur)
+            val = f"EUR {h.value_eur:,.2f}"
+            lines.append(f"{h.name:<24} | {twr:>8} | {gain:>14} | {val:>13}")
+
     lines.extend(
         [
+            "",
             "-" * 50,
             f"Open Dashboard: {s.dashboard_url}",
             "=" * 50,
         ]
     )
     return "\n".join(lines)
+
+
+def _render_movers_html(title: str, movers: list[HoldingMove], is_winners: bool) -> str:
+    if not movers:
+        return ""
+    header_color = "#10b981" if is_winners else "#ef4444"
+    header_bg = "#f0fdf4" if is_winners else "#fef2f2"
+    border_color = "rgba(16, 185, 129, 0.2)" if is_winners else "rgba(239, 68, 68, 0.2)"
+
+    rows: list[str] = []
+    for m in movers:
+        is_pos = (m.gain_eur or 0) >= 0
+        color = "#10b981" if is_pos else "#ef4444"
+        bg = "#f0fdf4" if is_pos else "#fef2f2"
+        rows.append(
+            f'<tr style="border-bottom: 1px solid #e2e8f0;">'
+            f'<td style="padding: 10px 14px; font-weight: 600; color: #0f172a;">{m.name}</td>'
+            f'<td style="padding: 10px 14px; text-align: right; font-weight: 700; color: {color};">'
+            f'<span style="background-color: {bg}; padding: 3px 8px; border-radius: 4px;">{_fmt_pct(m.return_pct)}</span></td>'
+            f'<td style="padding: 10px 14px; text-align: right; font-weight: 600; color: {color}; font-variant-numeric: tabular-nums;">{_fmt_money(m.gain_eur)}</td>'
+            f'<td style="padding: 10px 14px; text-align: right; color: #64748b; font-size: 13px;">EUR {m.value_eur:,.2f}</td>'
+            f"</tr>"
+        )
+
+    tbody = "\n".join(rows)
+    return (
+        f"<div style='margin-top: 20px;'>"
+        f"<div style='margin-bottom: 8px;'>"
+        f"<span style='font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: {header_color}; background-color: {header_bg}; border: 1px solid {border_color}; padding: 4px 10px; border-radius: 6px;'>{title}</span>"
+        f"</div>"
+        f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='border-collapse: collapse; font-size: 13px; border: 1px solid #e2e8f0; border-radius: 8px;'>"
+        f"<thead><tr style='background-color: #f8fafc; border-bottom: 2px solid #e2e8f0;'>"
+        f"<th align='left' style='padding: 8px 14px; font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase;'>Holding</th>"
+        f"<th align='right' style='padding: 8px 14px; font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase;'>Return</th>"
+        f"<th align='right' style='padding: 8px 14px; font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase;'>Gain / Loss</th>"
+        f"<th align='right' style='padding: 8px 14px; font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase;'>Value</th>"
+        f"</tr></thead>"
+        f"<tbody>{tbody}</tbody></table></div>"
+    )
 
 
 def build_html_email(s: DailySummary) -> str:
@@ -246,6 +388,8 @@ def build_html_email(s: DailySummary) -> str:
         )
 
     rows_html = "\n".join(table_rows)
+    winners_html = _render_movers_html(f"Winners ({len(s.winners)})", s.winners, is_winners=True)
+    losers_html = _render_movers_html(f"Losers ({len(s.losers)})", s.losers, is_winners=False)
 
     return (
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
@@ -301,7 +445,10 @@ def build_html_email(s: DailySummary) -> str:
         "text-transform: uppercase;'>Gain / Loss</th>"
         "<th align='right' style='padding: 10px 14px; font-size: 12px; font-weight: 700; color: #64748b; "
         "text-transform: uppercase;'>Window</th></tr></thead>"
-        f"<tbody>{rows_html}</tbody></table></td></tr>"
+        f"<tbody>{rows_html}</tbody></table>"
+        f"{winners_html}"
+        f"{losers_html}"
+        "</td></tr>"
         "<!-- Footer -->"
         "<tr><td style='padding: 8px 24px 28px; text-align: center;'>"
         f"<a href='{s.dashboard_url}' target='_blank' style='display: inline-block; "
