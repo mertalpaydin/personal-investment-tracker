@@ -455,3 +455,20 @@ def test_a_negative_opening_balance_is_refused(db: sqlite3.Connection) -> None:
         cash.set_opening_balance(
             db, account_id=1, currency="EUR", amount=D("-1"), on=date(2026, 1, 1)
         )
+
+
+def test_sale_proceeds_deduct_withheld_tax(db: sqlite3.Connection) -> None:
+    """When a sale has tax withheld at source, only the net credited cash is added to balance."""
+    db.execute(
+        "INSERT INTO transaction_ (account_id, instrument_id, type, trade_date, currency, "
+        "quantity, gross_amount_local, gross_amount_eur, fees_local, tax_withheld_local, "
+        "fx_rate, flow_class, proceeds_disposition) "
+        "VALUES (1, 1, 'SELL', '2026-01-05', 'EUR', 10, '1000', '1000', '10', '100', 1, 'INVESTMENT', 'REINVEST')"
+    )
+    db.commit()
+
+    report = cash.compute_flows(db)
+    # Gross 1000 - Fees 10 - Tax 100 = 890
+    event = report.events[0]
+    assert event.amount == D("890.00")
+    assert event.balance_after == D("890.00")

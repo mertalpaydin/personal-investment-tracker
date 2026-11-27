@@ -101,12 +101,19 @@ class FlowReport:
 
 
 def _amount(row: sqlite3.Row) -> Decimal:
-    """A transaction's cash effect in its own currency, net of fees."""
+    """A transaction's cash effect in its own currency, net of fees and withheld tax."""
     gross = Decimal(str(row["gross_amount_local"] or 0))
     fees = Decimal(str(row["fees_local"] or 0))
-    # A purchase costs its gross plus fees; a sale returns its gross less fees.
+    tax = (
+        Decimal(str(row["tax_withheld_local"] or 0))
+        if "tax_withheld_local" in row.keys()  # noqa: SIM118
+        else ZERO
+    )
+    # A purchase costs its gross plus fees; a sale returns its gross less fees and taxes.
     if row["type"] == "BUY":
         return gross + fees
+    if row["type"] in ("SELL", "DIVIDEND"):
+        return gross - fees - tax
     return gross - fees
 
 
@@ -127,8 +134,8 @@ def compute_flows(conn: sqlite3.Connection, *, account_id: int | None = None) ->
     rows = conn.execute(
         f"""
         SELECT t.id, t.account_id, t.type, t.trade_date, t.currency,
-               t.gross_amount_local, t.fees_local, t.quantity, t.proceeds_disposition,
-               i.import_key, i.name AS instrument_name
+               t.gross_amount_local, t.fees_local, t.tax_withheld_local, t.quantity,
+               t.proceeds_disposition, i.import_key, i.name AS instrument_name
         FROM transaction_ t
         LEFT JOIN instrument i ON i.id = t.instrument_id
         {scope}
